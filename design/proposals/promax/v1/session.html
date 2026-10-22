@@ -1,0 +1,496 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fleetscope · Session s_9Kd2xQ (promax v1)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  theme: { extend: {
+    colors: {
+      bg: 'var(--bg)', surface: 'var(--surface)', surface2: 'var(--surface-2)',
+      line: 'var(--line)', strong: 'var(--line-strong)',
+      fg: 'var(--fg)', muted: 'var(--fg-muted)', subtle: 'var(--fg-subtle)',
+      ink: 'var(--ink)', onink: 'var(--on-ink)',
+      ok: { fg: 'var(--ok-fg)', bg: 'var(--ok-bg)' },
+      warn: { fg: 'var(--warn-fg)', bg: 'var(--warn-bg)' },
+      err: { fg: 'var(--err-fg)', bg: 'var(--err-bg)' },
+      blk: { fg: 'var(--blk-fg)', bg: 'var(--blk-bg)' }
+    },
+    fontFamily: {
+      sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+      mono: ['"JetBrains Mono"', 'ui-monospace', 'monospace']
+    },
+    fontSize: {
+      label: ['12px', '16px'], body: ['13px', '20px'],
+      kpi: ['26px', '30px'], title: ['20px', '28px']
+    }
+  } }
+};
+</script>
+<style>
+/* ---------- tokens (see system.md) ---------- */
+:root, [data-theme="dark"] {
+  --bg:#0B0F14; --surface:#111821; --surface-2:#17212C; --line:#243142; --line-strong:#5B6B80;
+  --fg:#E6EDF5; --fg-muted:#9AA9BB; --fg-subtle:#7D8DA1; --ink:#E6EDF5; --on-ink:#0B0F14;
+  --ok-fg:#4BD98E; --ok-bg:#10281C; --warn-fg:#F2C14E; --warn-bg:#2E2410;
+  --err-fg:#FF7B7B; --err-bg:#33191B; --blk-fg:#B79CFF; --blk-bg:#231C3A;
+  --eng-c:#56B4E9; --eng-h:#E69F00; --eng-l:#CC79A7; --bar:#5B7491;
+  --shadow:0 8px 24px rgba(0,0,0,.45); color-scheme: dark;
+}
+[data-theme="light"] {
+  --bg:#F4F6F9; --surface:#FFFFFF; --surface-2:#F0F3F7; --line:#DDE3EA; --line-strong:#7A889B;
+  --fg:#0F1722; --fg-muted:#475569; --fg-subtle:#5F6E82; --ink:#0F1722; --on-ink:#FFFFFF;
+  --ok-fg:#0B6B39; --ok-bg:#DDF5E7; --warn-fg:#8A5A00; --warn-bg:#FDF1D3;
+  --err-fg:#B42318; --err-bg:#FDE4E1; --blk-fg:#5B3FC4; --blk-bg:#ECE7FB;
+  --eng-c:#0072B2; --eng-h:#B86E00; --eng-l:#B0457F; --bar:#6B829E;
+  --shadow:0 8px 24px rgba(15,23,34,.14); color-scheme: light;
+}
+html { font-feature-settings: "cv11","ss01"; }
+body { background: var(--bg); color: var(--fg); }
+.tnum { font-variant-numeric: tabular-nums; }
+:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; border-radius: 4px; }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+.ic { width:16px; height:16px; flex:none; stroke:currentColor; fill:none; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+.badge .ic, .chip .ic { width:12px; height:12px; }
+.badge { display:inline-flex; align-items:center; gap:4px; height:20px; padding:0 6px; border-radius:4px; font-size:12px; line-height:16px; font-weight:500; white-space:nowrap; }
+.b-ok { background:var(--ok-bg); color:var(--ok-fg); }
+.b-warn { background:var(--warn-bg); color:var(--warn-fg); }
+.b-err { background:var(--err-bg); color:var(--err-fg); }
+.b-blk { background:var(--blk-bg); color:var(--blk-fg); }
+.badge-lg { height:28px; padding:0 10px; font-size:14px; gap:6px; border-radius:6px; font-weight:600; }
+.badge-lg .ic { width:16px; height:16px; }
+
+.chip { display:inline-flex; align-items:center; gap:4px; height:20px; padding:0 6px; border-radius:4px; font-size:12px; line-height:16px; font-weight:600; letter-spacing:.04em; text-transform:uppercase; color:var(--fg-muted); white-space:nowrap; }
+.src-real { border:1px solid var(--line-strong); }
+.src-sim { border:1px dashed var(--line-strong); background-image:repeating-linear-gradient(135deg, transparent 0 4px, var(--line) 4px 5px); }
+.src-real::before { content:""; width:6px; height:6px; border-radius:50%; background:var(--fg-muted); }
+.src-sim::before { content:""; width:6px; height:6px; border-radius:50%; border:1px solid var(--fg-muted); }
+
+.eng { display:inline-block; width:10px; height:10px; flex:none; }
+.e-c { background:var(--eng-c); border-radius:50%; }
+.e-h { background:var(--eng-h); border-radius:2px; }
+.e-l { background:var(--eng-l); transform:rotate(45deg) scale(.88); }
+
+.ctl { display:inline-flex; align-items:center; gap:6px; height:32px; padding:0 10px; border:1px solid var(--line-strong); border-radius:6px; font-size:13px; color:var(--fg); background:var(--surface); white-space:nowrap; }
+.ctl:hover, .seg button:hover { background:var(--surface-2); }
+.ctl-primary { background:var(--ink); color:var(--on-ink); border-color:var(--ink); font-weight:600; }
+.ctl-primary:hover { background:var(--ink); opacity:.9; }
+.seg { display:inline-flex; height:32px; border:1px solid var(--line-strong); border-radius:6px; overflow:hidden; background:var(--surface); }
+.seg button { display:inline-flex; align-items:center; gap:6px; padding:0 10px; font-size:13px; color:var(--fg-muted); }
+.seg button + button { border-left:1px solid var(--line); }
+.seg button[aria-pressed="true"] { background:var(--ink); color:var(--on-ink); font-weight:600; }
+kbd { font-family:"JetBrains Mono",monospace; font-size:12px; line-height:16px; padding:0 4px; border:1px solid var(--line-strong); border-radius:4px; color:var(--fg-muted); }
+
+.card { background:var(--surface); border:1px solid var(--line); border-radius:8px; }
+.nav a { display:flex; align-items:center; gap:10px; height:36px; padding:0 10px; border-radius:6px; color:var(--fg-muted); font-size:13px; }
+.nav a:hover { background:var(--surface-2); color:var(--fg); }
+.nav a[aria-current="page"] { background:var(--surface-2); color:var(--fg); font-weight:600; box-shadow: inset 2px 0 0 var(--ink); }
+.ax { font-size:12px; fill:var(--fg-subtle); font-family:Inter,sans-serif; }
+.pulse { animation: pulse 2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity:.35; } }
+code.k { font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--fg); }
+.mono { font-family:"JetBrains Mono",monospace; }
+
+/* ---------- tabs ---------- */
+.tabs { display:flex; gap:4px; border-bottom:1px solid var(--line); }
+.tabs a { display:inline-flex; align-items:center; gap:6px; height:36px; padding:0 10px; font-size:13px; color:var(--fg-muted); border-bottom:2px solid transparent; margin-bottom:-1px; }
+.tabs a:hover { color:var(--fg); }
+.tabs a[aria-selected="true"] { color:var(--fg); font-weight:600; border-bottom-color:var(--ink); }
+.count { font-size:12px; color:var(--fg-subtle); font-variant-numeric:tabular-nums; }
+
+/* ---------- timeline: one grid, one time axis ---------- */
+.tl { position:relative; --gut:264px; --pad:12px; }
+.tr { display:grid; grid-template-columns:var(--gut) 1fr; align-items:center; }
+.tr > .lbl { padding:0 12px 0 16px; min-width:0; display:flex; align-items:center; gap:8px; border-right:1px solid var(--line); height:100%; }
+.tr > .plot { position:relative; height:100%; }
+.wrow { height:28px; border-bottom:1px solid var(--line); }
+.wrow:hover { background:var(--surface-2); }
+.wrow[aria-selected="true"] { background:var(--err-bg); }
+.wrow[aria-selected="true"] .n { color:var(--fg-muted); }
+.wrow .n { width:18px; text-align:right; color:var(--fg-subtle); font-size:12px; font-variant-numeric:tabular-nums; flex:none; }
+.wrow .ty { width:62px; flex:none; font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--fg-muted); }
+.wrow .tg { font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--fg); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.bar-a { position:absolute; top:7px; height:14px; border-radius:3px; min-width:3px; background:var(--bar); display:flex; align-items:center; justify-content:flex-end; padding-right:2px; color:var(--on-ink); }
+.bar-a.slow { background:var(--warn-fg); color:var(--bg); }
+.bar-a.err { background-color:var(--err-fg); background-image:repeating-linear-gradient(135deg, transparent 0 3px, rgba(0,0,0,.28) 3px 5px); color:var(--bg); }
+.bar-a .ic { width:12px; height:12px; stroke-width:2.5; }
+.dur { position:absolute; top:5px; font-size:12px; line-height:18px; color:var(--fg-muted); white-space:nowrap; font-variant-numeric:tabular-nums; }
+.dur.err { color:var(--err-fg); font-weight:600; } .dur.slow { color:var(--warn-fg); font-weight:600; }
+.ov { position:absolute; top:0; bottom:0; left:var(--gut); right:0; pointer-events:none; }
+.ov .in { position:absolute; top:0; bottom:0; left:var(--pad); right:var(--pad); }
+.ov .gl { position:absolute; top:0; bottom:0; width:1px; background:var(--line); }
+.ov .fail { position:absolute; top:0; bottom:0; width:0; border-left:2px dashed var(--err-fg); }
+.ov .hov { position:absolute; top:0; bottom:0; width:0; border-left:1px solid var(--fg); opacity:0; }
+.sect { border-top:1px solid var(--line-strong); }
+.hatch { background-image:repeating-linear-gradient(135deg, transparent 0 5px, var(--line) 5px 6px); }
+.thumb { aspect-ratio:16/10; border:1px dashed var(--line-strong); border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:12px; color:var(--fg-muted); }
+@media (max-width: 1279px) { .tl { --gut:224px; } .wrow .ty { width:52px; } }
+</style>
+</head>
+<body class="font-sans text-body antialiased">
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.46 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></symbol>
+  <symbol id="i-xs" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></symbol>
+  <symbol id="i-ban" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></symbol>
+  <symbol id="i-cpu" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/></symbol>
+  <symbol id="i-coin" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M15 9h-4a2 2 0 0 0 0 4h2a2 2 0 0 1 0 4H9M12 6v2M12 16v2"/></symbol>
+  <symbol id="i-bulb" viewBox="0 0 24 24"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.3h6c0-1 .4-1.8 1-2.3A7 7 0 0 0 12 2Z"/></symbol>
+  <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9Z"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-right" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+  <symbol id="i-up-right" viewBox="0 0 24 24"><path d="M7 17 17 7M7 7h10v10"/></symbol>
+  <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></symbol>
+</svg>
+
+<div class="flex min-h-screen">
+
+  <aside class="w-14 xl:w-[216px] shrink-0 bg-surface border-r border-line sticky top-0 h-screen flex flex-col">
+    <div class="h-12 flex items-center gap-2 px-3 border-b border-line">
+      <svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><rect x="1" y="1" width="22" height="22" rx="6" style="fill:var(--ink)"/><circle cx="12" cy="12" r="4" style="fill:none;stroke:var(--on-ink);stroke-width:2"/><path d="M12 4v3M12 17v3M4 12h3M17 12h3" style="stroke:var(--on-ink);stroke-width:2;stroke-linecap:round"/></svg>
+      <span class="hidden xl:inline font-semibold text-sm tracking-tight">Fleetscope</span>
+    </div>
+    <nav class="nav flex-1 p-2 space-y-1" aria-label="Main">
+      <a href="overview.html" title="Overview" aria-label="Overview"><svg class="ic"><use href="#i-grid"/></svg><span class="hidden xl:inline">Overview</span></a>
+      <a href="#" aria-current="page" title="Sessions" aria-label="Sessions"><svg class="ic"><use href="#i-list"/></svg><span class="hidden xl:inline">Sessions</span><span class="hidden xl:inline ml-auto text-label text-subtle tnum">1,926</span></a>
+      <a href="#" title="Browsers" aria-label="Browsers"><svg class="ic"><use href="#i-cpu"/></svg><span class="hidden xl:inline">Browsers</span></a>
+      <a href="#" title="Usage and cost" aria-label="Usage and cost"><svg class="ic"><use href="#i-coin"/></svg><span class="hidden xl:inline">Usage &amp; cost</span></a>
+      <a href="#" title="Insights, 5 open" aria-label="Insights, 5 open"><svg class="ic"><use href="#i-bulb"/></svg><span class="hidden xl:inline">Insights</span><span class="hidden xl:inline ml-auto badge b-warn">5</span></a>
+    </nav>
+    <div class="hidden xl:block p-3 border-t border-line text-label text-muted space-y-1">
+      <div class="flex items-center gap-2"><span class="w-2 h-2 rounded-full pulse" style="background:var(--ok-fg)"></span><span>Ingest healthy · 1.2k ev/s</span></div>
+      <div class="text-subtle">ClickHouse · lag 0.8 s</div>
+    </div>
+  </aside>
+
+  <div class="flex-1 min-w-0 flex flex-col">
+
+    <header class="sticky top-0 z-20 bg-bg border-b border-line">
+      <div class="h-12 px-4 xl:px-6 flex items-center gap-2">
+        <div class="seg" role="group" aria-label="Time range" data-seg>
+          <button aria-pressed="false">15m</button><button aria-pressed="true">1h</button><button aria-pressed="false">24h</button><button aria-pressed="false">7d</button><button aria-pressed="false" aria-label="Custom range"><svg class="ic"><use href="#i-calendar"/></svg><span class="hidden xl:inline">Custom</span></button>
+        </div>
+        <button class="ctl" aria-haspopup="listbox" aria-label="Engine filter: all three engines">
+          <span class="flex items-center gap-1"><i class="eng e-c"></i><i class="eng e-h"></i><i class="eng e-l"></i></span>
+          <span class="hidden xl:inline text-muted">Engines</span><span>All 3</span>
+          <svg class="ic" style="width:14px;height:14px"><use href="#i-chev"/></svg>
+        </button>
+        <div class="seg" role="group" aria-label="Source" data-seg>
+          <button aria-pressed="true">All</button><button aria-pressed="false">Real</button><button aria-pressed="false">Sim</button>
+        </div>
+        <span class="chip src-sim hidden xl:inline-flex" title="62% of sessions in range are simulated">62% sim</span>
+        <div class="ml-auto flex items-center gap-2">
+          <span class="hidden lg:inline-flex items-center gap-2 text-label text-muted tnum"><span class="w-2 h-2 rounded-full pulse" style="background:var(--ok-fg)"></span>Live · 14:42:07</span>
+          <button class="ctl justify-center w-8 !px-0 xl:w-60 xl:!px-2.5 xl:justify-start" aria-label="Search (Command K)">
+            <svg class="ic"><use href="#i-search"/></svg>
+            <span class="hidden xl:inline text-muted">Search sessions, pages…</span>
+            <kbd class="hidden xl:inline ml-auto">⌘K</kbd>
+          </button>
+          <button class="ctl justify-center w-8 !px-0" id="theme" aria-label="Toggle light or dark theme"><svg class="ic"><use href="#i-sun" id="theme-ic"/></svg></button>
+        </div>
+      </div>
+    </header>
+
+    <main class="p-4 xl:p-6 space-y-3 max-w-[1600px] w-full">
+
+      <nav aria-label="Breadcrumb" class="flex items-center gap-1 text-label text-muted">
+        <a href="overview.html" class="hover:text-fg">Overview</a><svg class="ic" style="width:12px;height:12px"><use href="#i-right"/></svg>
+        <a href="#" class="hover:text-fg">Sessions</a><svg class="ic" style="width:12px;height:12px"><use href="#i-right"/></svg>
+        <span class="text-fg font-mono">s_9Kd2xQ</span>
+      </nav>
+
+      <!-- ============ HEADER ============ -->
+      <section class="card p-4" aria-label="Session summary">
+        <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <span class="badge badge-lg b-err"><svg class="ic"><use href="#i-x"/></svg>Failed</span>
+          <h1 class="text-title font-semibold font-mono tracking-tight">s_9Kd2xQ</h1>
+          <button class="ctl !h-7 !px-1.5" aria-label="Copy session ID"><svg class="ic" style="width:14px;height:14px"><use href="#i-copy"/></svg></button>
+          <span class="flex items-center gap-2 text-body"><i class="eng e-l"></i>Lightpanda <span class="text-subtle text-label">0.2.8</span></span>
+          <span class="chip src-real">Real</span>
+          <div class="ml-auto flex items-center gap-2">
+            <button class="ctl"><svg class="ic"><use href="#i-copy"/></svg><span class="hidden xl:inline">Copy link</span></button>
+            <button class="ctl ctl-primary"><svg class="ic"><use href="#i-spark"/></svg>Explain this session</button>
+          </div>
+        </div>
+        <p class="text-label text-muted mt-2">Started 14:38:07 · ended 14:38:19 · agent <span class="text-fg">checkout-bot</span> · scenario <span class="text-fg">checkout-form</span> · region <span class="text-fg">eu-west-1</span> · self-hosted</p>
+
+        <dl class="mt-4 grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-x-6 gap-y-3 border-t border-line pt-3">
+          <div><dt class="text-label text-muted">Duration</dt><dd class="text-title font-semibold tnum">12.4 s</dd></div>
+          <div><dt class="text-label text-muted">Cost (est.)</dt><dd class="text-title font-semibold tnum">$0.0004</dd></div>
+          <div><dt class="text-label text-muted">Actions</dt><dd class="text-title font-semibold tnum">11 <span class="text-label font-normal text-muted">9 ok · 2 failed</span></dd></div>
+          <div><dt class="text-label text-muted">Peak CPU</dt><dd class="text-title font-semibold tnum">62<span class="text-label font-normal text-muted">% of 1 core</span></dd></div>
+          <div><dt class="text-label text-muted">Peak memory</dt><dd class="text-title font-semibold tnum">71<span class="text-label font-normal text-muted"> MB</span></dd></div>
+          <div><dt class="text-label text-muted">Network</dt><dd class="text-title font-semibold tnum">86 <span class="text-label font-normal text-muted">req · 1.4 MB</span></dd></div>
+        </dl>
+      </section>
+
+      <!-- ============ ROOT CAUSE: above the fold ============ -->
+      <section class="card p-4 flex flex-wrap items-start gap-x-4 gap-y-3" style="background:var(--err-bg);box-shadow:inset 4px 0 0 var(--err-fg)" role="alert">
+        <svg class="ic" style="width:24px;height:24px;color:var(--err-fg)"><use href="#i-x"/></svg>
+        <div class="flex-1 min-w-[280px]">
+          <p class="font-semibold text-sm">Failed at 9.35 s: action #9 <code class="k">click button.checkout-submit</code></p>
+          <p class="text-body text-muted mt-1"><code class="k">unsupported_api</code> · <span class="text-fg">IntersectionObserver is not defined</span>, thrown from <code class="k">checkout.7f3a.js:412</code>. The agent retried once (#10) and hit the same error. Chromium and chrome-headless-shell completed this scenario in 38 of 38 runs over the last 24 h; Lightpanda in 3 of 27.</p>
+        </div>
+        <div class="flex gap-2">
+          <a href="#" class="ctl">Jump to action #9</a>
+          <a href="#" class="ctl">Compatibility matrix <svg class="ic" style="width:12px;height:12px"><use href="#i-up-right"/></svg></a>
+        </div>
+      </section>
+
+      <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_340px] gap-3 items-start">
+
+        <!-- ============ TIMELINE: waterfall + resources share one time axis ============ -->
+        <section class="card overflow-hidden" aria-label="Session timeline">
+          <div class="tabs px-2" role="tablist">
+            <a href="#" role="tab" aria-selected="true">Timeline</a>
+            <a href="#" role="tab" aria-selected="false">Network <span class="count">86</span></a>
+            <a href="#" role="tab" aria-selected="false">Screenshots <span class="count">3</span></a>
+            <a href="#" role="tab" aria-selected="false">Raw events <span class="count">247</span></a>
+            <div class="ml-auto flex items-center gap-4 pr-2 text-label text-muted">
+              <span class="flex items-center gap-1.5"><i class="inline-block w-3 h-2 rounded-sm" style="background:var(--bar)"></i>OK</span>
+              <span class="flex items-center gap-1.5"><i class="inline-block w-3 h-2 rounded-sm" style="background:var(--warn-fg)"></i>Slow</span>
+              <span class="flex items-center gap-1.5"><i class="inline-block w-3 h-2 rounded-sm" style="background-color:var(--err-fg);background-image:repeating-linear-gradient(135deg,transparent 0 2px,rgba(0,0,0,.3) 2px 3px)"></i>Failed</span>
+            </div>
+          </div>
+
+          <div class="tl" id="tl" aria-label="Action waterfall with CPU and memory on the same time axis">
+            <div class="tr" style="height:30px;border-bottom:1px solid var(--line)">
+              <div class="lbl text-label text-muted"><span class="font-medium text-fg">Actions</span><span>11 · start offset</span></div>
+              <div class="plot" id="axis"></div>
+            </div>
+            <div id="rows"></div>
+
+            <div class="sect"></div>
+            <div class="tr" style="height:88px;border-bottom:1px solid var(--line)">
+              <div class="lbl flex-col !items-start !justify-center !gap-0.5">
+                <span class="flex items-center gap-2 font-medium"><i class="eng e-l"></i>CPU</span>
+                <span class="text-label text-muted tnum" id="v-cpu">peak 62% at 3.0 s</span>
+                <span class="text-label text-subtle">% of one core · container</span>
+              </div>
+              <div class="plot" id="ch-cpu"></div>
+            </div>
+            <div class="tr" style="height:88px;border-bottom:1px solid var(--line)">
+              <div class="lbl flex-col !items-start !justify-center !gap-0.5">
+                <span class="flex items-center gap-2 font-medium"><i class="eng e-l"></i>Memory</span>
+                <span class="text-label text-muted tnum" id="v-mem">peak 71 MB at 6.0 s</span>
+                <span class="text-label text-subtle">MB · container</span>
+              </div>
+              <div class="plot" id="ch-mem"></div>
+            </div>
+            <div class="tr" style="height:44px">
+              <div class="lbl flex-col !items-start !justify-center !gap-0">
+                <span class="font-medium text-muted">JS heap</span>
+                <span class="text-label text-subtle">via CDP</span>
+              </div>
+              <div class="plot flex items-center px-3">
+                <div class="hatch w-full h-6 rounded border border-dashed flex items-center justify-center text-label text-muted" style="border-color:var(--line-strong)">Not available for Lightpanda (stored as null, never estimated)</div>
+              </div>
+            </div>
+
+            <div class="ov" aria-hidden="true"><div class="in" id="ov"></div></div>
+          </div>
+
+          <div class="border-t border-line px-4 py-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 bg-surface2 text-label" id="sel">
+            <span class="badge b-err"><svg class="ic"><use href="#i-x"/></svg>Failed</span>
+            <span class="font-medium">#9</span><code class="k">click button.checkout-submit</code>
+            <span class="text-muted tnum">6.90 → 9.35 s · 2.45 s</span>
+            <span class="text-muted">error_code <code class="k">UNSUPPORTED_API</code></span>
+            <a href="#issues" class="ml-auto text-fg underline underline-offset-2">See issue</a>
+          </div>
+        </section>
+
+        <!-- ============ SIDE COLUMN ============ -->
+        <div class="space-y-3">
+          <section id="issues" class="card" aria-label="Issues">
+            <header class="flex items-center justify-between px-4 pt-3 pb-2">
+              <h2 class="font-semibold text-sm">Issues <span class="count">2</span></h2>
+              <span class="text-label text-muted">same cause</span>
+            </header>
+            <ul class="border-t border-line">
+              <li class="px-4 py-3 border-b border-line">
+                <div class="flex items-center gap-2 flex-wrap"><span class="badge b-err"><svg class="ic"><use href="#i-x"/></svg>Error</span><code class="k">unsupported_api</code><span class="ml-auto text-label text-subtle tnum">9.35 s</span></div>
+                <p class="mt-1.5 text-body">IntersectionObserver is not defined</p>
+                <p class="text-label text-muted mt-0.5">Action #9 · <code class="k">checkout.7f3a.js:412</code></p>
+                <div class="mt-2 flex gap-2"><a href="#" class="ctl !h-7 !px-2 text-label">Jump to #9</a><a href="#" class="ctl !h-7 !px-2 text-label">Similar sessions · 24</a></div>
+              </li>
+              <li class="px-4 py-3">
+                <div class="flex items-center gap-2 flex-wrap"><span class="badge b-err"><svg class="ic"><use href="#i-x"/></svg>Error</span><code class="k">unsupported_api</code><span class="ml-auto text-label text-subtle tnum">11.90 s</span></div>
+                <p class="mt-1.5 text-body">IntersectionObserver is not defined</p>
+                <p class="text-label text-muted mt-0.5">Action #10 (retry of #9)</p>
+              </li>
+            </ul>
+          </section>
+
+          <section class="card" aria-label="Same scenario on other engines">
+            <header class="px-4 pt-3 pb-2">
+              <h2 class="font-semibold text-sm">checkout-form on each engine</h2>
+              <p class="text-label text-muted">Last 24 h · success / runs</p>
+            </header>
+            <table class="w-full tnum text-body border-t border-line">
+              <tbody>
+                <tr class="h-9 border-b border-line"><th scope="row" class="text-left font-normal px-4"><span class="flex items-center gap-2"><i class="eng e-c"></i>Chromium</span></th><td class="text-right">38 / 38</td><td class="text-right px-4"><span class="badge b-ok"><svg class="ic"><use href="#i-check"/></svg>100%</span></td></tr>
+                <tr class="h-9 border-b border-line"><th scope="row" class="text-left font-normal px-4"><span class="flex items-center gap-2"><i class="eng e-h"></i>headless-shell</span></th><td class="text-right">38 / 38</td><td class="text-right px-4"><span class="badge b-ok"><svg class="ic"><use href="#i-check"/></svg>100%</span></td></tr>
+                <tr class="h-9"><th scope="row" class="text-left font-medium px-4"><span class="flex items-center gap-2"><i class="eng e-l"></i>Lightpanda</span></th><td class="text-right">3 / 27</td><td class="text-right px-4"><span class="badge b-err"><svg class="ic"><use href="#i-x"/></svg>11%</span></td></tr>
+              </tbody>
+            </table>
+          </section>
+
+          <section class="card" aria-label="Screenshots">
+            <header class="flex items-center justify-between px-4 pt-3 pb-2"><h2 class="font-semibold text-sm">Screenshots <span class="count">3</span></h2><span class="text-label text-muted">optional</span></header>
+            <div class="grid grid-cols-3 gap-2 px-4 pb-3">
+              <figure><div class="thumb hatch">/cart</div><figcaption class="text-label text-muted mt-1">after #6</figcaption></figure>
+              <figure><div class="thumb hatch" style="border-color:var(--err-fg);border-style:solid">error</div><figcaption class="text-label mt-1" style="color:var(--err-fg)">at #9</figcaption></figure>
+              <figure><div class="thumb hatch">final</div><figcaption class="text-label text-muted mt-1">#11</figcaption></figure>
+            </div>
+          </section>
+
+          <section class="card" aria-label="Engine and timing details">
+            <header class="px-4 pt-3 pb-2"><h2 class="font-semibold text-sm">Details</h2></header>
+            <dl class="grid grid-cols-[110px_1fr] gap-y-1.5 px-4 pb-3 text-body border-t border-line pt-3">
+              <dt class="text-muted">Engine</dt><dd>Lightpanda 0.2.8</dd>
+              <dt class="text-muted">Startup</dt><dd class="tnum">212 ms</dd>
+              <dt class="text-muted">Connect</dt><dd class="tnum">38 ms</dd>
+              <dt class="text-muted">Provider</dt><dd>self-hosted (docker)</dd>
+              <dt class="text-muted">Source</dt><dd><span class="chip src-real">Real</span></dd>
+              <dt class="text-muted">Ended</dt><dd><code class="k">failed</code> · 14:38:19</dd>
+            </dl>
+          </section>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script>
+(function () {
+  var root = document.documentElement;
+  document.getElementById('theme').addEventListener('click', function () {
+    var light = root.getAttribute('data-theme') !== 'light';
+    root.setAttribute('data-theme', light ? 'light' : 'dark');
+    document.getElementById('theme-ic').setAttribute('href', light ? '#i-moon' : '#i-sun');
+  });
+  document.querySelectorAll('[data-seg]').forEach(function (g) {
+    g.addEventListener('click', function (e) {
+      var b = e.target.closest('button'); if (!b) return;
+      g.querySelectorAll('button').forEach(function (x) { x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); });
+    });
+  });
+
+  /* ---------- fake session data ---------- */
+  var DUR = 12.4, FAIL_T = 9.35, PAD = 12;
+  var A = [
+    {n:1, ty:'goto',       tg:'shop.acme-demo.test/',            s:0,    d:1.18, st:'ok'},
+    {n:2, ty:'wait',       tg:'[data-testid=product-grid]',      s:1.20, d:0.34, st:'ok'},
+    {n:3, ty:'click',      tg:'a.product-card:nth-child(2)',     s:1.56, d:0.12, st:'ok'},
+    {n:4, ty:'goto',       tg:'/product/trail-runner-2',         s:1.70, d:2.95, st:'slow'},
+    {n:5, ty:'click',      tg:'button#add-to-cart',              s:4.70, d:0.21, st:'ok'},
+    {n:6, ty:'goto',       tg:'/cart',                           s:4.95, d:1.62, st:'ok'},
+    {n:7, ty:'fill',       tg:'input[name=email]',               s:6.60, d:0.09, st:'ok'},
+    {n:8, ty:'fill',       tg:'input[name=card]',                s:6.72, d:0.14, st:'ok'},
+    {n:9, ty:'click',      tg:'button.checkout-submit',          s:6.90, d:2.45, st:'err'},
+    {n:10,ty:'click',      tg:'button.checkout-submit (retry)',  s:9.45, d:2.45, st:'err'},
+    {n:11,ty:'screenshot', tg:'full page',                       s:11.95,d:0.35, st:'ok'}
+  ];
+  var TS = []; for (var k = 0; k <= 24; k++) TS.push(k * 0.5); TS.push(12.4);
+  var CPU = [35,52,58,18,44,55,62,51,46,28,41,49,44,14,12,9,8,7,8,11,10,9,9,12,30,6];
+  var MEM = [28,41,46,47,52,58,64,66,67,68,68,70,71,70,70,70,70,70,70,70,70,70,70,71,71,71];
+
+  var pct = function (t) { return (t / DUR * 100); };
+  var f2 = function (v) { return v.toFixed(2); };
+
+  /* axis */
+  var ax = '';
+  for (var t = 0; t <= 12; t += 2) ax += '<span class="ax" style="position:absolute;top:7px;left:calc(' + PAD + 'px + (100% - ' + (2*PAD) + 'px) * ' + (t/DUR) + ');transform:translateX(-50%);font-size:12px;fill:none;color:var(--fg-subtle)">' + t + ' s</span>';
+  ax += '<span style="position:absolute;top:7px;right:' + PAD + 'px;font-size:12px;color:var(--fg-muted)" class="tnum">end 12.4 s</span>';
+  document.getElementById('axis').innerHTML = ax;
+
+  /* waterfall rows */
+  var rows = '';
+  A.forEach(function (a) {
+    var left = 'calc(' + PAD + 'px + (100% - ' + (2*PAD) + 'px) * ' + (a.s / DUR) + ')';
+    var wid = 'calc((100% - ' + (2*PAD) + 'px) * ' + (a.d / DUR) + ')';
+    var late = (a.s + a.d) / DUR > 0.82;
+    var icon = a.st === 'err' ? '<svg class="ic"><use href="#i-xs"/></svg>' : a.st === 'slow' ? '<svg class="ic"><use href="#i-clock"/></svg>' : '';
+    var txt = f2(a.d) + ' s' + (a.st === 'err' ? ' · failed' : a.st === 'slow' ? ' · slow' : '');
+    var lblPos = late ? 'right:calc(' + PAD + 'px + (100% - ' + (2*PAD) + 'px) * ' + (1 - a.s / DUR) + ' + 6px)'
+                      : 'left:calc(' + PAD + 'px + (100% - ' + (2*PAD) + 'px) * ' + ((a.s + a.d) / DUR) + ' + 6px)';
+    rows += '<div class="tr wrow" role="row" ' + (a.n === 9 ? 'aria-selected="true"' : '') + ' data-n="' + a.n + '">' +
+      '<div class="lbl"><span class="n">' + a.n + '</span><span class="ty">' + a.ty + '</span><span class="tg" title="' + a.tg + '">' + a.tg + '</span></div>' +
+      '<div class="plot"><div class="bar-a ' + a.st + '" style="left:' + left + ';width:' + wid + '" role="img" aria-label="Action ' + a.n + ' ' + a.ty + ', ' + txt + '">' + (a.d / DUR > 0.04 ? icon : '') + '</div>' +
+      '<span class="dur ' + a.st + '" style="' + lblPos + '">' + txt + '</span></div></div>';
+  });
+  document.getElementById('rows').innerHTML = rows;
+
+  /* resource charts: x scale identical to the waterfall (PAD + (W-2PAD) * t / DUR) */
+  function area(el, data, max, ticks, unit) {
+    var W = el.clientWidth, H = el.clientHeight, pt = 8, pb = 6, ph = H - pt - pb;
+    var x = function (t) { return PAD + (W - 2 * PAD) * t / DUR; };
+    var y = function (v) { return pt + ph * (1 - v / max); };
+    var s = '<svg width="' + W + '" height="' + H + '" style="display:block" role="img" aria-label="' + unit + ' over the session">';
+    ticks.forEach(function (tk) {
+      s += '<line x1="0" x2="' + W + '" y1="' + y(tk) + '" y2="' + y(tk) + '" style="stroke:var(--line)"/>';
+      s += '<text x="' + (W - PAD) + '" y="' + (y(tk) - 3) + '" text-anchor="end" class="ax">' + tk + (unit === 'cpu' ? '%' : ' MB') + '</text>';
+    });
+    var p = TS.map(function (t, i) { return (i ? 'L' : 'M') + x(t).toFixed(1) + ' ' + y(data[i]).toFixed(1); }).join('');
+    s += '<path d="' + p + 'L' + x(DUR) + ' ' + y(0) + 'L' + x(0) + ' ' + y(0) + 'Z" style="fill:var(--eng-l)" fill-opacity=".22"/>';
+    s += '<path d="' + p + '" fill="none" style="stroke:var(--eng-l)" stroke-width="2" stroke-linejoin="round"/>';
+    var pk = data.indexOf(Math.max.apply(null, data));
+    s += '<rect x="' + (x(TS[pk]) - 4) + '" y="' + (y(data[pk]) - 4) + '" width="8" height="8" transform="rotate(45 ' + x(TS[pk]) + ' ' + y(data[pk]) + ')" style="fill:var(--eng-l);stroke:var(--surface);stroke-width:1.5"/>';
+    el.innerHTML = s + '</svg>';
+  }
+
+  /* overlay: gridlines, failure marker, hover cursor */
+  function overlay() {
+    var o = '';
+    for (var t = 0; t <= 12; t += 2) o += '<i class="gl" style="left:' + pct(t) + '%"></i>';
+    o += '<i class="fail" style="left:' + pct(FAIL_T) + '%"></i>';
+    o += '<span style="position:absolute;top:4px;left:' + pct(FAIL_T) + '%;transform:translateX(-100%);margin-left:-6px" class="badge b-err"><svg class="ic"><use href="#i-xs"/></svg>9.35 s</span>';
+    o += '<i class="hov" id="hov"></i><span id="hovt" class="badge" style="position:absolute;top:4px;left:0;opacity:0;background:var(--ink);color:var(--on-ink)"></span>';
+    document.getElementById('ov').innerHTML = o;
+  }
+  function render() {
+    area(document.getElementById('ch-cpu'), CPU, 100, [50, 100], 'cpu');
+    area(document.getElementById('ch-mem'), MEM, 80, [40, 80], 'mem');
+    overlay();
+  }
+  render();
+  if (window.ResizeObserver) new ResizeObserver(render).observe(document.getElementById('tl')); else window.addEventListener('resize', render);
+
+  /* synced crosshair across waterfall + both charts */
+  var tl = document.getElementById('tl');
+  function at(arr, t) { for (var i = 1; i < TS.length; i++) if (t <= TS[i]) { var f = (t - TS[i-1]) / (TS[i] - TS[i-1]); return arr[i-1] + (arr[i] - arr[i-1]) * f; } return arr[arr.length - 1]; }
+  tl.addEventListener('mousemove', function (e) {
+    var inn = document.getElementById('ov'), r = inn.getBoundingClientRect();
+    var t = (e.clientX - r.left) / r.width * DUR, hov = document.getElementById('hov'), ht = document.getElementById('hovt');
+    if (!hov) return;
+    if (t < 0 || t > DUR) { hov.style.opacity = 0; ht.style.opacity = 0; return; }
+    hov.style.opacity = 1; hov.style.left = pct(t) + '%';
+    ht.style.opacity = 1; ht.style.left = pct(t) + '%'; ht.style.marginLeft = '6px'; ht.textContent = t.toFixed(2) + ' s';
+    document.getElementById('v-cpu').textContent = Math.round(at(CPU, t)) + '% at ' + t.toFixed(1) + ' s';
+    document.getElementById('v-mem').textContent = Math.round(at(MEM, t)) + ' MB at ' + t.toFixed(1) + ' s';
+  });
+  tl.addEventListener('mouseleave', function () {
+    var hov = document.getElementById('hov'), ht = document.getElementById('hovt');
+    if (hov) { hov.style.opacity = 0; ht.style.opacity = 0; }
+    document.getElementById('v-cpu').textContent = 'peak 62% at 3.0 s';
+    document.getElementById('v-mem').textContent = 'peak 71 MB at 6.0 s';
+  });
+})();
+</script>
+</body>
+</html>

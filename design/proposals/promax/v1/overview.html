@@ -1,0 +1,574 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fleetscope · Overview (promax v1)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  theme: { extend: {
+    colors: {
+      bg: 'var(--bg)', surface: 'var(--surface)', surface2: 'var(--surface-2)',
+      line: 'var(--line)', strong: 'var(--line-strong)',
+      fg: 'var(--fg)', muted: 'var(--fg-muted)', subtle: 'var(--fg-subtle)',
+      ink: 'var(--ink)', onink: 'var(--on-ink)',
+      ok: { fg: 'var(--ok-fg)', bg: 'var(--ok-bg)' },
+      warn: { fg: 'var(--warn-fg)', bg: 'var(--warn-bg)' },
+      err: { fg: 'var(--err-fg)', bg: 'var(--err-bg)' },
+      blk: { fg: 'var(--blk-fg)', bg: 'var(--blk-bg)' }
+    },
+    fontFamily: {
+      sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+      mono: ['"JetBrains Mono"', 'ui-monospace', 'monospace']
+    },
+    fontSize: {
+      label: ['12px', '16px'], body: ['13px', '20px'],
+      kpi: ['26px', '30px'], title: ['20px', '28px']
+    }
+  } }
+};
+</script>
+<style>
+/* ---------- tokens (see system.md) ---------- */
+:root, [data-theme="dark"] {
+  --bg:#0B0F14; --surface:#111821; --surface-2:#17212C; --line:#243142; --line-strong:#5B6B80;
+  --fg:#E6EDF5; --fg-muted:#9AA9BB; --fg-subtle:#7D8DA1; --ink:#E6EDF5; --on-ink:#0B0F14;
+  --ok-fg:#4BD98E; --ok-bg:#10281C; --warn-fg:#F2C14E; --warn-bg:#2E2410;
+  --err-fg:#FF7B7B; --err-bg:#33191B; --blk-fg:#B79CFF; --blk-bg:#231C3A;
+  --eng-c:#56B4E9; --eng-h:#E69F00; --eng-l:#CC79A7;
+  --shadow:0 8px 24px rgba(0,0,0,.45); color-scheme: dark;
+}
+[data-theme="light"] {
+  --bg:#F4F6F9; --surface:#FFFFFF; --surface-2:#F0F3F7; --line:#DDE3EA; --line-strong:#7A889B;
+  --fg:#0F1722; --fg-muted:#475569; --fg-subtle:#5F6E82; --ink:#0F1722; --on-ink:#FFFFFF;
+  --ok-fg:#0B6B39; --ok-bg:#DDF5E7; --warn-fg:#8A5A00; --warn-bg:#FDF1D3;
+  --err-fg:#B42318; --err-bg:#FDE4E1; --blk-fg:#5B3FC4; --blk-bg:#ECE7FB;
+  --eng-c:#0072B2; --eng-h:#B86E00; --eng-l:#B0457F;
+  --shadow:0 8px 24px rgba(15,23,34,.14); color-scheme: light;
+}
+html { font-feature-settings: "cv11","ss01"; }
+body { background: var(--bg); color: var(--fg); }
+.tnum { font-variant-numeric: tabular-nums; }
+:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; border-radius: 4px; }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+/* ---------- icons ---------- */
+.ic { width:16px; height:16px; flex:none; stroke:currentColor; fill:none; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+.badge .ic, .chip .ic { width:12px; height:12px; }
+
+/* ---------- status badge: icon + label, never colour alone ---------- */
+.badge { display:inline-flex; align-items:center; gap:4px; height:20px; padding:0 6px; border-radius:4px; font-size:12px; line-height:16px; font-weight:500; white-space:nowrap; }
+.b-ok { background:var(--ok-bg); color:var(--ok-fg); }
+.b-warn { background:var(--warn-bg); color:var(--warn-fg); }
+.b-err { background:var(--err-bg); color:var(--err-fg); }
+.b-blk { background:var(--blk-bg); color:var(--blk-fg); }
+
+/* ---------- source chip: Real = solid outline, Sim = dashed + hatch ---------- */
+.chip { display:inline-flex; align-items:center; gap:4px; height:20px; padding:0 6px; border-radius:4px; font-size:12px; line-height:16px; font-weight:600; letter-spacing:.04em; text-transform:uppercase; color:var(--fg-muted); white-space:nowrap; }
+.src-real { border:1px solid var(--line-strong); }
+.src-sim { border:1px dashed var(--line-strong); background-image:repeating-linear-gradient(135deg, transparent 0 4px, var(--line) 4px 5px); }
+.src-real::before { content:""; width:6px; height:6px; border-radius:50%; background:var(--fg-muted); }
+.src-sim::before { content:""; width:6px; height:6px; border-radius:50%; border:1px solid var(--fg-muted); }
+
+/* ---------- engine markers: colour + shape ---------- */
+.eng { display:inline-block; width:10px; height:10px; flex:none; }
+.e-c { background:var(--eng-c); border-radius:50%; }
+.e-h { background:var(--eng-h); border-radius:2px; }
+.e-l { background:var(--eng-l); transform:rotate(45deg) scale(.88); }
+
+/* ---------- controls ---------- */
+.ctl { display:inline-flex; align-items:center; gap:6px; height:32px; padding:0 10px; border:1px solid var(--line-strong); border-radius:6px; font-size:13px; color:var(--fg); background:var(--surface); white-space:nowrap; }
+.ctl:hover, .seg button:hover { background:var(--surface-2); }
+.seg { display:inline-flex; height:32px; border:1px solid var(--line-strong); border-radius:6px; overflow:hidden; background:var(--surface); }
+.seg button { display:inline-flex; align-items:center; gap:6px; padding:0 10px; font-size:13px; color:var(--fg-muted); }
+.seg button + button { border-left:1px solid var(--line); }
+.seg button[aria-pressed="true"] { background:var(--ink); color:var(--on-ink); font-weight:600; }
+kbd { font-family:"JetBrains Mono",monospace; font-size:12px; line-height:16px; padding:0 4px; border:1px solid var(--line-strong); border-radius:4px; color:var(--fg-muted); }
+
+/* ---------- cards ---------- */
+.card { background:var(--surface); border:1px solid var(--line); border-radius:8px; }
+a.kpi { display:block; padding:12px; position:relative; transition:background-color .15s; }
+a.kpi:hover { background:var(--surface-2); }
+a.kpi .go { position:absolute; top:12px; right:10px; color:var(--fg-subtle); }
+a.kpi:hover .go { color:var(--fg); }
+.kpi-warn { border-left:3px solid var(--warn-fg); }
+.nav a { display:flex; align-items:center; gap:10px; height:36px; padding:0 10px; border-radius:6px; color:var(--fg-muted); font-size:13px; }
+.nav a:hover { background:var(--surface-2); color:var(--fg); }
+.nav a[aria-current="page"] { background:var(--surface-2); color:var(--fg); font-weight:600; box-shadow: inset 2px 0 0 var(--ink); }
+tbody tr.row:hover, li.frow a:hover { background:var(--surface-2); }
+.bar { display:inline-block; width:56px; height:6px; border-radius:3px; background:var(--surface-2); overflow:hidden; border:1px solid var(--line); }
+.bar i { display:block; height:100%; }
+.ax { font-size:12px; fill:var(--fg-subtle); font-family:Inter,sans-serif; }
+.legend button { display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--fg-muted); padding:2px 4px; border-radius:4px; }
+.legend button:hover { background:var(--surface-2); color:var(--fg); }
+.legend b { color:var(--fg); font-weight:600; }
+.pulse { animation: pulse 2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity:.35; } }
+.tip { position:absolute; z-index:5; width:208px; background:var(--surface-2); border:1px solid var(--line-strong); border-radius:6px; padding:8px 10px; box-shadow:var(--shadow); font-size:12px; line-height:16px; }
+.sr { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+code.k { font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--fg); }
+</style>
+</head>
+<body class="font-sans text-body antialiased">
+
+<!-- icon sprite -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.46 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></symbol>
+  <symbol id="i-ban" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></symbol>
+  <symbol id="i-cpu" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/></symbol>
+  <symbol id="i-coin" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M15 9h-4a2 2 0 0 0 0 4h2a2 2 0 0 1 0 4H9M12 6v2M12 16v2"/></symbol>
+  <symbol id="i-bulb" viewBox="0 0 24 24"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.3h6c0-1 .4-1.8 1-2.3A7 7 0 0 0 12 2Z"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-up-right" viewBox="0 0 24 24"><path d="M7 17 17 7M7 7h10v10"/></symbol>
+  <symbol id="i-arrow-up" viewBox="0 0 24 24"><path d="m5 12 7-7 7 7M12 19V5"/></symbol>
+  <symbol id="i-arrow-down" viewBox="0 0 24 24"><path d="M12 5v14m7-7-7 7-7-7"/></symbol>
+  <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+  <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></symbol>
+  <symbol id="i-table" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/></symbol>
+</svg>
+
+<div class="flex min-h-screen">
+
+  <!-- ============ SIDEBAR: icon rail below 1280px, full at xl ============ -->
+  <aside class="w-14 xl:w-[216px] shrink-0 bg-surface border-r border-line sticky top-0 h-screen flex flex-col">
+    <div class="h-12 flex items-center gap-2 px-3 border-b border-line">
+      <svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><rect x="1" y="1" width="22" height="22" rx="6" style="fill:var(--ink)"/><circle cx="12" cy="12" r="4" style="fill:none;stroke:var(--on-ink);stroke-width:2"/><path d="M12 4v3M12 17v3M4 12h3M17 12h3" style="stroke:var(--on-ink);stroke-width:2;stroke-linecap:round"/></svg>
+      <span class="hidden xl:inline font-semibold text-sm tracking-tight">Fleetscope</span>
+    </div>
+    <nav class="nav flex-1 p-2 space-y-1" aria-label="Main">
+      <a href="#" aria-current="page" title="Overview" aria-label="Overview"><svg class="ic"><use href="#i-grid"/></svg><span class="hidden xl:inline">Overview</span></a>
+      <a href="#" title="Sessions" aria-label="Sessions"><svg class="ic"><use href="#i-list"/></svg><span class="hidden xl:inline">Sessions</span><span class="hidden xl:inline ml-auto text-label text-subtle tnum">1,926</span></a>
+      <a href="#" title="Browsers" aria-label="Browsers"><svg class="ic"><use href="#i-cpu"/></svg><span class="hidden xl:inline">Browsers</span></a>
+      <a href="#" title="Usage and cost" aria-label="Usage and cost"><svg class="ic"><use href="#i-coin"/></svg><span class="hidden xl:inline">Usage &amp; cost</span></a>
+      <a href="#" title="Insights, 5 open" aria-label="Insights, 5 open"><svg class="ic"><use href="#i-bulb"/></svg><span class="hidden xl:inline">Insights</span><span class="hidden xl:inline ml-auto badge b-warn">5</span></a>
+    </nav>
+    <div class="hidden xl:block p-3 border-t border-line text-label text-muted space-y-1">
+      <div class="flex items-center gap-2"><span class="w-2 h-2 rounded-full pulse" style="background:var(--ok-fg)"></span><span>Ingest healthy · 1.2k ev/s</span></div>
+      <div class="text-subtle">ClickHouse · lag 0.8 s</div>
+    </div>
+  </aside>
+
+  <div class="flex-1 min-w-0 flex flex-col">
+
+    <!-- ============ TOP BAR ============ -->
+    <header class="sticky top-0 z-20 bg-bg border-b border-line">
+      <div class="h-12 px-4 xl:px-6 flex items-center gap-2">
+        <div class="seg" role="group" aria-label="Time range" data-seg>
+          <button aria-pressed="false">15m</button><button aria-pressed="true">1h</button><button aria-pressed="false">24h</button><button aria-pressed="false">7d</button><button aria-pressed="false" aria-label="Custom range"><svg class="ic"><use href="#i-calendar"/></svg><span class="hidden xl:inline">Custom</span></button>
+        </div>
+        <button class="ctl" aria-haspopup="listbox" aria-label="Engine filter: all three engines">
+          <span class="flex items-center gap-1"><i class="eng e-c"></i><i class="eng e-h"></i><i class="eng e-l"></i></span>
+          <span class="hidden xl:inline text-muted">Engines</span><span>All 3</span>
+          <svg class="ic" style="width:14px;height:14px"><use href="#i-chev"/></svg>
+        </button>
+        <div class="seg" role="group" aria-label="Source" data-seg>
+          <button aria-pressed="true">All</button><button aria-pressed="false">Real</button><button aria-pressed="false">Sim</button>
+        </div>
+        <span class="chip src-sim hidden xl:inline-flex" title="62% of sessions in range are simulated">62% sim</span>
+
+        <div class="ml-auto flex items-center gap-2">
+          <span class="hidden lg:inline-flex items-center gap-2 text-label text-muted tnum"><span class="w-2 h-2 rounded-full pulse" style="background:var(--ok-fg)"></span>Live · 14:42:07</span>
+          <button class="ctl justify-center w-8 !px-0 xl:w-60 xl:!px-2.5 xl:justify-start" aria-label="Search (Command K)">
+            <svg class="ic"><use href="#i-search"/></svg>
+            <span class="hidden xl:inline text-muted">Search sessions, pages…</span>
+            <kbd class="hidden xl:inline ml-auto">⌘K</kbd>
+          </button>
+          <button class="ctl justify-center w-8 !px-0" id="theme" aria-label="Toggle light or dark theme"><svg class="ic"><use href="#i-sun" id="theme-ic"/></svg></button>
+        </div>
+      </div>
+    </header>
+
+    <main class="p-4 xl:p-6 space-y-3 max-w-[1600px] w-full">
+
+      <!-- page header -->
+      <div class="flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <h1 class="text-title font-semibold tracking-tight">Overview</h1>
+          <p class="text-label text-muted">Last 1 hour · 13:42–14:42 · all engines · real + simulated</p>
+        </div>
+        <p class="text-label text-subtle tnum">Updated 1 s ago · stream connected</p>
+      </div>
+
+      <!-- ============ FLEET VERDICT: the 5-second answer ============ -->
+      <section class="card flex flex-wrap items-center gap-x-6 gap-y-3 p-4" style="background:var(--warn-bg);border-color:var(--line);box-shadow:inset 4px 0 0 var(--warn-fg)" role="status" aria-label="Fleet status: degraded">
+        <div class="flex items-start gap-3 min-w-[280px] flex-1">
+          <svg class="ic" style="width:28px;height:28px;color:var(--warn-fg)"><use href="#i-alert"/></svg>
+          <div>
+            <p class="text-title font-semibold" style="color:var(--fg)">Fleet degraded</p>
+            <p class="text-body text-muted">Success rate is 91.6% (target 95%). Lightpanda errors spiked to 28% at 14:25, mostly <code class="k">unsupported_api</code> on <code class="k">checkout-form</code>.</p>
+          </div>
+        </div>
+        <dl class="flex gap-6 text-label">
+          <div><dt class="text-muted">Capacity</dt><dd class="text-body font-semibold tnum">128 / 200 slots <span class="font-normal text-muted">64%</span></dd></div>
+          <div><dt class="text-muted">Engines reporting</dt><dd class="text-body font-semibold tnum">3 / 3</dd></div>
+          <div><dt class="text-muted">Failed sessions</dt><dd class="text-body font-semibold tnum">162</dd></div>
+        </dl>
+        <a href="#failures" class="ctl font-semibold" style="background:var(--ink);color:var(--on-ink);border-color:var(--ink)">Investigate 162 failures <svg class="ic"><use href="#i-up-right"/></svg></a>
+      </section>
+
+      <!-- ============ KPI CARDS (every card is a link into the sessions behind it) ============ -->
+      <section aria-label="Key metrics" class="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-7 gap-3">
+        <a href="#" class="card kpi" aria-label="Active now: 128 of 200 slots. View active sessions">
+          <p class="text-label text-muted">Active now</p><svg class="ic go"><use href="#i-up-right"/></svg>
+          <p class="text-kpi font-semibold tnum mt-1">128 <span class="text-label font-normal text-muted">/ 200</span></p>
+          <p class="text-label text-muted tnum flex items-center gap-1"><svg class="ic" style="width:12px;height:12px"><use href="#i-arrow-up"/></svg>+9 <span class="text-subtle">vs 1h ago</span></p>
+          <svg class="spark mt-2 block w-full" data-spark="act" height="24" viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true"></svg>
+        </a>
+        <a href="#" class="card kpi" aria-label="Sessions in range: 1,926, 38% real, 62% simulated">
+          <p class="text-label text-muted">Sessions · 1h</p><svg class="ic go"><use href="#i-up-right"/></svg>
+          <p class="text-kpi font-semibold tnum mt-1">1,926</p>
+          <p class="text-label text-muted tnum flex items-center gap-1"><svg class="ic" style="width:12px;height:12px"><use href="#i-arrow-up"/></svg>+12% <span class="text-subtle">vs prev</span></p>
+          <div class="mt-2 flex h-6 items-end" aria-hidden="true">
+            <div class="flex w-full h-2 rounded-sm overflow-hidden border" style="border-color:var(--line-strong)">
+              <i style="width:38%;background:var(--fg-subtle)"></i>
+              <i style="width:62%;background-image:repeating-linear-gradient(135deg,transparent 0 3px,var(--fg-subtle) 3px 4px)"></i>
+            </div>
+          </div>
+          <p class="text-label text-subtle tnum -mt-1">741 real · 1,185 sim</p>
+        </a>
+        <a href="#" class="card kpi kpi-warn" aria-label="Success rate 91.6 percent, degraded. View failed sessions">
+          <p class="text-label text-muted">Success rate</p><svg class="ic go"><use href="#i-up-right"/></svg>
+          <p class="text-kpi font-semibold tnum mt-1">91.6<span class="text-label font-normal text-muted">%</span></p>
+          <p class="text-label tnum flex items-center gap-1" style="color:var(--err-fg)"><svg class="ic" style="width:12px;height:12px"><use href="#i-arrow-down"/></svg>−3.4 pts <span class="text-subtle">vs prev</span></p>
+          <svg class="spark mt-2 block w-full" data-spark="succ" height="24" viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true"></svg>
+        </a>
+        <a href="#" class="card kpi" aria-label="p95 action latency 1.84 seconds. View slowest sessions">
+          <p class="text-label text-muted">p95 action latency</p><svg class="ic go"><use href="#i-up-right"/></svg>
+          <p class="text-kpi font-semibold tnum mt-1">1.84<span class="text-label font-normal text-muted"> s</span></p>
+          <p class="text-label tnum flex items-center gap-1" style="color:var(--err-fg)"><svg class="ic" style="width:12px;height:12px"><use href="#i-arrow-up"/></svg>+0.31 s <span class="text-subtle">vs prev</span></p>
+          <svg class="spark mt-2 block w-full" data-spark="lat" height="24" viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true"></svg>
+        </a>
+        <a href="#" class="card kpi" aria-label="CPU cores in use 36.2">
+          <p class="text-label text-muted">CPU in use</p><svg class="ic go"><use href="#i-up-right"/></svg>
+          <p class="text-kpi font-semibold tnum mt-1">36.2<span class="text-label font-normal text-muted"> cores</span></p>
+          <p class="text-label text-muted tnum flex items-center gap-1"><svg class="ic" style="width:12px;height:12px"><use href="#i-arrow-up"/></svg>+2.4 <span class="text-subtle">vs prev</span></p>
+          <svg class="spark mt-2 block w-full" data-spark="cpu" height="24" viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true"></svg>
+        </a>
+        <a href="#" class="card kpi" aria-label="Memory in use 58.4 gigabytes">
+          <p class="text-label text-muted">Memory</p><svg class="ic go"><use href="#i-up-right"/></svg>
+          <p class="text-kpi font-semibold tnum mt-1">58.4<span class="text-label font-normal text-muted"> GB</span></p>
+          <p class="text-label text-muted tnum flex items-center gap-1"><svg class="ic" style="width:12px;height:12px"><use href="#i-arrow-up"/></svg>+4.1 GB <span class="text-subtle">vs prev</span></p>
+          <svg class="spark mt-2 block w-full" data-spark="mem" height="24" viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true"></svg>
+        </a>
+        <a href="#" class="card kpi col-span-2 xl:col-span-1" aria-label="Estimated cost 8.73 dollars in the last hour">
+          <p class="text-label text-muted">Est. cost · 1h</p><svg class="ic go"><use href="#i-up-right"/></svg>
+          <p class="text-kpi font-semibold tnum mt-1">$8.73</p>
+          <p class="text-label text-muted tnum flex items-center gap-1"><svg class="ic" style="width:12px;height:12px"><use href="#i-arrow-up"/></svg>+$0.62 <span class="text-subtle">vs prev</span></p>
+          <svg class="spark mt-2 block w-full" data-spark="cost" height="24" viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true"></svg>
+          <p class="text-label text-subtle tnum -mt-0.5">≈ $210 / day</p>
+        </a>
+      </section>
+
+      <!-- ============ CHARTS ============ -->
+      <section aria-label="Live charts" class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-3">
+
+        <!-- error rate: the story -->
+        <article class="card lg:col-span-2 xl:col-span-1">
+          <header class="flex items-start justify-between gap-2 px-4 pt-3">
+            <div><h2 class="font-semibold text-sm">Error rate by engine</h2><p class="text-label text-muted">% of sessions ending not-successful, per minute</p></div>
+            <div class="flex items-center gap-1">
+              <button class="ctl !h-7 !px-1.5" aria-label="Show as table"><svg class="ic" style="width:14px;height:14px"><use href="#i-table"/></svg></button>
+              <a href="#" class="ctl !h-7 !px-2 text-label">Sessions <svg class="ic" style="width:12px;height:12px"><use href="#i-up-right"/></svg></a>
+            </div>
+          </header>
+          <div class="legend px-3 pt-1 flex flex-wrap gap-x-2">
+            <button aria-pressed="true"><i class="eng e-c"></i>Chromium <b class="tnum">4.9%</b></button>
+            <button aria-pressed="true"><i class="eng e-h"></i>headless-shell <b class="tnum">6.0%</b></button>
+            <button aria-pressed="true"><i class="eng e-l"></i>Lightpanda <b class="tnum">13.1%</b></button>
+          </div>
+          <div id="c-err" class="relative h-[212px] mt-1"></div>
+          <p class="px-4 pb-3 text-label text-subtle">Click any point to open the sessions in that minute.</p>
+        </article>
+
+        <article class="card">
+          <header class="flex items-start justify-between gap-2 px-4 pt-3">
+            <div><h2 class="font-semibold text-sm">Active sessions</h2><p class="text-label text-muted">Stacked by engine, per minute</p></div>
+            <div class="flex items-center gap-1">
+              <button class="ctl !h-7 !px-1.5" aria-label="Show as table"><svg class="ic" style="width:14px;height:14px"><use href="#i-table"/></svg></button>
+              <a href="#" class="ctl !h-7 !px-2 text-label">Sessions <svg class="ic" style="width:12px;height:12px"><use href="#i-up-right"/></svg></a>
+            </div>
+          </header>
+          <div class="legend px-3 pt-1 flex flex-wrap gap-x-2">
+            <button aria-pressed="true"><i class="eng e-c"></i>Chromium <b class="tnum">44</b></button>
+            <button aria-pressed="true"><i class="eng e-h"></i>headless-shell <b class="tnum">52</b></button>
+            <button aria-pressed="true"><i class="eng e-l"></i>Lightpanda <b class="tnum">32</b></button>
+          </div>
+          <div id="c-act" class="relative h-[168px] mt-1"></div>
+          <div class="px-4 pb-3 flex items-center gap-3">
+            <span class="text-label text-muted shrink-0">Source</span>
+            <div id="c-src" class="flex-1 h-[14px]" aria-label="Share of simulated sessions over time: about 62 percent"></div>
+          </div>
+          <div class="px-4 pb-3 -mt-1 flex gap-4 text-label text-muted">
+            <span class="flex items-center gap-1.5"><span class="chip src-real">Real</span> solid</span>
+            <span class="flex items-center gap-1.5"><span class="chip src-sim">Sim</span> hatched</span>
+          </div>
+        </article>
+
+        <article class="card">
+          <header class="flex items-start justify-between gap-2 px-4 pt-3">
+            <div><h2 class="font-semibold text-sm">Actions per minute</h2><p class="text-label text-muted">goto, click, fill, extract…</p></div>
+            <div class="flex items-center gap-1">
+              <button class="ctl !h-7 !px-1.5" aria-label="Show as table"><svg class="ic" style="width:14px;height:14px"><use href="#i-table"/></svg></button>
+              <a href="#" class="ctl !h-7 !px-2 text-label">Sessions <svg class="ic" style="width:12px;height:12px"><use href="#i-up-right"/></svg></a>
+            </div>
+          </header>
+          <div class="legend px-3 pt-1 flex flex-wrap gap-x-2">
+            <button aria-pressed="true"><i class="eng e-c"></i>Chromium <b class="tnum">781</b></button>
+            <button aria-pressed="true"><i class="eng e-h"></i>headless-shell <b class="tnum">904</b></button>
+            <button aria-pressed="true"><i class="eng e-l"></i>Lightpanda <b class="tnum">466</b></button>
+          </div>
+          <div id="c-actions" class="relative h-[212px] mt-1"></div>
+          <p class="px-4 pb-3 text-label text-subtle">2,151 actions/min now · all sources</p>
+        </article>
+      </section>
+
+      <!-- ============ ENGINE BREAKDOWN + RECENT FAILURES ============ -->
+      <section class="grid grid-cols-1 xl:grid-cols-12 gap-3">
+
+        <article class="card xl:col-span-7 overflow-hidden">
+          <header class="flex items-center justify-between px-4 pt-3 pb-2">
+            <div><h2 class="font-semibold text-sm">Engines, last hour</h2><p class="text-label text-muted">Click a row to open the Browsers comparison for that engine</p></div>
+            <a href="#" class="ctl !h-7 !px-2 text-label">Compare engines <svg class="ic" style="width:12px;height:12px"><use href="#i-up-right"/></svg></a>
+          </header>
+          <div class="overflow-x-auto">
+          <table class="w-full text-body tnum">
+            <thead>
+              <tr class="text-label text-subtle border-y border-line">
+                <th scope="col" class="text-left font-medium px-4 h-8">Engine</th>
+                <th scope="col" class="text-right font-medium px-2">Sessions</th>
+                <th scope="col" class="text-right font-medium px-2">Success</th>
+                <th scope="col" class="text-right font-medium px-2">p95 latency</th>
+                <th scope="col" class="text-right font-medium px-2">Mem / session</th>
+                <th scope="col" class="text-right font-medium px-4">Cost / 1k</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="row border-b border-line cursor-pointer h-10">
+                <th scope="row" class="text-left font-medium px-4"><span class="flex items-center gap-2"><i class="eng e-c"></i>Chromium <span class="text-label font-normal text-subtle">142.0</span></span></th>
+                <td class="text-right px-2">612</td>
+                <td class="text-right px-2"><span class="inline-flex items-center gap-2 justify-end"><svg class="ic" style="width:14px;height:14px;color:var(--ok-fg)" aria-label="Healthy"><use href="#i-check"/></svg>95.1%<span class="bar"><i style="width:95.1%;background:var(--ok-fg)"></i></span></span></td>
+                <td class="text-right px-2">2.21 s</td>
+                <td class="text-right px-2">820 MB</td>
+                <td class="text-right px-4">$8.25</td>
+              </tr>
+              <tr class="row border-b border-line cursor-pointer h-10">
+                <th scope="row" class="text-left font-medium px-4"><span class="flex items-center gap-2"><i class="eng e-h"></i>chrome-headless-shell <span class="text-label font-normal text-subtle">142.0</span></span></th>
+                <td class="text-right px-2">701</td>
+                <td class="text-right px-2"><span class="inline-flex items-center gap-2 justify-end"><svg class="ic" style="width:14px;height:14px;color:var(--warn-fg)" aria-label="Degraded"><use href="#i-alert"/></svg>94.0%<span class="bar"><i style="width:94%;background:var(--warn-fg)"></i></span></span></td>
+                <td class="text-right px-2">1.96 s</td>
+                <td class="text-right px-2">400 MB</td>
+                <td class="text-right px-4">$5.12</td>
+              </tr>
+              <tr class="row border-b border-line cursor-pointer h-10">
+                <th scope="row" class="text-left font-medium px-4"><span class="flex items-center gap-2"><i class="eng e-l"></i>Lightpanda <span class="text-label font-normal text-subtle">0.2.8</span></span></th>
+                <td class="text-right px-2">613</td>
+                <td class="text-right px-2"><span class="inline-flex items-center gap-2 justify-end"><svg class="ic" style="width:14px;height:14px;color:var(--warn-fg)" aria-label="Degraded"><use href="#i-alert"/></svg>85.4%<span class="bar"><i style="width:85.4%;background:var(--warn-fg)"></i></span></span></td>
+                <td class="text-right px-2">0.74 s</td>
+                <td class="text-right px-2">45 MB</td>
+                <td class="text-right px-4">$0.15</td>
+              </tr>
+              <tr class="h-10 text-muted">
+                <th scope="row" class="text-left font-medium px-4">Fleet</th>
+                <td class="text-right px-2 text-fg font-semibold">1,926</td>
+                <td class="text-right px-2 text-fg font-semibold">91.6%</td>
+                <td class="text-right px-2 text-fg font-semibold">1.84 s</td>
+                <td class="text-right px-2 text-fg font-semibold">456 MB</td>
+                <td class="text-right px-4 text-fg font-semibold">$4.53</td>
+              </tr>
+            </tbody>
+          </table>
+          </div>
+        </article>
+
+        <article id="failures" class="card xl:col-span-5">
+          <header class="flex items-center justify-between px-4 pt-3 pb-2">
+            <div><h2 class="font-semibold text-sm">Recent failures</h2><p class="text-label text-muted">Newest first · 162 in range</p></div>
+            <a href="#" class="ctl !h-7 !px-2 text-label">View all <svg class="ic" style="width:12px;height:12px"><use href="#i-up-right"/></svg></a>
+          </header>
+          <ul class="border-t border-line">
+            <li class="frow border-b border-line"><a href="session.html" class="block px-4 py-2">
+              <div class="flex items-center gap-2"><span class="badge b-err"><svg class="ic"><use href="#i-x"/></svg>Failed</span><span class="font-mono text-body">s_9Kd2xQ</span><span class="flex items-center gap-1.5 text-label text-muted"><i class="eng e-l"></i>Lightpanda</span><span class="chip src-real">Real</span><span class="ml-auto text-label text-subtle tnum">4m ago</span></div>
+              <p class="text-label text-muted truncate mt-0.5"><code class="k">unsupported_api</code> IntersectionObserver is not defined · checkout-form</p>
+            </a></li>
+            <li class="frow border-b border-line"><a href="#" class="block px-4 py-2">
+              <div class="flex items-center gap-2"><span class="badge b-blk"><svg class="ic"><use href="#i-ban"/></svg>Blocked</span><span class="font-mono text-body">s_4Tn8bW</span><span class="flex items-center gap-1.5 text-label text-muted"><i class="eng e-h"></i>headless-shell</span><span class="chip src-real">Real</span><span class="ml-auto text-label text-subtle tnum">6m ago</span></div>
+              <p class="text-label text-muted truncate mt-0.5"><code class="k">captcha</code> reCAPTCHA challenge on shop.acme-demo.test · login-and-search</p>
+            </a></li>
+            <li class="frow border-b border-line"><a href="#" class="block px-4 py-2">
+              <div class="flex items-center gap-2"><span class="badge b-err"><svg class="ic"><use href="#i-x"/></svg>Failed</span><span class="font-mono text-body">s_2Hq7vE</span><span class="flex items-center gap-1.5 text-label text-muted"><i class="eng e-c"></i>Chromium</span><span class="chip src-real">Real</span><span class="ml-auto text-label text-subtle tnum">9m ago</span></div>
+              <p class="text-label text-muted truncate mt-0.5"><code class="k">crash</code> Renderer killed at 2.1 GB (OOM) · memory-hog</p>
+            </a></li>
+            <li class="frow border-b border-line"><a href="#" class="block px-4 py-2">
+              <div class="flex items-center gap-2"><span class="badge b-err"><svg class="ic"><use href="#i-x"/></svg>Failed</span><span class="font-mono text-body">s_6Pz1mA</span><span class="flex items-center gap-1.5 text-label text-muted"><i class="eng e-l"></i>Lightpanda</span><span class="chip src-sim">Sim</span><span class="ml-auto text-label text-subtle tnum">11m ago</span></div>
+              <p class="text-label text-muted truncate mt-0.5"><code class="k">unsupported_api</code> IntersectionObserver is not defined · checkout-form</p>
+            </a></li>
+            <li class="frow border-b border-line"><a href="#" class="block px-4 py-2">
+              <div class="flex items-center gap-2"><span class="badge b-err"><svg class="ic"><use href="#i-x"/></svg>Timeout</span><span class="font-mono text-body">s_8Lc3yR</span><span class="flex items-center gap-1.5 text-label text-muted"><i class="eng e-h"></i>headless-shell</span><span class="chip src-sim">Sim</span><span class="ml-auto text-label text-subtle tnum">14m ago</span></div>
+              <p class="text-label text-muted truncate mt-0.5"><code class="k">timeout</code> Navigation exceeded 30 s · heavy-page-crawl</p>
+            </a></li>
+            <li class="frow"><a href="#" class="block px-4 py-2">
+              <div class="flex items-center gap-2"><span class="badge b-blk"><svg class="ic"><use href="#i-ban"/></svg>Blocked</span><span class="font-mono text-body">s_1Vb5sN</span><span class="flex items-center gap-1.5 text-label text-muted"><i class="eng e-l"></i>Lightpanda</span><span class="chip src-sim">Sim</span><span class="ml-auto text-label text-subtle tnum">17m ago</span></div>
+              <p class="text-label text-muted truncate mt-0.5"><code class="k">blocked</code> HTTP 403 from cdn.acme-demo.test · login-and-search</p>
+            </a></li>
+          </ul>
+        </article>
+      </section>
+
+      <p class="text-label text-subtle pb-4">fleet_minute · 60 buckets · timestamps in UTC+03:00 · prices from pricing.config.json (estimated)</p>
+    </main>
+  </div>
+</div>
+
+<script>
+(function () {
+  /* ----- theme toggle + segmented controls ----- */
+  var root = document.documentElement;
+  document.getElementById('theme').addEventListener('click', function () {
+    var light = root.getAttribute('data-theme') !== 'light';
+    root.setAttribute('data-theme', light ? 'light' : 'dark');
+    document.getElementById('theme-ic').setAttribute('href', light ? '#i-moon' : '#i-sun');
+  });
+  document.querySelectorAll('[data-seg]').forEach(function (g) {
+    g.addEventListener('click', function (e) {
+      var b = e.target.closest('button'); if (!b) return;
+      g.querySelectorAll('button').forEach(function (x) { x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); });
+    });
+  });
+
+  /* ----- deterministic fake data ----- */
+  function rng(a){return function(){a|=0;a=a+0x6D2B79F5|0;var t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+  var r = rng(42), N = 60, T0 = 13*60+43;
+  var idx = Array.from({length:N}, function(_, i){return i;});
+  function noise(a){return (r()-.5)*2*a;}
+  function bump(i,c,w){return Math.max(0,1-Math.abs(i-c)/w);}
+  function lab(i){var t=T0+i;return Math.floor(t/60)+':'+String(t%60).padStart(2,'0');}
+  var D = {
+    act: {
+      c: idx.map(function(i){return Math.round(40+5*Math.sin(i/8)+noise(1.5));}),
+      h: idx.map(function(i){return Math.round(50+4*Math.sin(i/5+1)+noise(1.5));}),
+      l: idx.map(function(i){return Math.round(30+3*Math.sin(i/7+2)+noise(1.2)-8*bump(i,42,5));})
+    },
+    acts: {
+      c: idx.map(function(i){return Math.round(740+55*Math.sin(i/6)+noise(30));}),
+      h: idx.map(function(i){return Math.round(880+60*Math.sin(i/5+1)+noise(35));}),
+      l: idx.map(function(i){return Math.round(480+30*Math.sin(i/7+2)+noise(25)-110*bump(i,42,5));})
+    },
+    err: {
+      c: idx.map(function(i){return +(4.9+0.5*Math.sin(i/4)+noise(0.7)).toFixed(1);}),
+      h: idx.map(function(i){return +(6.0+0.6*Math.sin(i/5+2)+noise(0.8)).toFixed(1);}),
+      l: idx.map(function(i){return +(12.3+0.8*Math.sin(i/6)+noise(1.0)+15.5*bump(i,42,4)).toFixed(1);})
+    }
+  };
+  D.act.c[N-1]=44; D.act.h[N-1]=52; D.act.l[N-1]=32;
+  D.err.l[42]=28.4; D.err.c[42]=5.2; D.err.h[42]=6.1; D.err.c[N-1]=4.9; D.err.h[N-1]=6.0; D.err.l[N-1]=13.1;
+
+  /* ----- sparklines (viewBox 0 0 100 24, non-scaling stroke) ----- */
+  function spark(el, d, color) {
+    var mn=Math.min.apply(null,d), mx=Math.max.apply(null,d), pad=2;
+    var pts=d.map(function(v,i){return (i/(d.length-1)*100).toFixed(1)+','+(24-pad-(v-mn)/(mx-mn||1)*(24-2*pad)).toFixed(1);}).join(' ');
+    el.innerHTML='<polyline points="'+pts+'" fill="none" style="stroke:'+color+'" stroke-width="1.5" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>';
+  }
+  var sr = rng(9);
+  function series(base, amp, n){return Array.from({length:n||24},function(_,i){return base+amp*Math.sin(i/3.2)+(sr()-.5)*amp;});}
+  var S = {
+    act: series(120,6).map(function(v,i,a){return v+i*0.4;}),
+    succ: Array.from({length:24},function(_,i){return 95.5-(i>16?(i-16)*0.9:0)+(sr()-.5)*0.8;}),
+    lat: Array.from({length:24},function(_,i){return 1.5+(i>16?0.4:0)+(sr()-.5)*0.25;}),
+    cpu: series(33,3), mem: series(54,3).map(function(v,i){return v+i*0.15;}), cost: series(7.6,0.6).map(function(v,i){return v+i*0.05;})
+  };
+  var sc = {act:'var(--fg-muted)',succ:'var(--warn-fg)',lat:'var(--err-fg)',cpu:'var(--fg-muted)',mem:'var(--fg-muted)',cost:'var(--fg-muted)'};
+  document.querySelectorAll('[data-spark]').forEach(function(el){var k=el.getAttribute('data-spark');spark(el,S[k],sc[k]);});
+
+  /* ----- main charts: plain SVG standing in for Recharts ----- */
+  var ENG = [
+    {k:'c', color:'var(--eng-c)', dash:'', name:'Chromium'},
+    {k:'h', color:'var(--eng-h)', dash:'7 4', name:'headless-shell'},
+    {k:'l', color:'var(--eng-l)', dash:'1.5 3.5', name:'Lightpanda'}
+  ];
+  function marker(k, x, y, s) {   // shape per engine: circle / square / diamond
+    var c = ENG.filter(function(e){return e.k===k;})[0].color;
+    if (k==='c') return '<circle cx="'+x+'" cy="'+y+'" r="'+s+'" style="fill:'+c+';stroke:var(--surface);stroke-width:1.5"/>';
+    if (k==='h') return '<rect x="'+(x-s)+'" y="'+(y-s)+'" width="'+(2*s)+'" height="'+(2*s)+'" rx="1.5" style="fill:'+c+';stroke:var(--surface);stroke-width:1.5"/>';
+    return '<rect x="'+(x-s)+'" y="'+(y-s)+'" width="'+(2*s)+'" height="'+(2*s)+'" transform="rotate(45 '+x+' '+y+')" style="fill:'+c+';stroke:var(--surface);stroke-width:1.5"/>';
+  }
+  function chart(el, o) {
+    var W=el.clientWidth, H=el.clientHeight, m={l:o.ml||36,r:12,t:8,b:22};
+    var pw=W-m.l-m.r, ph=H-m.t-m.b;
+    var x=function(i){return m.l+pw*i/(N-1);}, y=function(v){return m.t+ph*(1-v/o.max);};
+    var s='<svg width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'" role="img" aria-label="'+o.label+'" style="display:block;overflow:visible">';
+    o.ticks.forEach(function(t){
+      s+='<line x1="'+m.l+'" x2="'+(W-m.r)+'" y1="'+y(t)+'" y2="'+y(t)+'" style="stroke:var(--line)"/>'+
+         '<text x="'+(m.l-6)+'" y="'+(y(t)+4)+'" text-anchor="end" class="ax">'+o.fmt(t)+'</text>';
+    });
+    idx.forEach(function(i){ if((T0+i)%10===0) s+='<text x="'+x(i)+'" y="'+(H-5)+'" text-anchor="middle" class="ax">'+lab(i)+'</text>'; });
+    if (o.band) {
+      s+='<rect x="'+x(o.band[0])+'" y="'+m.t+'" width="'+(x(o.band[1])-x(o.band[0]))+'" height="'+ph+'" style="fill:var(--err-fg)" fill-opacity=".10"/>';
+    }
+    if (o.thresh) {
+      s+='<line x1="'+m.l+'" x2="'+(W-m.r)+'" y1="'+y(o.thresh)+'" y2="'+y(o.thresh)+'" style="stroke:var(--warn-fg)" stroke-dasharray="2 3"/>'+
+         '<text x="'+(m.l+4)+'" y="'+(y(o.thresh)-4)+'" class="ax" style="fill:var(--warn-fg)">alert at '+o.thresh+'%</text>';
+    }
+    if (o.stack) {
+      var base=new Array(N).fill(0);
+      ENG.forEach(function(e){
+        var d=o.data[e.k], top=d.map(function(v,i){return base[i]+v;});
+        var up=top.map(function(v,i){return (i?'L':'M')+x(i).toFixed(1)+' '+y(v).toFixed(1);}).join('');
+        var dn=idx.slice().reverse().map(function(i){return 'L'+x(i).toFixed(1)+' '+y(base[i]).toFixed(1);}).join('');
+        s+='<path d="'+up+dn+'Z" style="fill:'+e.color+'" fill-opacity=".30"/><path d="'+up+'" fill="none" style="stroke:'+e.color+'" stroke-width="1.75"/>';
+        base=top;
+      });
+    } else {
+      ENG.forEach(function(e){
+        var d=o.data[e.k], p=d.map(function(v,i){return (i?'L':'M')+x(i).toFixed(1)+' '+y(v).toFixed(1);}).join('');
+        s+='<path d="'+p+'" fill="none" style="stroke:'+e.color+'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"'+(e.dash?' stroke-dasharray="'+e.dash+'"':'')+'/>';
+      });
+    }
+    var tip='';
+    if (o.focus!=null) {
+      var fi=o.focus, fx=x(fi);
+      s+='<line x1="'+fx+'" x2="'+fx+'" y1="'+m.t+'" y2="'+(m.t+ph)+'" style="stroke:var(--fg)" stroke-dasharray="3 3" stroke-opacity=".7"/>';
+      ENG.forEach(function(e){ s+=marker(e.k, fx, y(o.data[e.k][fi]), 4.5); });
+      var left = fx > W/2 ? fx-218 : fx+10;
+      tip='<div class="tip" style="left:'+left+'px;top:'+(m.t+2)+'px">'+
+        '<div class="flex justify-between"><b>'+lab(fi)+'</b><span style="color:var(--err-fg)" class="flex items-center gap-1"><svg class="ic" style="width:12px;height:12px"><use href="#i-alert"/></svg>Spike</span></div>'+
+        ENG.slice().reverse().map(function(e){var sh=e.k==='c'?'e-c':e.k==='h'?'e-h':'e-l';return '<div class="flex items-center justify-between mt-1"><span class="flex items-center gap-1.5" style="color:var(--fg-muted)"><i class="eng '+sh+'"></i>'+e.name+'</span><b class="tnum">'+o.data[e.k][fi].toFixed(1)+'%</b></div>';}).join('')+
+        '<a href="#" class="mt-2 pt-2 flex items-center justify-between" style="border-top:1px solid var(--line);color:var(--fg)"><span>31 failed sessions</span><span class="flex items-center gap-1 font-semibold">Open <svg class="ic" style="width:12px;height:12px"><use href="#i-up-right"/></svg></span></a></div>';
+    }
+    s+='</svg>'+tip;
+    el.innerHTML=s;
+  }
+  function srcStrip(el){
+    var W=el.clientWidth, H=el.clientHeight, bw=(W-2)/N, s='<svg width="'+W+'" height="'+H+'" style="display:block">';
+    var rr=rng(5);
+    idx.forEach(function(i){
+      var simShare=0.62+(rr()-.5)*0.14, hs=H*simShare;
+      s+='<rect x="'+(1+i*bw)+'" y="0" width="'+(bw-1)+'" height="'+(H-hs)+'" style="fill:var(--fg-subtle)"/>';
+      s+='<rect x="'+(1+i*bw)+'" y="'+(H-hs)+'" width="'+(bw-1)+'" height="'+hs+'" style="fill:url(#hatch)"/>';
+    });
+    s+='<defs><pattern id="hatch" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="4" height="4" style="fill:var(--surface)"/><rect width="1.6" height="4" style="fill:var(--fg-subtle)"/></pattern></defs></svg>';
+    el.innerHTML=s;
+  }
+  function render() {
+    chart(document.getElementById('c-err'), {data:D.err, max:30, ticks:[0,10,20,30], fmt:function(v){return v+'%';}, label:'Error rate per minute by engine, last hour. Lightpanda spikes to 28.4 percent at 14:25.', band:[38,46], thresh:10, focus:42});
+    chart(document.getElementById('c-act'), {data:D.act, stack:true, max:150, ticks:[0,50,100,150], fmt:function(v){return v;}, label:'Active sessions by engine, last hour. Currently 128.'});
+    chart(document.getElementById('c-actions'), {data:D.acts, stack:true, max:2800, ticks:[0,1000,2000], fmt:function(v){return v?(v/1000)+'k':'0';}, label:'Actions per minute by engine, last hour. Currently 2,151.', band:[38,46]});
+    srcStrip(document.getElementById('c-src'));
+  }
+  render();
+  if (window.ResizeObserver) { var ro=new ResizeObserver(function(){render();}); ['c-err','c-act','c-actions'].forEach(function(id){ro.observe(document.getElementById(id));}); }
+  else window.addEventListener('resize', render);
+})();
+</script>
+</body>
+</html>
