@@ -54,7 +54,7 @@ export async function loadMigrationFiles(dir = DEFAULT_MIGRATIONS_DIR): Promise<
  */
 export function splitStatements(sql: string): string[] {
   return sql
-    .split("\n")
+    .split(/\r?\n/)
     .map((line) => line.replace(/--.*$/, ""))
     .join("\n")
     .split(";")
@@ -73,8 +73,19 @@ export interface MigrateResult {
 }
 
 /**
- * Apply pending migrations in order. Safe to run many times.
+ * Apply pending migrations in order. Safe to run many times, but NOT safe to run from several
+ * processes at once.
  *
+ * ClickHouse has no advisory locks or transactional DDL, so this runner cannot lock. Rules:
+ * - Run migrations from exactly one place: a single CI/deploy step, or `pnpm db:migrate` by hand.
+ *   Never on API startup, where several replicas could race.
+ * - Every statement should be idempotent (`IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`), or each
+ *   file should hold a single statement, because a file that fails halfway re-runs from its first
+ *   statement on the next attempt.
+ * - As a cheap guard, the ledger is re-read right before each file is applied, which narrows the
+ *   race window from the whole run to one file. It does not close it.
+ *
+ * What it does:
  * - Creates the database and the `schema_migrations` ledger if needed.
  * - Skips migrations already in the ledger, but throws if an applied file was edited or removed
  *   (history must not change; add a new migration instead).
@@ -102,6 +113,16 @@ export async function runMigrations(
   } finally {
     await client.close();
   }
+}
+
+async function isRecorded(client: ClickHouseClient, name: string): Promise<boolean> {
+  const result = await client.query({
+    query: `SELECT count() AS n FROM ${LEDGER} WHERE name = {name:String}`,
+    query_params: { name },
+    format: "JSONEachRow",
+  });
+  const [row] = await result.json<{ n: string | number }>();
+  return Number(row?.n ?? 0) > 0;
 }
 
 async function applyPending(
@@ -146,7 +167,7 @@ async function applyPending(
 
   const outcome: MigrateResult = { applied: [], alreadyApplied: [] };
   for (const file of files) {
-    if (ledger.has(file.name)) {
+    if (ledger.has(file.name) || (await isRecorded(client, file.name))) {
       outcome.alreadyApplied.push(file.name);
       continue;
     }

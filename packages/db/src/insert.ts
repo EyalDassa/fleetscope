@@ -1,4 +1,4 @@
-import type { FleetEvent } from "@fleetscope/schema";
+import { type FleetEvent, SESSION_RUNNING, type SessionState } from "@fleetscope/schema";
 import type { ClickHouseClient } from "./client";
 
 /**
@@ -45,7 +45,7 @@ export interface SessionRow {
   started_at: string;
   startup_ms: number;
   connect_ms: number;
-  status: string;
+  status: SessionState;
   ended_at: string | null;
   duration_ms: number | null;
   reason: string | null;
@@ -71,7 +71,7 @@ export function runningSessionRow(started: Started): SessionRow {
     started_at: toClickHouseDateTime(started.ts),
     startup_ms: started.startup_ms,
     connect_ms: started.connect_ms,
-    status: "running",
+    status: SESSION_RUNNING,
     ended_at: null,
     duration_ms: null,
     reason: null,
@@ -156,24 +156,57 @@ export interface InsertCounts {
   orphanedEnds: number;
 }
 
+/**
+ * The client sends query parameters in the URL, and ClickHouse rejects a single parameter of about
+ * 64 KB or more ("HTML Form Exception: Field value too long"). 5,000 ids of 128 characters are
+ * ~640 KB, so the ids are looked up in chunks whose URL-encoded size stays under this budget.
+ * (Encoded size, not character count: ids with special characters grow up to 3x.)
+ */
+export const LOOKUP_CHUNK_BYTES = 40_000;
+
+/** Split ids into chunks whose URL-encoded size (plus a separator each) is at most `maxBytes`. */
+export function chunkByEncodedSize(
+  ids: readonly string[],
+  maxBytes = LOOKUP_CHUNK_BYTES,
+): string[][] {
+  const chunks: string[][] = [];
+  let current: string[] = [];
+  let size = 0;
+  for (const id of ids) {
+    // A quoted, escaped, comma-separated element: allow 3 bytes of overhead plus escaping.
+    const cost = encodeURIComponent(id).length * 2 + 6;
+    if (current.length > 0 && size + cost > maxBytes) {
+      chunks.push(current);
+      current = [];
+      size = 0;
+    }
+    current.push(id);
+    size += cost;
+  }
+  if (current.length > 0) chunks.push(current);
+  return chunks;
+}
+
 /** Latest stored snapshot per session, used when an `ended` event arrives without its `started`. */
 async function findStoredSessions(
   client: ClickHouseClient,
   sessionIds: string[],
 ): Promise<Map<string, SessionRow>> {
-  if (sessionIds.length === 0) return new Map();
-  const result = await client.query({
-    query: `SELECT session_id, agent_id, source, engine, provider, engine_version, scenario, region,
-                   toString(started_at) AS started_at, startup_ms, connect_ms, status,
-                   if(ended_at IS NULL, NULL, toString(ended_at)) AS ended_at,
-                   duration_ms, reason, version
-            FROM sessions FINAL
-            WHERE session_id IN {ids:Array(String)}`,
-    query_params: { ids: sessionIds },
-    format: "JSONEachRow",
-  });
-  const rows = await result.json<SessionRow>();
-  return new Map(rows.map((row) => [row.session_id, row]));
+  const found = new Map<string, SessionRow>();
+  for (const ids of chunkByEncodedSize(sessionIds)) {
+    const result = await client.query({
+      query: `SELECT session_id, agent_id, source, engine, provider, engine_version, scenario, region,
+                     toString(started_at) AS started_at, startup_ms, connect_ms, status,
+                     if(ended_at IS NULL, NULL, toString(ended_at)) AS ended_at,
+                     duration_ms, reason, version
+              FROM sessions FINAL
+              WHERE session_id IN {ids:Array(String)}`,
+      query_params: { ids },
+      format: "JSONEachRow",
+    });
+    for (const row of await result.json<SessionRow>()) found.set(row.session_id, row);
+  }
+  return found;
 }
 
 /**

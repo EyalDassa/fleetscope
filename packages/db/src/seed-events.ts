@@ -9,7 +9,7 @@ interface SeedSession {
   engine: Engine;
   engineVersion: string | null;
   status: "success" | "failed" | "blocked";
-  /** js_heap_mb is null for engines without CDP Performance support (honest "not available"). */
+  /** JS heap from the cdp sample; null for engines without CDP Performance support ("not available"). */
   jsHeapMb: number | null;
   issue?: { kind: "captcha" | "unsupported_api" | "blocked"; message: string };
 }
@@ -87,19 +87,31 @@ export function buildSeedEvents(now = Date.now()): FleetEvent[] {
       });
     });
 
-    [0, 1].forEach((n) => {
-      events.push({
-        ...base,
-        event_id: id(),
-        ts: start + 2000 + n * 2000,
-        type: "resource.sample",
-        cpu_pct: 10 + n * 5 + index,
-        mem_mb: 120 + n * 10 + index * 40,
-        net_rx_bytes: 50_000 * (n + 1),
-        net_tx_bytes: 5_000 * (n + 1),
-        js_heap_mb: session.jsHeapMb,
-        origin: "cdp",
-      });
+    // One container sample (Docker stats) and one cdp sample (inside the browser). Each leaves
+    // null what it cannot measure; Lightpanda reports no JS heap at all.
+    events.push({
+      ...base,
+      event_id: id(),
+      ts: start + 2000,
+      type: "resource.sample",
+      origin: "container",
+      cpu_pct: 10 + index,
+      mem_mb: 120 + index * 40,
+      net_rx_bytes: 50_000,
+      net_tx_bytes: 5_000,
+      js_heap_mb: null,
+    });
+    events.push({
+      ...base,
+      event_id: id(),
+      ts: start + 4000,
+      type: "resource.sample",
+      origin: "cdp",
+      cpu_pct: null,
+      mem_mb: null,
+      net_rx_bytes: null,
+      net_tx_bytes: null,
+      js_heap_mb: session.jsHeapMb,
     });
 
     events.push({

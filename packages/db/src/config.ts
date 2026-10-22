@@ -8,7 +8,10 @@ export const logLevelSchema = z.enum(LOG_LEVELS).default("info");
 
 /** Environment variables needed to talk to ClickHouse (see .env.example). */
 export const clickhouseEnvSchema = z.object({
-  CLICKHOUSE_URL: z.url(),
+  CLICKHOUSE_URL: z.url({
+    protocol: /^https?$/,
+    error: "must be an http(s) URL such as http://localhost:8123",
+  }),
   CLICKHOUSE_USER: z.string().min(1),
   CLICKHOUSE_PASSWORD: z.string(),
   CLICKHOUSE_DATABASE: identifier,

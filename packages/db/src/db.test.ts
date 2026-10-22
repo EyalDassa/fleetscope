@@ -1,7 +1,7 @@
 import { EventBatch } from "@fleetscope/schema";
 import { describe, expect, it } from "vitest";
 import { ConfigError, loadDbConfig } from "./config";
-import { rawRow, runningSessionRow, toClickHouseDateTime } from "./insert";
+import { chunkByEncodedSize, rawRow, runningSessionRow, toClickHouseDateTime } from "./insert";
 import { splitStatements } from "./migrate";
 import { buildSeedEvents } from "./seed-events";
 
@@ -104,5 +104,48 @@ describe("row mapping", () => {
     expect(tables).toEqual(
       new Set(["actions", "resource_samples", "network_requests", "issues", "none"]),
     );
+  });
+});
+
+describe("CLICKHOUSE_URL", () => {
+  const withUrl = (CLICKHOUSE_URL: string) => () => loadDbConfig({ ...env, CLICKHOUSE_URL });
+
+  it("accepts http and https", () => {
+    expect(withUrl("http://localhost:8123")).not.toThrow();
+    expect(withUrl("https://abc.clickhouse.cloud:8443")).not.toThrow();
+  });
+
+  it("rejects a missing scheme and other schemes with a readable message", () => {
+    expect(withUrl("localhost:8123")).toThrow(/http\(s\) URL/);
+    expect(withUrl("ftp://localhost:8123")).toThrow(ConfigError);
+  });
+});
+
+describe("chunkByEncodedSize", () => {
+  const ids = (n: number, length: number) =>
+    Array.from({ length: n }, (_, i) => String(i).padStart(length, "0"));
+
+  it("keeps every id exactly once and in order", () => {
+    const all = ids(5000, 128);
+    const chunks = chunkByEncodedSize(all);
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.flat()).toEqual(all);
+  });
+
+  it("keeps each chunk well under the ~64 KB parameter limit, even for ids that encode 3x", () => {
+    const hostile = Array.from({ length: 2000 }, (_, i) => `${i}${"'/ ".repeat(40)}`);
+    for (const chunk of chunkByEncodedSize(hostile)) {
+      expect(encodeURIComponent(JSON.stringify(chunk)).length).toBeLessThan(60_000);
+    }
+  });
+
+  it("returns no chunks for no ids and one chunk for a few", () => {
+    expect(chunkByEncodedSize([])).toEqual([]);
+    expect(chunkByEncodedSize(["a", "b"])).toEqual([["a", "b"]]);
+  });
+
+  it("puts an oversized single id in its own chunk instead of dropping it", () => {
+    const huge = "x".repeat(50_000);
+    expect(chunkByEncodedSize(["a", huge, "b"])).toEqual([["a"], [huge], ["b"]]);
   });
 });

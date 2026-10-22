@@ -15,4 +15,5 @@ CREATE TABLE IF NOT EXISTS issues
 ENGINE = MergeTree
 PARTITION BY toDate(ts)
 ORDER BY (engine, session_id, ts)
-TTL toDate(ts) + INTERVAL 30 DAY;
+TTL toDate(ts) + INTERVAL 30 DAY
+SETTINGS ttl_only_drop_parts = 1; -- partitions are daily too, so expired data is dropped whole
