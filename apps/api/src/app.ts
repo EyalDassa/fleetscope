@@ -10,12 +10,17 @@ export interface AppDeps {
   logLevel?: string | false;
   /** How long /healthz waits for ping before reporting ClickHouse as down. Default 1000. */
   healthTimeoutMs?: number;
+  /** Where log lines go. Defaults to stdout; tests pass a stream to inspect them. */
+  logStream?: { write(line: string): void };
 }
 
 export function buildApp(deps: AppDeps): FastifyInstance {
   const level = deps.logLevel ?? "info";
   const app = Fastify({
-    logger: level === false ? false : { level },
+    logger: level === false ? false : { level, ...(deps.logStream && { stream: deps.logStream }) },
+    // Orchestrators poll /healthz every few seconds; "incoming request" + "request completed" for
+    // each probe would drown the logs. A failing probe is still reported (healthz logs a warning).
+    disableRequestLogging: (request) => request.url.split("?")[0] === "/healthz",
     // Honour X-Request-Id from a proxy; otherwise Fastify generates one for log correlation.
     requestIdHeader: "x-request-id",
   });
