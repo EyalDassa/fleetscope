@@ -1,0 +1,27 @@
+{
+  "name": "@fleetscope/api",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Fleetscope API: ingest, queries and live stream",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=../../.env src/server.ts",
+    "build": "node build.mjs",
+    "start": "node --env-file-if-exists=../../.env dist/server.js",
+    "lint": "biome check .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "test:integration": "vitest run --config vitest.integration.config.ts"
+  },
+  "dependencies": {
+    "@fleetscope/db": "workspace:*",
+    "@fleetscope/schema": "workspace:*",
+    "fastify": "^5.12.7",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.15"
+  }
+}
