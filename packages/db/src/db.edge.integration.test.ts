@@ -21,7 +21,7 @@ import { createTestDatabase, dropDatabase, type TestDatabase } from "./testing";
 /**
  * QA edge cases against a real ClickHouse (M0). Each describe block uses its own session ids, so
  * the blocks do not see each other's rows. Fixture timestamps are always "now", because the raw
- * tables drop rows older than 30 days at insert time (TTL).
+ * tables drop rows older than 30 days shortly after insert (TTL, in the background).
  *
  * Bugs from the first QA pass are tagged "QA-M0-NN" in test names (see qa/m0-report.md). All fixed
  * ones are ordinary tests now; deferred ones (QA-M0-03, -06, -09) are M1 items.
@@ -36,6 +36,18 @@ afterAll(async () => {
 });
 
 const DAY = 86_400_000;
+
+/**
+ * TTL is NOT applied inside the INSERT. ClickHouse first writes an expired row as a normal part
+ * and then a background "TTLDropMerge" replaces that part with an empty one, usually within a
+ * millisecond (system.part_log: NewPart, then MergePartsStart TTLDropMerge ~0.5 ms later). A query
+ * in that gap still sees the row, which made the first version of these tests flaky on a loaded CI
+ * runner. So: ask for the merge, then poll until the rows are gone, instead of asserting at once.
+ */
+async function expectTtlDropped(table: string, sessionPrefix: string): Promise<void> {
+  await db.client.command({ query: `OPTIMIZE TABLE ${table} FINAL` }).catch(() => {});
+  await expect.poll(() => count(table, sessionPrefix), { timeout: 20_000, interval: 100 }).toBe(0);
+}
 
 async function rows<T>(query: string): Promise<T[]> {
   const result = await db.client.query({ query, format: "JSONEachRow" });
@@ -356,15 +368,16 @@ describe("session ordering", () => {
 });
 
 describe("timestamps: TTL, clock skew, millisecond precision", () => {
-  it("keeps rows from 29 days ago and drops rows older than 30 days at insert", async () => {
+  it("keeps rows from 29 days ago and drops rows older than 30 days (asynchronously, right after the insert)", async () => {
     await insertEvents(db.client, [
       action("ttl-29d", { ts: Date.now() - 29 * DAY }),
       action("ttl-31d", { ts: Date.now() - 31 * DAY }),
       action("ttl-epoch", { ts: 0 }),
     ]);
+    await expectTtlDropped("actions", "ttl-31d");
+    await expectTtlDropped("actions", "ttl-epoch");
+    // Checked after the drops have run, so it proves the TTL did not touch the young row.
     expect(await count("actions", "ttl-29d")).toBe(1);
-    expect(await count("actions", "ttl-31d")).toBe(0);
-    expect(await count("actions", "ttl-epoch")).toBe(0);
   });
 
   it("applies the same 30 day TTL to sessions (by started_at) and keeps a recent session", async () => {
@@ -373,9 +386,9 @@ describe("timestamps: TTL, clock skew, millisecond precision", () => {
       started("ttl-sess-31d", { ts: Date.now() - 31 * DAY }),
       started("ttl-sess-90d", { ts: Date.now() - 90 * DAY }),
     ]);
+    await expectTtlDropped("sessions", "ttl-sess-31d");
+    await expectTtlDropped("sessions", "ttl-sess-90d");
     expect(await count("sessions", "ttl-sess-29d")).toBe(1);
-    expect(await count("sessions", "ttl-sess-31d")).toBe(0);
-    expect(await count("sessions", "ttl-sess-90d")).toBe(0);
   });
 
   it("partitions sessions by the day of started_at and drops whole parts on TTL, on all five tables", async () => {
@@ -395,20 +408,26 @@ describe("timestamps: TTL, clock skew, millisecond precision", () => {
     const t = Date.now() - 2 * DAY;
     await insertEvents(db.client, [started("ttl-merge", { ts: t })]);
     await insertEvents(db.client, [ended("ttl-merge", { ts: t + 1000 })]);
-    await db.client.command({ query: "OPTIMIZE TABLE sessions FINAL" });
-    // No FINAL here: after a full merge the old running version must be physically gone.
-    const result = await rows<{ status: string; version: number }>(
-      "SELECT status, version FROM sessions WHERE session_id = 'ttl-merge'",
-    );
-    expect(result).toEqual([{ status: "success", version: 2 }]);
+    await db.client.command({ query: "OPTIMIZE TABLE sessions FINAL" }).catch(() => {});
+    // No FINAL in the SELECT: once the merge has run, the old running version must be physically
+    // gone. A background merge may already own the parts, so poll instead of asserting at once.
+    await expect
+      .poll(
+        () =>
+          rows<{ status: string; version: number }>(
+            "SELECT status, version FROM sessions WHERE session_id = 'ttl-merge'",
+          ),
+        { timeout: 20_000, interval: 100 },
+      )
+      .toEqual([{ status: "success", version: 2 }]);
   });
 
-  it("reports TTL-dropped rows in InsertCounts as if they were stored (counts rows sent, not stored)", async () => {
+  it("reports rows that the TTL later drops in InsertCounts as if they were stored (counts rows sent, not stored)", async () => {
     const counts = await insertEvents(db.client, [
       action("ttl-count", { ts: Date.now() - 60 * DAY }),
     ]);
     expect(counts.actions).toBe(1);
-    expect(await count("actions", "ttl-count")).toBe(0);
+    await expectTtlDropped("actions", "ttl-count");
   });
 
   it("stores events with a ts in the future as given (clock skew is not corrected)", async () => {
@@ -657,10 +676,10 @@ describe("everything the schema accepts, the database can store (QA-M0-02, QA-M0
     expect(session).toEqual({ s: UINT32_MAX, c: UINT32_MAX });
   });
 
-  it("accepts the first instant of the ts window without error (the 30 day TTL then drops it)", async () => {
+  it("accepts the first instant of the ts window without error (the 30 day TTL then drops it, asynchronously)", async () => {
     const counts = await insertEvents(db.client, [action("window-min", { ts: TS_MIN })]);
     expect(counts.actions).toBe(1);
-    expect(await count("actions", "window-min")).toBe(0);
+    await expectTtlDropped("actions", "window-min");
   });
 
   it("stores a cdp sample whose container metrics are null as NULL, not 0", async () => {

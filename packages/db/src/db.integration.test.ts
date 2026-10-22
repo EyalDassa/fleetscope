@@ -207,7 +207,7 @@ describe("insertEvents", () => {
   it("keeps millisecond timestamps", async () => {
     const issue = buildSeedEvents().find((e) => e.type === "issue");
     if (!issue) throw new Error("seed has no issue");
-    // Recent on purpose: rows older than the 30 day TTL are dropped.
+    // Recent on purpose: rows older than the 30 day TTL are dropped by a background merge.
     const ts = Math.floor(Date.now() / 1000) * 1000 + 123;
     await insertEvents(db.client, [{ ...issue, session_id: "ts-check", ts }]);
     const [row] = await rows<{ ms: string }>(
