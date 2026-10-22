@@ -34,6 +34,15 @@ export const SESSION_STATUSES = ["success", "failed", "blocked", "timeout", "cra
 export const SessionStatus = z.enum(SESSION_STATUSES);
 export type SessionStatus = z.infer<typeof SessionStatus>;
 
+/**
+ * State of a stored session: "running" until a `session.ended` arrives, then its final status.
+ * "running" is never sent in an event; it only exists in stored data and API responses.
+ */
+export const SESSION_RUNNING = "running" as const;
+export const SESSION_STATES = [SESSION_RUNNING, ...SESSION_STATUSES] as const;
+export const SessionState = z.enum(SESSION_STATES);
+export type SessionState = z.infer<typeof SessionState>;
+
 export const ACTION_TYPES = [
   "goto",
   "click",
@@ -67,17 +76,32 @@ export type IssueKind = z.infer<typeof IssueKind>;
 const id = z.string().min(1).max(128);
 const label = z.string().min(1).max(128);
 const text = z.string().max(2000);
-/** Whole number >= 0 (durations in ms, byte counts, sequence numbers). */
-const count = z.int().nonnegative();
-/** Real number >= 0 (percentages, megabytes). */
-const amount = z.number().nonnegative().finite();
+/*
+ * Numeric bounds mirror the ClickHouse column types (infra/clickhouse). A value the column cannot
+ * hold would be silently wrapped or turned into NULL, so it is rejected here instead.
+ */
+const UINT32_MAX = 4_294_967_295;
+/** Whole number that fits a UInt32 column (durations in ms, sequence numbers). About 49.7 days in ms. */
+const uint32 = z.int().nonnegative().max(UINT32_MAX);
+/** Whole number for UInt64 columns (byte counters). zod ints are safe integers, so at most 2^53 - 1. */
+const uint64 = z.int().nonnegative();
+/** Real number for Float32 columns, with a finite upper bound far above any real measurement. */
+const float32 = (max: number) => z.number().nonnegative().max(max);
+
+/** Largest plausible readings. Docker's CPU % can pass 100 on multi-core containers. */
+const MAX_CPU_PCT = 100_000;
+const MAX_MEMORY_MB = 16_777_216; // 16 TiB
+/** `ts` window in epoch ms: [2020-01-01, 2100-01-01). Also catches seconds sent instead of ms. */
+export const TS_MIN = Date.UTC(2020, 0, 1);
+export const TS_MAX_EXCLUSIVE = Date.UTC(2100, 0, 1);
+const timestamp = z.int().gte(TS_MIN).lt(TS_MAX_EXCLUSIVE);
 
 /** Fields every event carries. `ts` is milliseconds since the Unix epoch. */
 const envelope = {
   v: z.literal(SCHEMA_VERSION),
   /** Unique per event; the API drops duplicates so client retries are safe. */
   event_id: z.uuid(),
-  ts: count,
+  ts: timestamp,
   session_id: id,
   source: Source,
   agent_id: id,
@@ -96,9 +120,9 @@ export const SessionStartedEvent = z.object({
   scenario: label,
   region: label,
   /** Time to start the browser. */
-  startup_ms: count,
+  startup_ms: uint32,
   /** Time to connect the client (CDP / Playwright) to it. */
-  connect_ms: count,
+  connect_ms: uint32,
 });
 export type SessionStartedEvent = z.infer<typeof SessionStartedEvent>;
 
@@ -108,7 +132,7 @@ export const SessionEndedEvent = z.object({
   status: SessionStatus,
   /** Human-readable cause, `null` on plain success. */
   reason: text.nullable(),
-  duration_ms: count,
+  duration_ms: uint32,
 });
 export type SessionEndedEvent = z.infer<typeof SessionEndedEvent>;
 
@@ -116,29 +140,44 @@ export const ActionEvent = z.object({
   ...envelope,
   type: z.literal("action"),
   /** Position of the action inside its session, starting at 0. */
-  seq: count,
+  seq: uint32,
   /** Named `action_type` because `type` is the event discriminator. */
   action_type: ActionType,
   /** Selector or domain the action works on. */
   target: text,
-  duration_ms: count,
+  duration_ms: uint32,
   ok: z.boolean(),
   /** `null` when `ok` is true. */
   error_code: label.nullable(),
 });
 export type ActionEvent = z.infer<typeof ActionEvent>;
 
-export const ResourceSampleEvent = z.object({
-  ...envelope,
-  type: z.literal("resource.sample"),
-  cpu_pct: amount,
-  mem_mb: amount,
-  net_rx_bytes: count,
-  net_tx_bytes: count,
-  /** JS heap size via CDP. `null` when the engine does not support it, absent on container samples. */
-  js_heap_mb: amount.nullable().optional(),
-  origin: ResourceOrigin,
-});
+export const ResourceSampleEvent = z
+  .object({
+    ...envelope,
+    type: z.literal("resource.sample"),
+    origin: ResourceOrigin,
+    // Whatever a sample cannot measure is null. A container sample always has the four
+    // container metrics (checked below); a cdp sample may have them null.
+    cpu_pct: float32(MAX_CPU_PCT).nullable(),
+    mem_mb: float32(MAX_MEMORY_MB).nullable(),
+    net_rx_bytes: uint64.nullable(),
+    net_tx_bytes: uint64.nullable(),
+    /** JS heap size via CDP. `null` when the engine does not support it, absent on container samples. */
+    js_heap_mb: float32(MAX_MEMORY_MB).nullable().optional(),
+  })
+  .superRefine((sample, ctx) => {
+    if (sample.origin !== "container") return;
+    for (const field of ["cpu_pct", "mem_mb", "net_rx_bytes", "net_tx_bytes"] as const) {
+      if (sample[field] === null) {
+        ctx.addIssue({
+          code: "custom",
+          path: [field],
+          message: `${field} cannot be null on a container sample`,
+        });
+      }
+    }
+  });
 export type ResourceSampleEvent = z.infer<typeof ResourceSampleEvent>;
 
 export const NetworkRequestEvent = z.object({
@@ -148,8 +187,8 @@ export const NetworkRequestEvent = z.object({
   /** HTTP status; `null` when the request failed before a response arrived. */
   status: z.int().min(100).max(599).nullable(),
   /** Transferred bytes; `null` when the engine does not report it. */
-  bytes: count.nullable(),
-  duration_ms: count,
+  bytes: uint64.nullable(),
+  duration_ms: uint32,
   /** Free text such as "document", "script", "xhr". Requests are sampled, not exhaustive. */
   resource_type: label,
 });
@@ -167,7 +206,7 @@ export const ScreenshotEvent = z.object({
   ...envelope,
   type: z.literal("screenshot"),
   /** The `seq` of the action that took the screenshot. */
-  action_seq: count,
+  action_seq: uint32,
   /** Where the image is stored (local path or object storage). Optional. */
   url: z.string().min(1).max(2048).optional(),
 });
