@@ -1,0 +1,9 @@
+packages:
+  - apps/*
+  - packages/*
+
+# pnpm 12: dependency build scripts (postinstall etc.) are denied unless listed here,
+# and unreviewed ones make `pnpm install` fail (strictDepBuilds defaults to true).
+# Add a package here only after checking why it needs a build script.
+allowBuilds:
+  esbuild: true

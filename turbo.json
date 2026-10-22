@@ -1,0 +1,25 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "ui": "stream",
+  "globalDependencies": ["tsconfig.base.json", "biome.json"],
+  "globalPassThroughEnv": [
+    "CLICKHOUSE_URL",
+    "CLICKHOUSE_USER",
+    "CLICKHOUSE_PASSWORD",
+    "CLICKHOUSE_DATABASE",
+    "API_PORT",
+    "LOG_LEVEL",
+    "CI"
+  ],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": [".next/**", "!.next/cache/**", "dist/**"]
+    },
+    "lint": {},
+    "typecheck": {},
+    "test": {},
+    "test:integration": { "cache": false },
+    "dev": { "cache": false, "persistent": true }
+  }
+}

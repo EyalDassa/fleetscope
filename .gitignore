@@ -1,0 +1,36 @@
+# dependencies
+node_modules/
+
+# build output and caches
+.turbo/
+.next/
+dist/
+out/
+build/
+coverage/
+*.tsbuildinfo
+next-env.d.ts
+
+# environment (the template .env.example is committed)
+.env
+.env.*.local
+.env.local
+!.env.example
+
+# Playwright
+playwright-report/
+test-results/
+blob-report/
+playwright/.cache/
+
+# local data and logs
+*.log
+.vercel/
+infra/.data/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
