@@ -11,10 +11,8 @@ coverage/
 *.tsbuildinfo
 next-env.d.ts
 
-# environment (the template .env.example is committed)
-.env
-.env.*.local
-.env.local
+# environment: every .env* file is ignored, only the template is committed
+.env*
 !.env.example
 
 # Playwright
@@ -27,6 +25,10 @@ playwright/.cache/
 *.log
 .vercel/
 infra/.data/
+
+# Node falls back to a folder literally named "undefined" (undefined/temp) as its temp dir when
+# TEMP/TMP/SystemRoot are unset (stripped env on Windows). tsx then writes its cache there.
+**/undefined/
 
 # OS / editor
 .DS_Store

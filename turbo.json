@@ -18,9 +18,24 @@
       "outputs": [".next/**", "!.next/cache/**", "dist/**"]
     },
     "lint": {},
-    "typecheck": {},
-    "test": {},
-    "test:integration": { "cache": false },
-    "dev": { "cache": false, "persistent": true }
+    "//#lint:root": {
+      "inputs": ["package.json", "turbo.json", "biome.json", "tsconfig.base.json"]
+    },
+    "transit": {
+      "dependsOn": ["^transit"]
+    },
+    "typecheck": {
+      "dependsOn": ["transit"]
+    },
+    "test": {
+      "dependsOn": ["transit"]
+    },
+    "test:integration": {
+      "cache": false
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true
+    }
   }
 }
