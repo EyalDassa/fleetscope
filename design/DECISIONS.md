@@ -74,3 +74,5 @@ What drives the scores:
 4. **Blocked colour.** Violet (decided) or taste's quieter hue-less outline with a `ban` icon? Violet is louder at a glance and costs one protan pair at ΔE 8.75.
 5. **Version marker on Error rate** ("Lightpanda v0.2.9 first seen", derived from `engine_version`). Keep it as a stretch item, or drop it now?
 6. **Issues as an always-visible side panel** instead of a tab on Session detail (PLAN section 7 says "network and issues tabs"). OK to update PLAN to match?
+
+**Answered by Eyal on 2026-10-22:** approved DESIGN.md with every default above. Thresholds 95/90; blocked counts against the success rate; the default source filter is `All`, with the sim share always visible; blocked stays violet; the version marker stays as a stretch item (first to cut); Issues is an always-visible side panel, and PLAN section 7 is updated to match.

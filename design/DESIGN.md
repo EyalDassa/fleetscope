@@ -1,6 +1,6 @@
 # Fleetscope design system (DESIGN.md)
 
-Status: **proposed, waiting for Eyal's approval.** Once approved, this file is the source of truth for the UI (CLAUDE.md).
+Status: **approved by Eyal on 2026-10-22**, with the design lead's defaults for all open questions (`DECISIONS.md` section 5). This file is the source of truth for the UI (CLAUDE.md).
 Decisions and scores: `design/DECISIONS.md`. Visual reference mockups (open them in a browser):
 
 | What to look at | Mockup |

@@ -138,7 +138,7 @@ Global layout: left sidebar navigation; a top bar with a time range picker (15m/
 
 1. **Overview `/`**: KPI cards (active sessions now, sessions in range, success rate, p95 action latency, CPU cores in use, memory GB, estimated cost); live charts (active sessions, actions/min, error rate); a breakdown by engine; a "recent failures" list that links into sessions.
 2. **Sessions `/sessions`**: a filterable, sortable table (status, engine, agent, scenario, duration, peak memory, cost) with a small memory sparkline per row.
-3. **Session detail `/sessions/[id]`**: a header (status, engine, duration, cost); an **action waterfall** (Gantt timeline); CPU and memory charts on the same time axis; network and issues tabs; screenshots; an "Explain this session" button (Claude Haiku summarizes what happened and the likely cause).
+3. **Session detail `/sessions/[id]`**: a header (status, engine, duration, cost); an **action waterfall** (Gantt timeline); CPU and memory charts on the same time axis; an always-visible issues side panel and a network tab (see `design/DESIGN.md`); screenshots; an "Explain this session" button (Claude Haiku summarizes what happened and the likely cause).
 4. **Browsers `/browsers`**: engines side by side: startup time, memory per session, p95 action latency, success rate, cost per 1k sessions, and a per-scenario compatibility matrix (where Lightpanda fails and Chrome succeeds).
 5. **Usage and cost `/usage`**: browser-hours, bandwidth and cost over time, broken down by engine, agent and scenario.
 6. **Insights `/insights`**: problems found by SQL rules, each with severity and a link to the affected sessions:
