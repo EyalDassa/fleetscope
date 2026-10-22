@@ -124,7 +124,7 @@ Ingest: `POST /v1/events` accepts batches of up to 1,000 events. The API validat
 
 ## 6. ClickHouse data model
 
-- `sessions`: ReplacingMergeTree, ORDER BY `session_id`. Holds the latest state per session.
+- `sessions`: ReplacingMergeTree, ORDER BY `session_id`. Holds the latest state per session. PARTITION BY `toDate(started_at)`, TTL 30 days, like the raw tables.
 - `actions`, `resource_samples`, `network_requests`, `issues`: MergeTree, PARTITION BY `toDate(ts)`, ORDER BY `(engine, session_id, ts)`, TTL 30 days. `ts` is `DateTime64(3, 'UTC')`; inserts send it as a `YYYY-MM-DD HH:MM:SS.mmm` string, because ClickHouse reads an integer as seconds.
 - `screenshot` events have no table yet; it is added with the screenshots feature (the first thing cut if behind).
 - `fleet_minute`: AggregatingMergeTree, filled by a materialized view. Per minute and engine it keeps: active sessions, action count, `quantileState(0.5/0.95)` of action latency, error counts, CPU and memory sums. TTL 1 year. The Overview charts read from this table, not from raw rows.

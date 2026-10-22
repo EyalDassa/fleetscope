@@ -34,7 +34,7 @@ Rules:
 
 `insertEvents(client, events)` takes validated `FleetEvent`s and writes one batch INSERT per table.
 `ts` is sent as a `YYYY-MM-DD HH:MM:SS.mmm` string, because ClickHouse reads a bare integer as
-seconds. Rows older than the 30 day TTL are dropped by ClickHouse.
+seconds. Rows older than the 30 day TTL are dropped by ClickHouse asynchronously: a background merge removes the expired part shortly after the insert, so a query right after the insert may still see them.
 
 ## Logging
 

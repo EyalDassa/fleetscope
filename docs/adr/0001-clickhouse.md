@@ -40,7 +40,7 @@ Why it fits:
   not. That matches our design: the API buffers events and flushes every second or 5k rows.
 - **Materialized views and AggregatingMergeTree.** The `fleet_minute` rollup (M2) is maintained
   incrementally on insert, so Overview charts never scan raw rows.
-- **TTL.** `TTL toDate(ts) + INTERVAL 30 DAY` drops old raw partitions with no cron job.
+- **TTL.** `TTL toDate(ts) + INTERVAL 30 DAY` drops old partitions with no cron job (the four raw tables and, since the M0 review, `sessions` by `started_at`). With `ttl_only_drop_parts = 1` whole expired parts are dropped by a background merge, not during the insert.
 - **ReplacingMergeTree** gives "latest state wins" for `sessions` without UPDATEs.
 - **Single container locally and in CI**, plain SQL migrations, an official Node client.
 
