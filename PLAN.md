@@ -238,11 +238,11 @@ Design versions with critiques and `changes.md`, the lead's round notes, `design
 ## 13. One-time setup (Eyal, before starting Claude Code)
 1. Create an empty GitHub repo `fleetscope`, clone it, and unzip the kickoff files into it (`PLAN.md`, `CLAUDE.md`, `design/BRIEF.md`, `.claude/agents/`). Commit them to `main`.
 2. Install Docker Desktop (WSL2), Node 22+, pnpm and git.
-3. In Claude Code, install the skills (pick **project** scope when asked):
-   - UI/UX Pro Max: `/plugin marketplace add nextlevelbuilder/ui-ux-pro-max-skill`, then install it from the `/plugin` menu.
-   - Taste: `npx skills add https://github.com/Leonxlnx/taste-skill`
+3. In Claude Code (opened in the repo folder), install the skills. In each install panel choose **project** scope, so the choice is saved in `.claude/settings.json` and committed:
+   - UI/UX Pro Max: `/plugin marketplace add nextlevelbuilder/ui-ux-pro-max-skill`, then `/plugin install ui-ux-pro-max@ui-ux-pro-max-skill`
+   - Taste: `/plugin marketplace add Leonxlnx/taste-skill`, then `/plugin install taste-skill@taste-skill`
    - Superpowers: `/plugin marketplace add obra/superpowers-marketplace`, then `/plugin install superpowers@superpowers-marketplace`
-   - Run `/reload-plugins` and check that all three appear. Run `/agents` and check that all 8 agents are listed.
+   - Run `/reload-plugins`, check that all three appear in `/plugin`, and run `/agents` to check that all 8 agents are listed.
    - Read each SKILL.md before installing; third-party skills can contain hidden instructions.
 4. Accounts for later milestones: Vercel, Railway or Fly, ClickHouse Cloud (trial), Sentry, PostHog, an Anthropic API key.
 5. First prompt to Claude Code: *"You are the tech lead. Read PLAN.md and CLAUDE.md. Start M0: run the design sprint from section 10 in the background (designer-promax and designer-taste in parallel, then the feedback rounds with design-lead), and at the same time plan the walking skeleton and assign it to the platform and backend engineers. Stop for my approval when the design is ready and when M0 is done."*
