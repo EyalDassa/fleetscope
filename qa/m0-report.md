@@ -174,6 +174,8 @@ First pass for comparison: unit 76 / 30 / 43 and integration 62 / 7, with 10 `it
 ## New bugs and re-test findings (round 1)
 
 ### QA-M0-12 (major, platform): the new "image tag in CI matches docker-compose" step fails on every run
+
+**Status: VERIFIED (round 1, commit 66040dc).** Found by QA in the re-test pass, fixed by platform within the same round: the check is now `.github/scripts/check-clickhouse-tag.sh` (POSIX character classes, exactly one image line required per file, clear error message). Re-tested: on the repo it prints both tags and exits 0; with a copy of the compose file at a different tag it prints both tags and exits 1 with "ClickHouse image tags differ". Still unproven on GitHub itself until the branch is pushed.
 - **File:** `.github/workflows/ci.yml`, lines 29-35 (job `check`).
 - **Steps:** run the two commands of the step in any shell: `grep -E '^s+image: clickhouse/clickhouse-server:' infra/docker-compose.yml | awk '{print $2}'`.
 - **Expected:** prints `clickhouse/clickhouse-server:26.8.34.13` for both files, `test "$compose" = "$ci"` passes.
@@ -199,19 +201,19 @@ First pass for comparison: unit 76 / 30 / 43 and integration 62 / 7, with 10 `it
 | QA-M0-09 | backend | deferred to M1 |
 | QA-M0-10 | backend | verified |
 | QA-M0-11 | backend | kept as a liveness check |
-| QA-M0-12 | platform | **new, open, major** |
+| QA-M0-12 | platform | new in this pass, fixed in 66040dc, verified |
 | QA-M0-13 | backend | new, open, nit |
 
 Other changes checked: new `resource.sample` rules per origin (container with any of the four metrics null is rejected, cdp with nulls is accepted and stored as NULL, real zeros stay 0; the four metric columns are `Nullable`); sessions now `PARTITION BY toDate(started_at)` with the 30 day TTL and `ttl_only_drop_parts = 1` on all five tables (31 and 90 day old sessions are dropped, 29 day old kept; a session closed by a later batch merges to one physical row after `OPTIMIZE ... FINAL`); `pnpm build` passes (web and api); `.gitignore` covers `.env*`; `pnpm db:migrate` and `pnpm db:seed` on the re-created local database work; the lint/typecheck/test run in `turbo` with the new transit nodes and `//#lint:root` is green. The Dependabot, SHA-pinned action and Claude workflow changes were not exercised (they only run on GitHub).
 
 CI note: `gh pr checks 1` still shows the run on the first commit (all green). The branch is 10 commits ahead of origin, so none of the fixes or the new `build` and tag-check steps have run in CI yet. QA-M0-12 will show up on the first push.
 
-## Verdict (re-test, round 1): NOT READY
+## Verdict (re-test, round 1): READY TO MERGE
 
 Open blocker: none.
-Open major: **QA-M0-12** (CI tag-check step always fails; a one-character fix: `\s` instead of `s` in two lines of `ci.yml`).
-Open nit: QA-M0-13.
+Open major: none.
+Open nit: QA-M0-13 (Fastify `disableRequestLogging` deprecation warning at startup; behaviour is correct).
 Deferred to M1 (not open M0 bugs): QA-M0-03, QA-M0-06, QA-M0-09.
 Accepted by lead decision: QA-M0-04 (db level), QA-M0-05.
 
-Everything else is verified, and `pnpm lint && pnpm typecheck && pnpm test` and `pnpm test:integration` are green. Once QA-M0-12 is fixed (and the pushed run is green), this is **ready to merge** from QA's side.
+`pnpm lint && pnpm typecheck && pnpm test` and `pnpm test:integration` are green on the current HEAD (re-run after 66040dc), `pnpm build` passes, and no `it.fails` is left. Conditions outside QA's reach: the branch has not been pushed since the first CI run, so the pushed CI run (new `build` and tag-check steps, SHA-pinned actions) must be green before merging; and the reviewer must approve.
