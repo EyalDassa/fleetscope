@@ -1,0 +1,29 @@
+{
+  "name": "@fleetscope/db",
+  "version": "0.0.0",
+  "private": true,
+  "description": "ClickHouse client, migrations and query functions shared by api and mcp",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./src/testing.ts"
+  },
+  "scripts": {
+    "lint": "biome check .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "migrate": "tsx --env-file-if-exists=../../.env src/cli/migrate.ts",
+    "seed": "tsx --env-file-if-exists=../../.env src/cli/seed.ts"
+  },
+  "dependencies": {
+    "@clickhouse/client": "^1.24.1",
+    "@fleetscope/schema": "workspace:*",
+    "pino": "^10.4.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.23.15"
+  }
+}
