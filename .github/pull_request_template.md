@@ -14,6 +14,7 @@
 ## Checklist
 - [ ] `pnpm lint && pnpm typecheck && pnpm test` pass locally
 - [ ] Integration tests pass (`pnpm infra:up`, then `pnpm test:integration`) if the DB or API changed
+- [ ] A ClickHouse image bump edits both `infra/docker-compose.yml` and `.github/workflows/ci.yml` (CI checks they match)
 - [ ] No secrets in the diff; `.env.example` updated if env vars changed
 - [ ] QA report says "ready to merge" and the reviewer approved (see `qa/` and `reviews/`)
 

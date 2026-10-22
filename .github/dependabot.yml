@@ -23,7 +23,7 @@ updates:
     commit-message:
       prefix: "chore(ci)"
 
-  - package-ecosystem: docker
+  - package-ecosystem: docker-compose # watches infra/docker-compose.yml (the `docker` ecosystem only reads Dockerfiles)
     directory: /infra
     schedule:
       interval: weekly
