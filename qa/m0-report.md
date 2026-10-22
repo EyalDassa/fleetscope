@@ -4,7 +4,7 @@ Branch `m0-walking-skeleton`, first QA pass. Environment: Windows 11, Git Bash, 
 
 Tested against the "done when" column of the PR table and PLAN.md sections 5, 6, 9 and 11, not against what the code happens to do. Known pending change (not filed): `resource.sample` metrics that a sample cannot measure become `null` (PLAN section 5); the schema still requires cpu/mem/net.
 
-## Verdict (first pass): NOT READY
+## Verdict, first pass (superseded by the re-test verdict at the end): NOT READY
 
 Every M0 "done when" is met and CI on the PR is green. Two **major** bugs are open. Both are cheap to fix and both sit exactly on the path M1 builds on (batch ingest), so they are better fixed now:
 
@@ -46,6 +46,8 @@ Playwright: nothing to test yet (the web app is a placeholder page); the first e
 ## Bugs
 
 ### QA-M0-01 (major, backend): `insertEvents` fails for many `session.ended` events whose start is already stored
+
+**Status: VERIFIED (round 1). Lookup is chunked by URL-encoded size (`chunkByEncodedSize`, 40 KB budget). Tests: 1,000 ends with 128-char ids, 5,000 with 36-char ids, 5,000 with 128-char ids (640 KB), 1,000 ids that grow when URL-encoded (unicode, quotes, spaces), 700 stored + 300 orphaned ends counted correctly, plus 6 unit tests for the chunker (no id lost or reordered, every chunk under budget, an oversized id gets its own chunk). The `it.fails` tests are now plain tests.**
 - **File:** `packages/db/src/insert.ts`, `findStoredSessions`.
 - **Steps:** store the `session.started` for N sessions, then call `insertEvents` with the N `session.ended` events (test: `db.edge.integration.test.ts`, "volume").
 - **Expected:** every session is closed. A batch of 1,000 events (the documented API limit) with ids up to 128 chars, and an ingest flush of 5,000 rows, are both inside the contract (PLAN section 5).
@@ -55,6 +57,8 @@ Playwright: nothing to test yet (the web app is a placeholder page); the first e
 - **Tests:** two `it.fails` "QA-M0-01" in `db.edge.integration.test.ts`.
 
 ### QA-M0-02 (major, backend): `ts` is unbounded in the schema, one bad event breaks a whole batch
+
+**Status: VERIFIED (round 1). `ts` must be an integer in [2020-01-01, 2100-01-01) (`TS_MIN`, `TS_MAX_EXCLUSIVE`): year 10000, `Number.MAX_SAFE_INTEGER`, the epoch and seconds-instead-of-ms are all rejected. Boundary test updated to the new window (`ts: 0` is now invalid on purpose). The db-level "year 10000 / RangeError" tests were replaced by a contract test: the extreme values the schema accepts (last ms of 2099, UInt32 max, cpu 100000, mem 16 TiB, byte counters 2^53-1) round-trip exactly. Residual, accepted: `insertEvents` still throws a `RangeError` for an unvalidated `ts` it cannot format (kept as a passing test).**
 - **File:** `packages/schema/src/events.ts` (`count` / `ts`), related `packages/db/src/insert.ts` `toClickHouseDateTime`.
 - **Steps:** `FleetEvent.parse({..., ts: 253402300800000})` (year 10000) or `ts: Number.MAX_SAFE_INTEGER`, then `insertEvents`.
 - **Expected:** the schema rejects timestamps ClickHouse cannot store, so a bad event is a 400 for that event (or batch) at the API, not a failed flush.
@@ -63,6 +67,8 @@ Playwright: nothing to test yet (the web app is a placeholder page); the first e
 - **Tests:** `it.fails` "QA-M0-02" in `events.edge.test.ts`; the failure mode itself is pinned by two passing tests in `db.edge.integration.test.ts` ("a bad value must not take the whole batch down").
 
 ### QA-M0-03 (minor, backend): `insertEvents` is not atomic across tables
+
+**Status: DEFERRED TO M1 (lead decision). Not an open M0 bug. The failing test was replaced by `it.todo` ("a retry after a partial write inserts no duplicates", needs `event_id` dedupe). With validated events it is only reachable through a ClickHouse outage mid-flush.**
 - **File:** `packages/db/src/insert.ts` (sequential `client.insert` per table).
 - **Steps:** `insertEvents([session.started, action, issue with ts in year 10000])`.
 - **Expected:** nothing is written when the batch fails, or the caller is told what was written, so a retry cannot double-insert.
@@ -70,6 +76,8 @@ Playwright: nothing to test yet (the web app is a placeholder page); the first e
 - **Test:** `it.fails` "QA-M0-03".
 
 ### QA-M0-04 (minor, backend): values the schema allows but the columns cannot hold are silently changed
+
+**Status: Schema level: VERIFIED (round 1). Every UInt32 field rejects 2^32, `cpu_pct` is capped at 100,000, `mem_mb` / `js_heap_mb` at 16,777,216; byte counters up to 2^53-1. Db level (unvalidated events into `insertEvents`): DISPUTED, then ACCEPTED AS DESIGNED by the lead. QA position: the db layer still wraps or NULLs an out-of-range value if someone bypasses the schema. Backend / lead position: `insertEvents` takes typed, validated `FleetEvent`s and the API validation is the guard. The db-level `it.fails` tests were replaced by the contract test described under QA-M0-02.**
 - **File:** `packages/schema/src/events.ts` (`count`, `amount`) vs `infra/clickhouse/*.sql` (UInt32, Float32).
 - **Steps:** insert an action with `duration_ms: 2**32 + 5`, a sample with `cpu_pct: 1e39`.
 - **Expected:** rejected at validation (or stored exactly).
@@ -78,6 +86,8 @@ Playwright: nothing to test yet (the web app is a placeholder page); the first e
 - **Tests:** `it.fails` "QA-M0-04" (2 in `events.edge.test.ts`, 2 in `db.edge.integration.test.ts`).
 
 ### QA-M0-05 (minor, backend): concurrent `migrate` runs are not serialized
+
+**Status: ACCEPTED LIMITATION (lead decision, partly fixed). The runner re-reads the ledger before each file (narrows the race), and `packages/db/README.md` and the doc comment say to run migrations from one place (a single CI / deploy step, never on API startup). Re-test: overlapping runs still leave a complete, usable database and every migration is recorded at least once; sequential runs record each exactly once. QA position: duplicate ledger rows are still possible and the first non-idempotent migration would expose it. Lead position: ClickHouse has no advisory locks and migrate runs as one step. The `it.fails` test became two passing tests that state exactly what is promised.**
 - **File:** `packages/db/src/migrate.ts`, `applyPending`.
 - **Steps:** run `runMigrations` three times in parallel on an empty database (also: two `pnpm db:migrate` at once).
 - **Expected:** each migration applied and recorded once.
@@ -86,6 +96,8 @@ Playwright: nothing to test yet (the web app is a placeholder page); the first e
 - **Test:** `it.fails` "QA-M0-05".
 
 ### QA-M0-06 (minor now, must be decided before M1 ingest ships; backend): a `session.ended` that arrives before its `session.started` is lost for good
+
+**Status: DEFERRED TO M1 (lead decision). Not an open M0 bug. The passing test that records today's behaviour stays; change its expectation when M1 decides how to handle an end that arrives first.**
 - **File:** `packages/db/src/insert.ts` (orphaned ends are counted, not stored).
 - **Steps:** `insertEvents([ended])`, then later `insertEvents([started])` for the same session.
 - **Expected (for M1):** the session ends up with the real status.
@@ -93,6 +105,8 @@ Playwright: nothing to test yet (the web app is a placeholder page); the first e
 - **Test:** passing test that records today's behaviour; change its expectation when M1 decides ("loses a session.ended that arrives in an earlier batch").
 
 ### QA-M0-07 (minor, platform): `pnpm infra:up` without `.env` gives a confusing error
+
+**Status: VERIFIED (round 1, Windows). `infra:up` / `infra:down` now use `--project-directory .` and no `--env-file`. With `.env` renamed away: `pnpm infra:down` then `pnpm infra:up` starts a healthy ClickHouse with the default credentials (exit 0); with `.env` restored it works as before. `.gitignore` now ignores `.env*` except `.env.example` (checked with `git check-ignore`).**
 - **File:** root `package.json` scripts `infra:up` / `infra:down` (`--env-file .env`).
 - **Steps:** delete or rename `.env`, run `pnpm infra:up`.
 - **Expected:** a hint such as "copy .env.example to .env". The compose file already has defaults for all three variables, so it does not need the file at all.
@@ -100,21 +114,29 @@ Playwright: nothing to test yet (the web app is a placeholder page); the first e
 - **Suggested fix:** drop `--env-file .env` (Compose reads a `.env` next to the compose file or the cwd only; if kept, use `--env-file` only when present) or document the copy step in the error / README.
 
 ### QA-M0-08 (minor / nit, backend): `splitStatements` does not strip comments in CRLF files
+
+**Status: VERIFIED (round 1). `split(/\r?\n/)`; the `it.fails` test is a plain test now and passes.**
 - **File:** `packages/db/src/migrate.ts`, `splitStatements` (`/--.*$/`).
 - **Steps:** a migration saved with CRLF and a comment containing `;`.
 - **Expected:** comment removed; **Actual:** `.` does not match `\r`, so the comment stays and is cut at its `;`. Hidden today because `.gitattributes` forces LF; also the file checksum would differ between LF and CRLF checkouts, which `.gitattributes` also prevents.
 - **Test:** `it.fails` "QA-M0-08" in `migrate.edge.test.ts`.
 
 ### QA-M0-09 (minor, recorded; M1 owns it): duplicate `event_id` is stored twice
+
+**Status: DEFERRED TO M1 (lead decision). Not an open M0 bug. The three passing tests that record the current behaviour stay; they must change when dedupe lands.**
 - **Steps:** `insertEvents([e, e])`, or retry the same batch.
 - **Actual:** two rows in `actions` (same for issues, samples, network). Expected for M0. For sessions the duplicate is harmless (`ReplacingMergeTree` keeps one row). Notes for the M1 dedupe: the schema accepts upper-case and the nil UUID, so dedupe must normalise `event_id` case; `InsertCounts` counts rows sent, not rows kept.
 - **Tests:** three passing tests, "duplicate event_id (M1 owns dedupe)"; the first two need their expectation changed when dedupe lands.
 
 ### QA-M0-10 (nit, backend): `CLICKHOUSE_URL` accepts any URL scheme
+
+**Status: VERIFIED (round 1). `CLICKHOUSE_URL` must be http(s) with the message "must be an http(s) URL such as http://localhost:8123". Test rejects `localhost:8123`, `ftp://`, `javascript:` and `file:` and accepts `https://...:8443`.**
 - **File:** `packages/db/src/config.ts` (`z.url()`).
 - `CLICKHOUSE_URL=localhost:8123` is a valid URL with scheme `localhost`, so a missing `http://` is not caught at startup; it fails at the first query. Suggest `z.url({ protocol: /^https?$/ })`. Recorded by a passing test.
 
 ### QA-M0-11 (nit, backend): `/healthz` is green when the database does not exist or is not migrated
+
+**Status: KEPT AS A LIVENESS CHECK (lead agrees). Not a bug; the passing test documents it.**
 - **File:** `packages/db/src/ping.ts` / `apps/api/src/routes/health.ts`.
 - With `CLICKHOUSE_DATABASE` pointing at a database that does not exist, `/healthz` still returns 200 with `schemaVersion: 1`. The spec only asks for "ClickHouse answers", so this is within the criteria; flagging because the response suggests more than it checks. Recorded by a passing test.
 
@@ -130,31 +152,66 @@ Playwright: nothing to test yet (the web app is a placeholder page); the first e
 - Each probe logs two info lines ("incoming request", "request completed"); with a 5-10 s orchestrator probe that is noisy. Consider `disableRequestLogging` for `/healthz` (nit).
 - The ClickHouse client logs expected failures to the console at ERROR level during the `it.fails` / rejection tests; noise only.
 
-## Command output
+## Command output (re-test pass, round 1)
 
 ```
-pnpm lint        Tasks: 4 successful, 4 total
+pnpm lint        Tasks: 5 successful, 5 total   (4 packages + //#lint:root)
 pnpm typecheck   Tasks: 4 successful, 4 total
-pnpm test        schema  2 files  76 passed | 3 expected fail (79)
-                 db      3 files  30 passed | 1 expected fail (31)
-                 api     2 files  43 passed (43)
+pnpm test        schema  3 files  111 passed
+                 db      3 files   43 passed
+                 api     3 files   46 passed
                  Tasks: 4 successful, 4 total
 pnpm test:integration
-                 db      2 files  62 passed | 6 expected fail (68)
-                 api     2 files   7 passed (7)
+                 db      2 files   76 passed | 1 todo (QA-M0-03, M1)
+                 api     2 files    7 passed
                  Tasks: 2 successful, 2 total
 ```
 
-"expected fail" = open bug pinned with `it.fails` (10 in total: QA-M0-01 x2, -02, -03, -04 x4, -05, -08).
+No `it.fails` is left anywhere. The only non-running test is one `it.todo` for QA-M0-03 (M1).
 
-## Re-test pass
+First pass for comparison: unit 76 / 30 / 43 and integration 62 / 7, with 10 `it.fails`.
 
-Not started. After the fix round: flip the `it.fails` tests of every fixed bug to `it`, re-run, and mark each bug verified / reopened / disputed here.
+## New bugs and re-test findings (round 1)
 
-## Verdict: NOT READY
+### QA-M0-12 (major, platform): the new "image tag in CI matches docker-compose" step fails on every run
+- **File:** `.github/workflows/ci.yml`, lines 29-35 (job `check`).
+- **Steps:** run the two commands of the step in any shell: `grep -E '^s+image: clickhouse/clickhouse-server:' infra/docker-compose.yml | awk '{print $2}'`.
+- **Expected:** prints `clickhouse/clickhouse-server:26.8.34.13` for both files, `test "$compose" = "$ci"` passes.
+- **Actual:** the regex is `^s+image:` (the backslash of `\s` was lost; `cat -A` shows a literal `s+`), so it matches nothing, `compose` is empty, `test -n "$compose"` fails and the step, and therefore the required check "Lint, typecheck, unit tests", goes red on every run. Reproduced locally: `compose=[]`. This commit has not been pushed yet, so CI has not shown it.
+- **Fix:** `grep -E '^\s+image: clickhouse/clickhouse-server:'` in both lines (or `grep -oE 'clickhouse/clickhouse-server:[0-9.]+'`, which also avoids matching the step's own text). Check that the step prints both tags and succeeds.
+
+### QA-M0-13 (nit, backend): Fastify deprecation warning at startup
+- **File:** `apps/api/src/app.ts` (`disableRequestLogging` given as a function).
+- **Actual:** `FastifyDeprecation: disableRequestLogging option is deprecated. Use the logController option ... (FSTDEP023)` is printed on every API start. Behaviour is right (checked on a real server: successful `/healthz` probes log nothing, a failing probe logs one `healthz: ClickHouse is down` warning, other routes still log request and response), but the option will be removed in a later Fastify major.
+
+## Re-test summary
+
+| Bug | Owner | Result |
+|---|---|---|
+| QA-M0-01 | backend | verified |
+| QA-M0-02 | backend | verified |
+| QA-M0-03 | backend | deferred to M1 (`it.todo`) |
+| QA-M0-04 | backend | schema level verified; db level disputed, accepted as designed by the lead |
+| QA-M0-05 | backend | accepted limitation (documented, partly mitigated) |
+| QA-M0-06 | backend | deferred to M1 |
+| QA-M0-07 | platform | verified (Windows, with and without `.env`) |
+| QA-M0-08 | backend | verified |
+| QA-M0-09 | backend | deferred to M1 |
+| QA-M0-10 | backend | verified |
+| QA-M0-11 | backend | kept as a liveness check |
+| QA-M0-12 | platform | **new, open, major** |
+| QA-M0-13 | backend | new, open, nit |
+
+Other changes checked: new `resource.sample` rules per origin (container with any of the four metrics null is rejected, cdp with nulls is accepted and stored as NULL, real zeros stay 0; the four metric columns are `Nullable`); sessions now `PARTITION BY toDate(started_at)` with the 30 day TTL and `ttl_only_drop_parts = 1` on all five tables (31 and 90 day old sessions are dropped, 29 day old kept; a session closed by a later batch merges to one physical row after `OPTIMIZE ... FINAL`); `pnpm build` passes (web and api); `.gitignore` covers `.env*`; `pnpm db:migrate` and `pnpm db:seed` on the re-created local database work; the lint/typecheck/test run in `turbo` with the new transit nodes and `//#lint:root` is green. The Dependabot, SHA-pinned action and Claude workflow changes were not exercised (they only run on GitHub).
+
+CI note: `gh pr checks 1` still shows the run on the first commit (all green). The branch is 10 commits ahead of origin, so none of the fixes or the new `build` and tag-check steps have run in CI yet. QA-M0-12 will show up on the first push.
+
+## Verdict (re-test, round 1): NOT READY
 
 Open blocker: none.
-Open major: QA-M0-01, QA-M0-02.
-Open minor / nit: QA-M0-03 to QA-M0-11.
+Open major: **QA-M0-12** (CI tag-check step always fails; a one-character fix: `\s` instead of `s` in two lines of `ci.yml`).
+Open nit: QA-M0-13.
+Deferred to M1 (not open M0 bugs): QA-M0-03, QA-M0-06, QA-M0-09.
+Accepted by lead decision: QA-M0-04 (db level), QA-M0-05.
 
-Merge when QA-M0-01 and QA-M0-02 are verified. The minors may ship if the lead accepts them; QA-M0-06 and QA-M0-09 are M1 design inputs and should go on the M1 task list, QA-M0-05 and QA-M0-07 are quick wins.
+Everything else is verified, and `pnpm lint && pnpm typecheck && pnpm test` and `pnpm test:integration` are green. Once QA-M0-12 is fixed (and the pushed run is green), this is **ready to merge** from QA's side.

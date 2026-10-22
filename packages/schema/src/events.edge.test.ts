@@ -6,14 +6,15 @@ import {
   ResourceSampleEvent,
   SessionEndedEvent,
   SessionStartedEvent,
+  TS_MAX_EXCLUSIVE,
+  TS_MIN,
 } from "./index";
 
 /**
  * QA edge cases for the v1 event schema (M0). The happy paths live in events.test.ts.
  *
- * Tests named "QA-M0-NN" describe a known bug (see qa/m0-report.md). They are written with
- * `it.fails`: they pass while the bug exists and start failing once it is fixed, which is the
- * signal for QA to flip them to plain `it` in the re-test pass.
+ * Bugs found in the first pass (QA-M0-02, QA-M0-04) were fixed in the schema; their tests are now
+ * ordinary tests at the end of this file (see qa/m0-report.md).
  */
 
 const envelope = {
@@ -99,7 +100,8 @@ describe("envelope: invalid values", () => {
 
   it("accepts the boundary values", () => {
     expect(ok({ ...issue, session_id: "x".repeat(128) })).toBe(true);
-    expect(ok({ ...issue, ts: 0 })).toBe(true);
+    expect(ok({ ...issue, ts: TS_MIN })).toBe(true);
+    expect(ok({ ...issue, ts: TS_MAX_EXCLUSIVE - 1 })).toBe(true);
     expect(ok({ ...issue, message: "x".repeat(2000) })).toBe(true);
     expect(ok({ ...issue, message: "x".repeat(2001) })).toBe(false);
   });
@@ -268,27 +270,69 @@ describe("observations (accepted by the schema; see report)", () => {
   });
 });
 
-// Bugs. The ClickHouse columns are narrower than the schema, see packages/db/src/db.edge.integration.test.ts.
-describe("known bugs (it.fails = still open)", () => {
-  // 253402300799999 is 9999-12-31T23:59:59.999Z, the last instant ClickHouse can read back from
-  // the "YYYY-MM-DD hh:mm:ss.mmm" string insertEvents sends. Anything later breaks the insert.
-  const MAX_SENSIBLE_TS = 253_402_300_799_999;
+// Fixed in round 1 (QA-M0-02, QA-M0-04): the schema now mirrors the ClickHouse column types.
+describe("bounds that match the ClickHouse columns (QA-M0-02, QA-M0-04)", () => {
+  const UINT32_MAX = 4_294_967_295;
 
-  it.fails("QA-M0-02: rejects a ts later than year 9999", () => {
-    expect(ok({ ...issue, ts: MAX_SENSIBLE_TS + 1 })).toBe(false);
+  it("rejects a ts outside [2020-01-01, 2100-01-01), including epoch, seconds and year 10000", () => {
+    expect(ok({ ...issue, ts: TS_MIN - 1 })).toBe(false);
+    expect(ok({ ...issue, ts: TS_MAX_EXCLUSIVE })).toBe(false);
+    expect(ok({ ...issue, ts: 0 })).toBe(false);
+    expect(ok({ ...issue, ts: 1_760_000_000 })).toBe(false); // seconds instead of ms
+    expect(ok({ ...issue, ts: 253_402_300_800_000 })).toBe(false); // year 10000
     expect(ok({ ...issue, ts: Number.MAX_SAFE_INTEGER })).toBe(false);
   });
 
-  it.fails("QA-M0-04: rejects millisecond counts that do not fit a UInt32 column", () => {
-    const UINT32_MAX = 4_294_967_295;
-    expect(ok({ ...action, duration_ms: UINT32_MAX + 1 })).toBe(false);
-    expect(ok({ ...action, seq: UINT32_MAX + 1 })).toBe(false);
+  it("rejects millisecond counts that do not fit a UInt32 column, accepts the maximum", () => {
+    for (const patch of [{ duration_ms: UINT32_MAX + 1 }, { seq: UINT32_MAX + 1 }]) {
+      expect(ok({ ...action, ...patch })).toBe(false);
+    }
+    expect(ok({ ...action, duration_ms: UINT32_MAX, seq: UINT32_MAX })).toBe(true);
     expect(ok({ ...started, startup_ms: UINT32_MAX + 1 })).toBe(false);
+    expect(ok({ ...started, connect_ms: UINT32_MAX + 1 })).toBe(false);
     expect(ok({ ...ended, duration_ms: UINT32_MAX + 1 })).toBe(false);
   });
 
-  it.fails("QA-M0-04: rejects a cpu_pct / mem_mb that does not fit a Float32 column", () => {
+  it("rejects a cpu_pct / mem_mb / js_heap_mb that does not fit a Float32 column", () => {
     expect(ok({ ...sample, cpu_pct: 1e39 })).toBe(false);
     expect(ok({ ...sample, mem_mb: 1e39 })).toBe(false);
+    expect(ok({ ...sample, js_heap_mb: 1e39 })).toBe(false);
+    expect(ok({ ...sample, cpu_pct: 100_000, mem_mb: 16_777_216 })).toBe(true);
+  });
+});
+
+describe("resource.sample by origin", () => {
+  const container = { ...sample, origin: "container" } as const;
+  const containerMetrics = ["cpu_pct", "mem_mb", "net_rx_bytes", "net_tx_bytes"] as const;
+
+  it.each(containerMetrics)("rejects a container sample whose %s is null", (field) => {
+    const result = ResourceSampleEvent.safeParse({ ...container, [field]: null });
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.issues[0]?.path).toEqual([field]);
+  });
+
+  it("rejects a container sample with all four container metrics null", () => {
+    const nulls = Object.fromEntries(containerMetrics.map((field) => [field, null]));
+    expect(ok({ ...container, ...nulls })).toBe(false);
+  });
+
+  it("accepts a cdp sample with every container metric null and a heap value", () => {
+    const nulls = Object.fromEntries(containerMetrics.map((field) => [field, null]));
+    expect(ok({ ...sample, origin: "cdp", ...nulls, js_heap_mb: 12.5 })).toBe(true);
+  });
+
+  it("accepts a cdp sample with null container metrics AND a null heap (nothing measurable)", () => {
+    const nulls = Object.fromEntries(containerMetrics.map((field) => [field, null]));
+    expect(ok({ ...sample, origin: "cdp", ...nulls, js_heap_mb: null })).toBe(true);
+  });
+
+  it("does not turn a null into 0 when parsing", () => {
+    const parsed = ResourceSampleEvent.parse({ ...sample, origin: "cdp", cpu_pct: null });
+    expect(parsed.cpu_pct).toBeNull();
+  });
+
+  it("still rejects a missing (not null) container metric on a cdp sample", () => {
+    const { cpu_pct: _cpu, ...rest } = sample;
+    expect(ok({ ...rest, origin: "cdp" })).toBe(false);
   });
 });

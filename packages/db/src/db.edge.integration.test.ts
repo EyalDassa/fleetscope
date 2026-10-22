@@ -1,12 +1,14 @@
 import { randomUUID } from "node:crypto";
 import {
   ActionEvent,
-  type FleetEvent,
+  FleetEvent,
   IssueEvent,
   NetworkRequestEvent,
   ResourceSampleEvent,
   SessionEndedEvent,
   SessionStartedEvent,
+  TS_MAX_EXCLUSIVE,
+  TS_MIN,
 } from "@fleetscope/schema";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createClickHouseClient } from "./client";
@@ -21,8 +23,8 @@ import { createTestDatabase, dropDatabase, type TestDatabase } from "./testing";
  * the blocks do not see each other's rows. Fixture timestamps are always "now", because the raw
  * tables drop rows older than 30 days at insert time (TTL).
  *
- * Tests named "QA-M0-NN" describe a known bug (see qa/m0-report.md). They use `it.fails`: they
- * pass while the bug exists and fail once it is fixed, which tells QA to flip them to `it`.
+ * Bugs from the first QA pass are tagged "QA-M0-NN" in test names (see qa/m0-report.md). All fixed
+ * ones are ordinary tests now; deferred ones (QA-M0-03, -06, -09) are M1 items.
  */
 
 let db: TestDatabase;
@@ -365,9 +367,40 @@ describe("timestamps: TTL, clock skew, millisecond precision", () => {
     expect(await count("actions", "ttl-epoch")).toBe(0);
   });
 
-  it("does not apply the TTL to sessions (only the four raw tables have one)", async () => {
-    await insertEvents(db.client, [started("ttl-session", { ts: Date.now() - 90 * DAY })]);
-    expect(await count("sessions", "ttl-session")).toBe(1);
+  it("applies the same 30 day TTL to sessions (by started_at) and keeps a recent session", async () => {
+    await insertEvents(db.client, [
+      started("ttl-sess-29d", { ts: Date.now() - 29 * DAY }),
+      started("ttl-sess-31d", { ts: Date.now() - 31 * DAY }),
+      started("ttl-sess-90d", { ts: Date.now() - 90 * DAY }),
+    ]);
+    expect(await count("sessions", "ttl-sess-29d")).toBe(1);
+    expect(await count("sessions", "ttl-sess-31d")).toBe(0);
+    expect(await count("sessions", "ttl-sess-90d")).toBe(0);
+  });
+
+  it("partitions sessions by the day of started_at and drops whole parts on TTL, on all five tables", async () => {
+    const tables = await rows<{ name: string; partition_key: string; engine_full: string }>(
+      `SELECT name, partition_key, engine_full FROM system.tables
+       WHERE database = currentDatabase() AND name IN ('sessions','actions','resource_samples','network_requests','issues')`,
+    );
+    expect(tables).toHaveLength(5);
+    for (const table of tables) {
+      expect(table.engine_full, table.name).toContain("ttl_only_drop_parts = 1");
+      expect(table.engine_full, table.name).toContain("toIntervalDay(30)");
+    }
+    expect(tables.find((t) => t.name === "sessions")?.partition_key).toBe("toDate(started_at)");
+  });
+
+  it("a session closed by a later batch stays ONE row after merging (both versions share a partition)", async () => {
+    const t = Date.now() - 2 * DAY;
+    await insertEvents(db.client, [started("ttl-merge", { ts: t })]);
+    await insertEvents(db.client, [ended("ttl-merge", { ts: t + 1000 })]);
+    await db.client.command({ query: "OPTIMIZE TABLE sessions FINAL" });
+    // No FINAL here: after a full merge the old running version must be physically gone.
+    const result = await rows<{ status: string; version: number }>(
+      "SELECT status, version FROM sessions WHERE session_id = 'ttl-merge'",
+    );
+    expect(result).toEqual([{ status: "success", version: 2 }]);
   });
 
   it("reports TTL-dropped rows in InsertCounts as if they were stored (counts rows sent, not stored)", async () => {
@@ -520,91 +553,167 @@ describe("volume", () => {
     expect(counts).toMatchObject({ sessions: 500, orphanedEnds: 0 });
   });
 
-  // QA-M0-01 (major). The ids of ended sessions are sent to ClickHouse as ONE query parameter
-  // (`session_id IN {ids:Array(String)}`). ClickHouse refuses a form field above ~64 KB with
-  // "HTML Form Exception: Field value too long", so the whole insert fails. 1,000 ends with
-  // 128-char ids is inside the documented API contract (batch of 1,000, ids up to 128 chars);
-  // 5,000 ends with uuid-sized ids is inside the planned ingest flush size (5k rows).
-  it.fails("QA-M0-01: handles 1,000 session.ended events (128 char ids) whose start is stored", async () => {
-    const ids = Array.from({ length: 1_000 }, (_, i) => `vol-long-${i}-`.padEnd(128, "x"));
+  // QA-M0-01 (fixed in round 1): the ids of ended sessions used to be sent as ONE query parameter
+  // and ClickHouse refused anything above ~64 KB. They are now looked up in chunks.
+  const startThenEnd = async (ids: string[]) => {
     await insertEvents(
       db.client,
       ids.map((id) => started(id)),
     );
-    const counts = await insertEvents(
+    return insertEvents(
       db.client,
       ids.map((id) => ended(id)),
     );
-    expect(counts.sessions).toBe(1_000);
+  };
+
+  it("QA-M0-01: closes 1,000 sessions with 128 char ids whose start is stored", async () => {
+    const ids = Array.from({ length: 1_000 }, (_, i) => `vol-long-${i}-`.padEnd(128, "x"));
+    const counts = await startThenEnd(ids);
+    expect(counts).toMatchObject({ sessions: 1_000, orphanedEnds: 0 });
+    const [row] = await rows<{ n: string }>(
+      "SELECT count() AS n FROM sessions FINAL WHERE startsWith(session_id, 'vol-long-') AND status = 'success'",
+    );
+    expect(Number(row?.n)).toBe(1_000);
   });
 
-  it.fails("QA-M0-01: handles 5,000 session.ended events (36 char ids) whose start is stored", async () => {
-    const ids = Array.from({ length: 5_000 }, () => randomUUID());
+  it("QA-M0-01: closes 5,000 sessions with 36 char ids whose start is stored", async () => {
+    const counts = await startThenEnd(Array.from({ length: 5_000 }, () => randomUUID()));
+    expect(counts).toMatchObject({ sessions: 5_000, orphanedEnds: 0 });
+  });
+
+  it("QA-M0-01: closes 5,000 sessions with 128 char ids (640 KB of ids) whose start is stored", async () => {
+    const counts = await startThenEnd(
+      Array.from({ length: 5_000 }, (_, i) => `vol-xl-${i}-`.padEnd(128, "y")),
+    );
+    expect(counts).toMatchObject({ sessions: 5_000, orphanedEnds: 0 });
+  });
+
+  it("QA-M0-01: handles ids that grow when URL-encoded (unicode, spaces, quotes)", async () => {
+    const counts = await startThenEnd(
+      Array.from({ length: 1_000 }, (_, i) =>
+        `vol-enc-${i}-\u00e9 \u65e5\u672c "q"'`.padEnd(60, "\u00fc"),
+      ),
+    );
+    expect(counts).toMatchObject({ sessions: 1_000, orphanedEnds: 0 });
+  });
+
+  it("QA-M0-01: counts orphaned ends correctly when only some starts are stored", async () => {
+    const stored = Array.from({ length: 700 }, (_, i) => `vol-part-${i}-`.padEnd(128, "p"));
+    const missing = Array.from({ length: 300 }, (_, i) => `vol-gone-${i}-`.padEnd(128, "g"));
     await insertEvents(
       db.client,
-      ids.map((id) => started(id)),
+      stored.map((id) => started(id)),
     );
     const counts = await insertEvents(
       db.client,
-      ids.map((id) => ended(id)),
+      [...stored, ...missing].map((id) => ended(id)),
     );
-    expect(counts.sessions).toBe(5_000);
+    expect(counts).toMatchObject({ sessions: 700, orphanedEnds: 300 });
   });
 });
 
-describe("a bad value must not take the whole batch down", () => {
-  // QA-M0-02 / QA-M0-03. The schema accepts any integer ts up to 2^53, but ClickHouse cannot read
-  // years >= 10000, so one poisoned event fails the insert for the entire flush. And because
-  // insertEvents writes table by table (sessions, actions, ..., issues) a failure in the last
-  // table leaves the earlier tables written: a client retry then double-inserts them.
-  const YEAR_10000 = 253_402_300_800_000;
+describe("everything the schema accepts, the database can store (QA-M0-02, QA-M0-04)", () => {
+  // insertEvents takes events that the API's zod validation has already accepted (lead decision,
+  // round 1). So the contract to test is: the extreme values the schema ALLOWS survive a round
+  // trip unchanged, instead of testing what happens to values the schema rejects.
+  const UINT32_MAX = 4_294_967_295;
 
-  it("rejects a ts in year 10000 with an error (ClickHouse cannot store it)", async () => {
-    await expect(
-      insertEvents(db.client, [action("poison-reject", { ts: YEAR_10000 })]),
-    ).rejects.toThrow();
-    expect(await count("actions", "poison-reject")).toBe(0);
+  it("stores the extreme valid values exactly (no wrapping, no NULL)", async () => {
+    const lastTs = TS_MAX_EXCLUSIVE - 1;
+    const events = [
+      action("extreme", { ts: lastTs, seq: UINT32_MAX, duration_ms: UINT32_MAX }),
+      sample("extreme", {
+        ts: lastTs,
+        cpu_pct: 100_000,
+        mem_mb: 16_777_216,
+        net_rx_bytes: Number.MAX_SAFE_INTEGER,
+        net_tx_bytes: Number.MAX_SAFE_INTEGER,
+        js_heap_mb: 16_777_216,
+      }),
+      started("extreme", { ts: lastTs, startup_ms: UINT32_MAX, connect_ms: UINT32_MAX }),
+    ];
+    for (const event of events) expect(FleetEvent.safeParse(event).success).toBe(true);
+    await insertEvents(db.client, events);
+
+    const [act] = await rows<{ seq: number; d: number; ms: string }>(
+      "SELECT seq, duration_ms AS d, toUnixTimestamp64Milli(ts) AS ms FROM actions WHERE session_id = 'extreme'",
+    );
+    expect(act).toMatchObject({ seq: UINT32_MAX, d: UINT32_MAX });
+    expect(Number(act?.ms)).toBe(lastTs);
+
+    const [res] = await rows<Record<string, unknown>>(
+      `SELECT cpu_pct, mem_mb, toString(net_rx_bytes) AS rx, js_heap_mb FROM resource_samples WHERE session_id = 'extreme'`,
+    );
+    expect(res).toEqual({
+      cpu_pct: 100_000,
+      mem_mb: 16_777_216,
+      rx: String(Number.MAX_SAFE_INTEGER),
+      js_heap_mb: 16_777_216,
+    });
+
+    const [session] = await rows<{ s: number; c: number }>(
+      "SELECT startup_ms AS s, connect_ms AS c FROM sessions FINAL WHERE session_id = 'extreme'",
+    );
+    expect(session).toEqual({ s: UINT32_MAX, c: UINT32_MAX });
   });
 
-  it("rejects a ts beyond what Date can format with a RangeError before writing anything", async () => {
+  it("accepts the first instant of the ts window without error (the 30 day TTL then drops it)", async () => {
+    const counts = await insertEvents(db.client, [action("window-min", { ts: TS_MIN })]);
+    expect(counts.actions).toBe(1);
+    expect(await count("actions", "window-min")).toBe(0);
+  });
+
+  it("stores a cdp sample whose container metrics are null as NULL, not 0", async () => {
+    const nulls = { cpu_pct: null, mem_mb: null, net_rx_bytes: null, net_tx_bytes: null };
+    await insertEvents(db.client, [
+      sample("cdp-nulls", { origin: "cdp", ...nulls, js_heap_mb: 42.5 }),
+      sample("cdp-nulls", { origin: "cdp", ...nulls, js_heap_mb: null }),
+    ]);
+    const result = await rows<Record<string, number | null>>(
+      `SELECT cpu_pct, mem_mb, net_rx_bytes, net_tx_bytes, js_heap_mb FROM resource_samples
+       WHERE session_id = 'cdp-nulls' ORDER BY js_heap_mb DESC`,
+    );
+    expect(result).toEqual([
+      { ...nulls, js_heap_mb: 42.5 },
+      { ...nulls, js_heap_mb: null },
+    ]);
+  });
+
+  it("keeps a container sample's real zeros as 0, not NULL", async () => {
+    await insertEvents(db.client, [
+      sample("container-zero", { cpu_pct: 0, mem_mb: 0, net_rx_bytes: 0, net_tx_bytes: 0 }),
+    ]);
+    const [row] = await rows<Record<string, unknown>>(
+      "SELECT cpu_pct, mem_mb, toString(net_rx_bytes) AS rx, js_heap_mb FROM resource_samples WHERE session_id = 'container-zero'",
+    );
+    expect(row).toEqual({ cpu_pct: 0, mem_mb: 0, rx: "0", js_heap_mb: null });
+  });
+
+  it("uses Nullable columns for the four container metrics and the heap", async () => {
+    const columns = await rows<{ name: string; type: string }>(
+      `SELECT name, type FROM system.columns WHERE database = currentDatabase() AND table = 'resource_samples'
+       AND name IN ('cpu_pct','mem_mb','net_rx_bytes','net_tx_bytes','js_heap_mb')`,
+    );
+    expect(columns).toHaveLength(5);
+    for (const column of columns) expect(column.type, column.name).toMatch(/^Nullable\(/);
+  });
+
+  it("throws and writes nothing for a ts Date cannot format (unvalidated input, accepted as designed)", async () => {
     await expect(
       insertEvents(db.client, [
-        started("poison-range"),
-        action("poison-range", { ts: Number.MAX_SAFE_INTEGER }),
+        started("range-guard"),
+        action("range-guard", { ts: Number.MAX_SAFE_INTEGER }),
       ]),
     ).rejects.toThrow(RangeError);
-    expect(await count("sessions", "poison-range")).toBe(0);
+    expect(await count("sessions", "range-guard")).toBe(0);
   });
 
-  it.fails("QA-M0-03: leaves nothing behind when the last table insert fails", async () => {
-    await expect(
-      insertEvents(db.client, [
-        started("poison-partial"),
-        action("poison-partial"),
-        issue("poison-partial", { ts: YEAR_10000 }),
-      ]),
-    ).rejects.toThrow();
-    expect(await count("sessions", "poison-partial")).toBe(0);
-    expect(await count("actions", "poison-partial")).toBe(0);
-  });
-
-  // QA-M0-04 (minor). Values the schema allows but the column cannot hold are not rejected: they
-  // are silently changed. 2^32 ms becomes 0, 1e39 becomes NULL ("not available").
-  it.fails("QA-M0-04: does not silently wrap a duration that overflows UInt32", async () => {
-    await insertEvents(db.client, [action("ovf-wrap", { duration_ms: 2 ** 32 + 5 })]);
-    const [row] = await rows<{ d: number }>(
-      "SELECT duration_ms AS d FROM actions WHERE session_id = 'ovf-wrap'",
-    );
-    expect(row?.d).not.toBe(5);
-  });
-
-  it.fails("QA-M0-04: does not turn an out-of-range cpu_pct into NULL", async () => {
-    await insertEvents(db.client, [sample("ovf-null", { cpu_pct: 1e39 })]);
-    const [row] = await rows<{ c: number | null }>(
-      "SELECT cpu_pct AS c FROM resource_samples WHERE session_id = 'ovf-null'",
-    );
-    expect(row?.c).not.toBeNull();
-  });
+  // QA-M0-03 (deferred to M1): insertEvents writes table by table, so a failing later INSERT leaves
+  // the earlier tables written. With validated events this is only reachable through a ClickHouse
+  // outage mid-flush, and M1's dedupe by event_id makes the retry safe.
+  it.todo(
+    "M1 (QA-M0-03): a retry after a partial write inserts no duplicates (needs event_id dedupe)",
+  );
 });
 
 describe("migrations: concurrency and history", () => {
@@ -664,11 +773,12 @@ describe("migrations: concurrency and history", () => {
     }
   });
 
-  // QA-M0-05 (minor). Nothing serialises concurrent runs (CI deploy + a developer, two replicas
-  // starting together): each run sees an empty ledger, applies all five files and writes its own
-  // ledger rows. Harmless today because every migration is CREATE TABLE IF NOT EXISTS; the first
-  // ALTER TABLE migration would be applied several times.
-  it.fails("QA-M0-05: records each migration exactly once when runs overlap", async () => {
+  // QA-M0-05 (accepted limitation, round 1): ClickHouse has no advisory locks, so overlapping runs
+  // cannot be serialized. packages/db/README.md says to run migrations from one place. The runner
+  // re-reads the ledger before each file, which narrows (not closes) the race. What we CAN promise,
+  // and test: a database migrated by overlapping runs is complete, usable, and every migration is
+  // recorded at least once.
+  it("overlapping runs record every migration at least once and at most once per run", async () => {
     const config = { ...db.config, database: `${db.config.database}_conc2` };
     try {
       await Promise.allSettled([
@@ -677,7 +787,24 @@ describe("migrations: concurrency and history", () => {
         runMigrations(config),
       ]);
       const counts = await ledgerCounts(config.database);
-      expect(Object.values(counts)).toEqual([1, 1, 1, 1, 1]);
+      expect(Object.keys(counts)).toHaveLength(5);
+      for (const n of Object.values(counts)) {
+        expect(n).toBeGreaterThanOrEqual(1);
+        expect(n).toBeLessThanOrEqual(3);
+      }
+      const after = await runMigrations(config);
+      expect(after.applied).toEqual([]);
+    } finally {
+      await dropDatabase(config);
+    }
+  });
+
+  it("sequential runs record every migration exactly once", async () => {
+    const config = { ...db.config, database: `${db.config.database}_seq` };
+    try {
+      await runMigrations(config);
+      await runMigrations(config);
+      expect(Object.values(await ledgerCounts(config.database))).toEqual([1, 1, 1, 1, 1]);
     } finally {
       await dropDatabase(config);
     }

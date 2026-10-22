@@ -286,10 +286,14 @@ describe("loadApiEnv: edge cases", () => {
     expect(() => loadApiEnv(rest)).toThrow(/CLICKHOUSE_URL/);
   });
 
-  // QA-M0-10 (nit): z.url() accepts any scheme, so a typo such as CLICKHOUSE_URL=localhost:8123
-  // is read as scheme "localhost" and a non-http URL only fails later, at the first query.
-  it("accepts a non-http CLICKHOUSE_URL (recorded: the failure comes late, at the first query)", () => {
-    expect(() => loadApiEnv({ ...baseEnv, CLICKHOUSE_URL: "localhost:8123" })).not.toThrow();
-    expect(() => loadApiEnv({ ...baseEnv, CLICKHOUSE_URL: "ftp://example.com" })).not.toThrow();
+  // QA-M0-10 (fixed in round 1): only http(s) URLs are accepted, so a missing "http://" is
+  // reported at startup instead of at the first query.
+  it("rejects a CLICKHOUSE_URL that is not http(s), with a message that says what to do", () => {
+    for (const url of ["localhost:8123", "ftp://example.com", "javascript:alert(1)", "file:///x"]) {
+      expect(() => loadApiEnv({ ...baseEnv, CLICKHOUSE_URL: url }), url).toThrow(
+        /http\(s\) URL such as http:\/\/localhost:8123/,
+      );
+    }
+    expect(loadApiEnv({ ...baseEnv, CLICKHOUSE_URL: "https://ch.example.com:8443" })).toBeTruthy();
   });
 });

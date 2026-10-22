@@ -1,7 +1,14 @@
 import { randomUUID } from "node:crypto";
 import type { FleetEvent } from "@fleetscope/schema";
 import { describe, expect, it } from "vitest";
-import { endedSessionRow, rawRow, runningSessionRow, toClickHouseDateTime } from "./insert";
+import {
+  chunkByEncodedSize,
+  endedSessionRow,
+  LOOKUP_CHUNK_BYTES,
+  rawRow,
+  runningSessionRow,
+  toClickHouseDateTime,
+} from "./insert";
 
 /** QA edge cases for the pure row-mapping code (no ClickHouse needed). */
 
@@ -139,5 +146,46 @@ describe("session snapshots", () => {
       duration_ms: 5_000,
       reason: null,
     });
+  });
+});
+
+describe("chunkByEncodedSize (QA-M0-01 fix)", () => {
+  const encodedBytes = (ids: string[]) =>
+    ids.reduce((n, id) => n + encodeURIComponent(id).length, 0);
+
+  it("returns no chunks for no ids", () => {
+    expect(chunkByEncodedSize([])).toEqual([]);
+  });
+
+  it("keeps a small list in one chunk", () => {
+    expect(chunkByEncodedSize(["a", "b", "c"])).toEqual([["a", "b", "c"]]);
+  });
+
+  it("splits 5,000 ids of 128 chars into several chunks, losing and reordering nothing", () => {
+    const ids = Array.from({ length: 5_000 }, (_, i) => `id-${i}-`.padEnd(128, "x"));
+    const chunks = chunkByEncodedSize(ids);
+    expect(chunks.length).toBeGreaterThan(10);
+    expect(chunks.flat()).toEqual(ids);
+    for (const chunk of chunks) expect(encodedBytes(chunk)).toBeLessThan(LOOKUP_CHUNK_BYTES);
+  });
+
+  it("budgets by URL-encoded size: ids with special characters get smaller chunks", () => {
+    const plain = Array.from({ length: 2_000 }, (_, i) => `p${i}`.padEnd(100, "a"));
+    const special = Array.from({ length: 2_000 }, (_, i) => `s${i}`.padEnd(100, "é"));
+    const plainChunks = chunkByEncodedSize(plain);
+    const specialChunks = chunkByEncodedSize(special);
+    expect(specialChunks.length).toBeGreaterThan(plainChunks.length);
+    for (const chunk of specialChunks) {
+      expect(encodedBytes(chunk)).toBeLessThan(LOOKUP_CHUNK_BYTES);
+    }
+  });
+
+  it("gives an id bigger than the budget its own chunk instead of dropping it", () => {
+    const huge = "z".repeat(LOOKUP_CHUNK_BYTES * 2);
+    expect(chunkByEncodedSize(["a", huge, "b"])).toEqual([["a"], [huge], ["b"]]);
+  });
+
+  it("honours a custom budget", () => {
+    expect(chunkByEncodedSize(["aaaa", "bbbb", "cccc"], 40).length).toBeGreaterThan(1);
   });
 });

@@ -84,10 +84,8 @@ describe("splitStatements", () => {
     ]);
   });
 
-  // QA-M0-08 (minor): `--.*$` does not strip a comment that ends in \r, so a CRLF file with a
-  // semicolon inside a comment is cut in the wrong place. .gitattributes forces LF, which hides
-  // it today. it.fails = still open; flip to it() when fixed.
-  it.fails("QA-M0-08: strips comments in files with Windows line endings", () => {
+  // QA-M0-08 (fixed in round 1): a comment ending in \r used to survive and be cut at its ";".
+  it("QA-M0-08: strips comments in files with Windows line endings", () => {
     const sql = "-- note; with semicolon\r\nCREATE TABLE a (x UInt8) ENGINE = Memory;\r\n";
     expect(splitStatements(sql)).toEqual(["CREATE TABLE a (x UInt8) ENGINE = Memory"]);
   });
