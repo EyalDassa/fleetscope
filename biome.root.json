@@ -1,0 +1,16 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.6.2/schema.json",
+  "extends": ["./biome.json"],
+  "files": {
+    "includes": [
+      "**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts,json,jsonc,css}",
+      "!apps",
+      "!packages",
+      "!**/node_modules",
+      "!**/.turbo",
+      "!pnpm-lock.yaml",
+      "!.claude",
+      "!design"
+    ]
+  }
+}

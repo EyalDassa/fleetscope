@@ -19,7 +19,7 @@
     },
     "lint": {},
     "//#lint:root": {
-      "inputs": ["package.json", "turbo.json", "biome.json", "tsconfig.base.json"]
+      "inputs": ["*.json", "*.jsonc", "*.mjs", "*.js", "*.ts", "*.css"]
     },
     "transit": {
       "dependsOn": ["^transit"]

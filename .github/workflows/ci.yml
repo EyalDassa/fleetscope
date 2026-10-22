@@ -26,12 +26,7 @@ jobs:
       - run: pnpm test
       - run: pnpm build # next build (web) and the esbuild bundle (api)
       - name: ClickHouse image tag in CI matches docker-compose
-        run: |
-          compose=$(grep -E '^s+image: clickhouse/clickhouse-server:' infra/docker-compose.yml | awk '{print $2}')
-          ci=$(grep -E '^s+image: clickhouse/clickhouse-server:' .github/workflows/ci.yml | awk '{print $2}')
-          echo "compose: $compose"
-          echo "ci:      $ci"
-          test -n "$compose" && test "$compose" = "$ci"
+        run: bash .github/scripts/check-clickhouse-tag.sh
 
   integration:
     name: Integration tests (ClickHouse)

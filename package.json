@@ -12,7 +12,7 @@
     "dev": "turbo run dev --filter=@fleetscope/web --filter=@fleetscope/api",
     "build": "turbo run build",
     "lint": "turbo run lint //#lint:root",
-    "lint:root": "biome check package.json turbo.json biome.json tsconfig.base.json",
+    "lint:root": "biome check --config-path=biome.root.json .",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "test:integration": "turbo run test:integration",
