@@ -1,0 +1,669 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Overview - Fleetscope (Taste v1)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<script>
+  // theme: ?theme=light|dark wins, then the saved choice, default dark
+  (function(){var q=new URLSearchParams(location.search).get('theme');var s=null;try{s=localStorage.getItem('fs-theme')}catch(e){}
+  document.documentElement.setAttribute('data-theme',q||s||'dark');})();
+</script>
+<style>
+/* ===== tokens (see system.md) ===== */
+:root, :root[data-theme="dark"]{
+  --ground:#0B0B0C; --surface:#121214; --raised:#1A1A1D; --active:#1E1E22;
+  --border:#26262A; --control:#63636A; --grid:#26262A;
+  --text:#F2F2F3; --muted:#B0B0B6; --faint:#8E8E95;
+  --primary:#F2F2F3; --primary-fg:#0B0B0C;
+  --healthy:#3FC07A; --healthy-bg:#12281C;
+  --degraded:#E8A93A; --degraded-bg:#2B2110; --degraded-line:#4A3A16;
+  --failed:#F4694B; --failed-bg:#2D1912; --blocked:#A6A6AE; --on-failed:#0B0B0C;
+  --eng-chromium:#4C9BE6; --eng-headless:#D98AB8; --eng-lightpanda:#6FD6E6;
+  --pop-shadow:0 8px 24px rgba(0,0,0,.35);
+  --avatar-bg:#26303A; --avatar-fg:#C9D6E2;
+}
+:root[data-theme="light"]{
+  --ground:#F5F5F6; --surface:#FFFFFF; --raised:#EFEFF1; --active:#E9E9EC;
+  --border:#E3E3E7; --control:#8A8A92; --grid:#E6E6EA;
+  --text:#111113; --muted:#55555C; --faint:#67676F;
+  --primary:#111113; --primary-fg:#FFFFFF;
+  --healthy:#17683F; --healthy-bg:#DDF3E6;
+  --degraded:#8A5A00; --degraded-bg:#FBF0D6; --degraded-line:#E8CD8A;
+  --failed:#B8321A; --failed-bg:#FCE5DF; --blocked:#3D3D44; --on-failed:#FFFFFF;
+  --eng-chromium:#1A5FB4; --eng-headless:#B8408A; --eng-lightpanda:#139AB2;
+  --pop-shadow:0 8px 24px rgba(0,0,0,.12);
+  --avatar-bg:#DCE6F0; --avatar-fg:#24384C;
+}
+/* ===== base ===== */
+*{box-sizing:border-box;margin:0;padding:0}
+html{color-scheme:dark}
+html[data-theme="light"]{color-scheme:light}
+body{font:400 13px/20px "IBM Plex Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--ground);color:var(--text);-webkit-font-smoothing:antialiased}
+a{color:inherit;text-decoration:none}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+:focus-visible{outline:2px solid var(--text);outline-offset:2px;border-radius:4px}
+.tn,td,.kpi .v,.badge,.chip{font-variant-numeric:tabular-nums}
+.mono{font-family:"IBM Plex Mono",ui-monospace,Consolas,monospace;font-size:12px;line-height:16px}
+.i{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}
+.mk{width:10px;height:10px;flex:none;fill:currentColor}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.e-chromium{--c:var(--eng-chromium);color:var(--eng-chromium)}
+.e-headless{--c:var(--eng-headless);color:var(--eng-headless)}
+.e-lightpanda{--c:var(--eng-lightpanda);color:var(--eng-lightpanda)}
+.ink{color:var(--text)}
+
+/* ===== shell ===== */
+.app{display:grid;grid-template-columns:232px minmax(0,1fr);min-height:100vh}
+.side{position:sticky;top:0;height:100vh;display:flex;flex-direction:column;padding:12px 8px;border-right:1px solid var(--border);overflow:hidden}
+.brand{display:flex;align-items:center;gap:8px;padding:2px 8px 12px;font-size:15px;font-weight:600;letter-spacing:-.01em}
+.brand svg{width:22px;height:22px;flex:none}
+.scope{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;padding:6px 8px;margin-bottom:10px;text-align:left;background:var(--surface);border:1px solid var(--border);border-radius:6px}
+.scope:hover{background:var(--raised)}
+.scope b{display:block;font-weight:500;font-size:13px;line-height:16px}
+.scope small{display:block;color:var(--muted);font-size:12px;line-height:16px}
+.nav a{display:flex;align-items:center;gap:10px;height:32px;margin-bottom:2px;padding:0 8px;border-radius:6px;color:var(--muted)}
+.nav a:hover{background:var(--raised);color:var(--text)}
+.nav a[aria-current="page"]{background:var(--active);color:var(--text);font-weight:500}
+.nav .count{margin-left:auto;font-size:11px;color:var(--muted)}
+.grp{padding:16px 8px 4px;font-size:12px;line-height:16px;color:var(--faint)}
+.side-bottom{margin-top:auto;display:flex;flex-direction:column;gap:2px}
+.live{display:flex;align-items:center;gap:8px;padding:6px 8px;font-size:12px;line-height:16px;color:var(--muted)}
+.live b{color:var(--text);font-weight:500;display:block}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--healthy);flex:none}
+.user{display:flex;align-items:center;gap:8px;padding:6px 8px;border-top:1px solid var(--border);margin-top:6px;padding-top:10px}
+.avatar{width:24px;height:24px;border-radius:50%;background:var(--avatar-bg);color:var(--avatar-fg);display:grid;place-items:center;font-size:11px;font-weight:600;flex:none}
+.user small{display:block;color:var(--muted);font-size:12px;line-height:14px}
+
+.top{position:sticky;top:0;z-index:20;min-height:48px;display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:6px 24px;background:var(--ground);border-bottom:1px solid var(--border)}
+.seg{display:inline-flex;height:28px;padding:2px;gap:2px;background:var(--surface);border:1px solid var(--control);border-radius:6px}
+.seg button{padding:0 10px;border-radius:4px;font-size:12px;color:var(--muted)}
+.seg button:hover{background:var(--raised);color:var(--text)}
+.seg button[aria-pressed="true"]{background:var(--active);color:var(--text);font-weight:500;outline:1px solid var(--control);outline-offset:-1px}
+.btn{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;font-size:12.5px;white-space:nowrap;background:var(--surface);border:1px solid var(--control);border-radius:6px}
+.btn:hover{background:var(--raised)}
+.btn.primary{background:var(--primary);color:var(--primary-fg);border-color:var(--primary);font-weight:500}
+.btn.primary:hover{opacity:.9;background:var(--primary)}
+.btn.lg{height:32px;padding:0 12px;font-size:13px}
+.btn.icon{width:28px;padding:0;justify-content:center}
+.lbl-sm{font-size:12px;color:var(--muted)}
+.pop{position:relative}
+.pop summary{list-style:none}
+.pop summary::-webkit-details-marker{display:none}
+.pop .menu{position:absolute;top:34px;left:0;z-index:30;min-width:240px;padding:6px;background:var(--raised);border:1px solid var(--control);border-radius:8px;box-shadow:var(--pop-shadow)}
+.pop .menu label{display:flex;align-items:center;gap:8px;height:30px;padding:0 8px;border-radius:4px;cursor:pointer}
+.pop .menu label:hover{background:var(--active)}
+.pop .menu input{accent-color:var(--text);width:14px;height:14px}
+.search{display:flex;align-items:center;gap:8px;flex:1 1 220px;min-width:180px;max-width:300px;height:28px;margin-left:auto;padding:0 6px 0 8px;text-align:left;color:var(--faint);background:var(--surface);border:1px solid var(--control);border-radius:6px}
+.search:hover{background:var(--raised)}
+.kbd{margin-left:auto;padding:0 5px;font:500 11px/16px "IBM Plex Sans",sans-serif;color:var(--muted);background:var(--raised);border:1px solid var(--border);border-radius:4px}
+.theme .sun{display:none}
+html[data-theme="light"] .theme .sun{display:block}
+html[data-theme="light"] .theme .moon{display:none}
+
+.canvas{padding:20px 24px 40px;max-width:1480px}
+
+/* ===== shared parts ===== */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:8px}
+.titlerow{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:12px}
+h1{font-size:20px;line-height:26px;font-weight:600}
+.sub{color:var(--muted);font-size:12px;line-height:16px;margin-top:2px}
+.meta{display:flex;align-items:center;gap:12px;font-size:12px;color:var(--muted);flex-wrap:wrap;justify-content:flex-end}
+.mix{display:inline-flex;align-items:center;gap:6px;padding:2px 6px;border-radius:4px}
+.mix:hover{background:var(--raised)}
+.mix b{font-weight:500;color:var(--text)}
+.badge{display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 6px;border:1px solid transparent;border-radius:4px;font-size:12px;line-height:18px;font-weight:500;white-space:nowrap;flex:none}
+.badge .i{width:14px;height:14px}
+.b-healthy{background:var(--healthy-bg);color:var(--healthy)}
+.b-degraded{background:var(--degraded-bg);color:var(--degraded)}
+.b-failed{background:var(--failed-bg);color:var(--failed)}
+.b-blocked{color:var(--blocked);border-color:var(--blocked)}
+.chip{display:inline-flex;align-items:center;height:18px;padding:0 6px;font-size:11px;line-height:16px;font-weight:500;border:1px solid var(--control);border-radius:4px;flex:none}
+.chip.real{color:var(--muted)}
+.chip.sim{color:var(--text);border-style:dashed}
+.eng{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.eng span.n{color:var(--text)}
+.link:hover{text-decoration:underline;text-underline-offset:3px}
+
+/* ===== status band ===== */
+.band{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr) auto;gap:20px;align-items:center;padding:14px 16px;background:var(--degraded-bg);border-color:var(--degraded-line)}
+.band-status{display:flex;align-items:center;gap:10px;font-size:28px;line-height:32px;font-weight:600;color:var(--degraded)}
+.band-status .i{width:26px;height:26px;stroke-width:1.75}
+.band p{margin-top:4px;color:var(--muted);max-width:62ch}
+.band p b{color:var(--text);font-weight:500}
+.dist{display:block;width:100%;height:8px}
+.dist .seam{stroke:var(--degraded-bg);stroke-width:2}
+.s-h{fill:var(--healthy)} .s-d{fill:var(--degraded)} .s-f{fill:var(--failed)} .s-b{fill:url(#hatch)}
+.counts{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:8px;font-size:12px}
+.counts a{display:inline-flex;align-items:center;gap:4px;color:var(--muted)}
+.counts a b{color:var(--text);font-weight:500}
+.counts a:hover b{text-decoration:underline;text-underline-offset:3px}
+.counts .i{width:14px;height:14px}
+.c-h{color:var(--healthy)} .c-d{color:var(--degraded)} .c-f{color:var(--failed)} .c-b{color:var(--blocked)}
+
+/* ===== KPI strip ===== */
+.kpis{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));margin-top:12px;overflow:hidden}
+.kpi{display:flex;flex-direction:column;gap:2px;padding:12px 14px;border-left:1px solid var(--border);min-width:0}
+.kpi:first-child{border-left:0}
+.kpi:hover{background:var(--raised)}
+.kpi .l{font-size:12px;line-height:16px;color:var(--muted);white-space:nowrap}
+.kpi .v{font-size:22px;line-height:28px;font-weight:500;white-space:nowrap}
+.kpi .v small{margin-left:3px;font-size:12px;font-weight:400;color:var(--muted)}
+.kpi .d{font-size:12px;line-height:16px;color:var(--muted)}
+.d.bad{color:var(--failed)} .d.good{color:var(--healthy)}
+.cap{height:2px;margin-top:6px;background:var(--border)}
+.cap i{display:block;height:100%;background:var(--text)}
+
+/* ===== charts + rail ===== */
+.zone{display:grid;grid-template-columns:minmax(0,1fr) 400px;gap:12px;margin-top:12px}
+.leftcol{display:flex;flex-direction:column;gap:12px;min-width:0}
+.legendrow{display:flex;align-items:center;gap:16px;min-height:20px;font-size:12px;color:var(--muted)}
+.legendrow .eng{color:var(--text)}
+.legendrow .hint{margin-left:auto;color:var(--faint)}
+.pair{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}
+.cc{padding:12px 16px 8px;min-width:0}
+.cc-h{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:4px}
+.cc-h h2{font-size:14px;line-height:20px;font-weight:600}
+.cc-h .m{font-size:12px;color:var(--muted);white-space:nowrap}
+.cc-h .m b{color:var(--text);font-weight:500}
+.plot{position:relative;width:100%;cursor:pointer}
+.plot svg{display:block}
+.grid{stroke:var(--grid);stroke-width:1}
+.base{stroke:var(--faint);stroke-width:1}
+.ax{fill:var(--faint);font-size:11px}
+.ref{stroke:var(--faint);stroke-dasharray:4 3;stroke-width:1}
+.reft{fill:var(--muted);font-size:11px}
+.anno{stroke:var(--muted);stroke-dasharray:2 3;stroke-width:1}
+.annot{fill:var(--muted);font-size:11px}
+.ln{fill:none;stroke:var(--c);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+.mkr{fill:var(--c)}
+.bar{fill:var(--c);stroke:var(--surface);stroke-width:1}
+.cross{stroke:var(--muted);stroke-width:1}
+.peakt{fill:var(--text);font-size:11px;font-weight:500}
+.tip{position:absolute;top:6px;z-index:5;display:none;pointer-events:none;padding:6px 8px;font-size:12px;line-height:16px;white-space:nowrap;background:var(--raised);border:1px solid var(--control);border-radius:6px;box-shadow:var(--pop-shadow)}
+.tip b{display:block;font-weight:600;margin-bottom:2px}
+.tip .r{display:flex;align-items:center;gap:6px;color:var(--muted)}
+.tip .r .tn{margin-left:auto;padding-left:14px;color:var(--text);font-weight:500}
+.tip .f{margin-top:4px;color:var(--faint)}
+
+.rail{display:flex;flex-direction:column;min-width:0;overflow:hidden}
+.rail-h{display:flex;align-items:baseline;justify-content:space-between;padding:12px 16px 10px}
+.rail-h h2{font-size:14px;line-height:20px;font-weight:600}
+.rail-h .m{font-size:12px;color:var(--muted)}
+.fl{display:flex;flex-direction:column;flex:1}
+.fr{display:flex;flex-direction:column;justify-content:center;gap:4px;flex:1;min-height:52px;padding:8px 16px;border-top:1px solid var(--border)}
+.fr:hover{background:var(--raised)}
+.fr .l1{display:flex;align-items:center;gap:8px}
+.fr .l1 time{margin-left:auto;font-size:12px;color:var(--muted)}
+.fr .l1 .id{color:var(--text)}
+.fr:hover .id{text-decoration:underline;text-underline-offset:3px}
+.fr .l2{display:flex;align-items:center;gap:6px;min-width:0;font-size:12px;line-height:16px;color:var(--muted)}
+.fr .l2 .t{display:flex;align-items:center;gap:6px;min-width:0;flex:1;overflow:hidden;white-space:nowrap}
+.fr .l2 .t > span{overflow:hidden;text-overflow:ellipsis;flex:none}
+.fr .l2 .t > span:last-child{flex:0 1 auto;min-width:0}
+.fr .l2 .code{font-family:"IBM Plex Mono",ui-monospace,Consolas,monospace;font-size:12px;color:var(--text)}
+.rail-f{display:flex;align-items:center;justify-content:space-between;height:36px;padding:0 16px;border-top:1px solid var(--border);font-size:12.5px}
+.rail-f:hover{background:var(--raised)}
+
+/* ===== engine table ===== */
+.tcard{margin-top:12px;overflow:hidden}
+.tcard-h{display:flex;align-items:baseline;justify-content:space-between;padding:12px 16px 8px}
+.tcard-h h2{font-size:14px;line-height:20px;font-weight:600}
+.tcard-h .m{font-size:12px;color:var(--muted)}
+table{width:100%;border-collapse:collapse}
+th{height:32px;padding:0 12px;font-size:12px;font-weight:400;text-align:left;color:var(--muted);white-space:nowrap;border-bottom:1px solid var(--border)}
+td{height:40px;padding:0 12px;border-bottom:1px solid var(--border);white-space:nowrap}
+th:first-child,td:first-child{padding-left:16px}
+th:last-child,td:last-child{padding-right:16px}
+th.r,td.r{text-align:right}
+tbody tr:hover{background:var(--raised)}
+td small{margin-left:3px;font-size:12px;color:var(--muted)}
+td .v{display:block}
+td a:hover{text-decoration:underline;text-underline-offset:3px}
+td.eng-c small{margin-left:8px}
+tfoot td{font-weight:500;border-top:1px solid var(--control);border-bottom:0}
+.bad-t{color:var(--failed)}
+
+/* ===== command palette ===== */
+dialog{margin:12vh auto 0;width:min(560px,92vw);padding:0;color:var(--text);background:var(--raised);border:1px solid var(--control);border-radius:8px;box-shadow:var(--pop-shadow)}
+dialog::backdrop{background:rgba(0,0,0,.5)}
+.cmd-in{display:flex;align-items:center;gap:8px;height:44px;padding:0 14px;border-bottom:1px solid var(--border);color:var(--faint)}
+.cmd-in input{flex:1;font:inherit;font-size:14px;color:var(--text);background:none;border:0;outline:0}
+.cmd-in input::placeholder{color:var(--faint)}
+.cmd-g{padding:6px}
+.cmd-g h3{padding:6px 8px 2px;font-size:12px;line-height:16px;font-weight:400;color:var(--faint)}
+.cmd-g a{display:flex;align-items:center;gap:8px;height:36px;padding:0 8px;border-radius:4px}
+.cmd-g a:hover,.cmd-g a.on{background:var(--active)}
+.cmd-g a .r{margin-left:auto;font-size:12px;color:var(--muted)}
+
+/* ===== narrow (1024) ===== */
+@media (max-width:1100px){
+  .app{grid-template-columns:56px minmax(0,1fr)}
+  .side .lbl,.side .grp,.side .scope,.brand span,.live .t,.user .t,.nav .count{display:none}
+  .brand,.nav a,.live,.user{justify-content:center;padding-left:0;padding-right:0}
+  .side{padding:12px 8px}
+  .top{padding:6px 16px}
+  .canvas{padding:16px 16px 32px}
+  .band{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  .band .btn{grid-column:1/-1;justify-self:start}
+  .kpis{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .kpi:nth-child(5){border-left:0}
+  .kpi:nth-child(n+5){border-top:1px solid var(--border)}
+  .kpi:last-child{grid-column:span 2}
+  .zone{grid-template-columns:minmax(0,1fr)}
+  .fl{display:grid;grid-template-columns:1fr 1fr}
+  .fr:nth-child(odd){border-right:1px solid var(--border)}
+  td,th{padding:0 8px}
+  .titlerow{flex-wrap:wrap}
+}
+</style>
+</head>
+<body>
+
+<!-- icon + marker + pattern sprites -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <pattern id="hatch" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="4" height="4" style="fill:var(--degraded-bg)"/>
+      <line x1="0" y1="0" x2="0" y2="4" style="stroke:var(--blocked);stroke-width:2"/>
+    </pattern>
+    <symbol id="m-circle" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4.2"/></symbol>
+    <symbol id="m-square" viewBox="0 0 10 10"><rect x="1" y="1" width="8" height="8"/></symbol>
+    <symbol id="m-diamond" viewBox="0 0 10 10"><path d="M5 .3 9.7 5 5 9.7.3 5z"/></symbol>
+    <symbol id="i-dash" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></symbol>
+    <symbol id="i-bars" viewBox="0 0 24 24"><path d="M4 20V11M10 20V4M16 20v-6M22 20H2"/></symbol>
+    <symbol id="i-bulb" viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-4 10.5c.8.8 1 1.5 1 2.5h6c0-1 .2-1.7 1-2.5A6 6 0 0 0 12 3z"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><path d="M4 6h9M19 6h1M4 12h3M13 12h7M4 18h11M21 18h-1"/><circle cx="16" cy="6" r="2.5"/><circle cx="10" cy="12" r="2.5"/><circle cx="18" cy="18" r="2.5"/></symbol>
+    <symbol id="i-bookmark" viewBox="0 0 24 24"><path d="M6 3h12v18l-6-4-6 4z"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></symbol>
+    <symbol id="i-updown" viewBox="0 0 24 24"><path d="m7 15 5 5 5-5M7 9l5-5 5 5"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16M3 12a9 9 0 0 1 15.5-6.2L21 8M21 3v5h-5M3 21v-5h5"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8.5 12.5 2.5 2.5 4.5-5"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m15 9-6 6M9 9l6 6"/></symbol>
+    <symbol id="i-ban" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m5.6 5.6 12.8 12.8"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+    <symbol id="i-hash" viewBox="0 0 24 24"><path d="M5 9h14M5 15h14M10 4 8 20M16 4l-2 16"/></symbol>
+  </defs>
+</svg>
+
+<div class="app">
+
+  <!-- ===== sidebar ===== -->
+  <aside class="side" aria-label="Primary">
+    <div class="brand">
+      <!-- mark: a scope ring with three engine ticks -->
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="2.6" fill="currentColor"/><path d="M12 1.5v4M12 18.5v4M1.5 12h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <span>Fleetscope</span>
+    </div>
+    <button class="scope" aria-label="Switch workspace">
+      <span class="lbl"><b>Kestrel Labs</b><small>production, eu-west</small></span>
+      <svg class="i lbl"><use href="#i-updown"/></svg>
+    </button>
+    <nav class="nav" aria-label="Pages">
+      <a href="#" aria-current="page" title="Overview"><svg class="i"><use href="#i-dash"/></svg><span class="lbl">Overview</span></a>
+      <a href="session.html" title="Sessions"><svg class="i"><use href="#i-list"/></svg><span class="lbl">Sessions</span></a>
+      <a href="#" title="Browsers"><svg class="i"><use href="#i-globe"/></svg><span class="lbl">Browsers</span></a>
+      <a href="#" title="Usage and cost"><svg class="i"><use href="#i-bars"/></svg><span class="lbl">Usage and cost</span></a>
+      <a href="#" title="Insights"><svg class="i"><use href="#i-bulb"/></svg><span class="lbl">Insights</span><span class="count" aria-label="4 open findings">4 open</span></a>
+    </nav>
+    <div class="grp">Saved views</div>
+    <nav class="nav" aria-label="Saved views">
+      <a href="#" title="Lightpanda regressions"><svg class="i"><use href="#i-bookmark"/></svg><span class="lbl">Lightpanda regressions</span></a>
+      <a href="#" title="Real traffic only"><svg class="i"><use href="#i-bookmark"/></svg><span class="lbl">Real traffic only</span></a>
+    </nav>
+    <div class="side-bottom">
+      <div class="live" title="Collector connected, last event 0.8 s ago">
+        <span class="dot" aria-hidden="true"></span>
+        <span class="t"><b>Collector live</b>last event 0.8 s ago</span>
+      </div>
+      <nav class="nav" aria-label="Utility"><a href="#" title="Settings"><svg class="i"><use href="#i-gear"/></svg><span class="lbl">Settings</span></a></nav>
+      <div class="user">
+        <span class="avatar" aria-hidden="true">ED</span>
+        <span class="t"><span class="ink">Eyal D.</span><small>Owner</small></span>
+      </div>
+    </div>
+  </aside>
+
+  <div class="main">
+    <!-- ===== top bar ===== -->
+    <header class="top">
+      <div class="seg" role="group" aria-label="Time range">
+        <button aria-pressed="false">15m</button>
+        <button aria-pressed="true">1h</button>
+        <button aria-pressed="false">24h</button>
+        <button aria-pressed="false">7d</button>
+        <button aria-pressed="false">Custom</button>
+      </div>
+      <details class="pop">
+        <summary class="btn" aria-label="Engine filter: all engines">
+          <span class="lbl-sm">Engine</span>
+          <span style="display:inline-flex;gap:3px;align-items:center">
+            <svg class="mk e-chromium"><use href="#m-circle"/></svg><svg class="mk e-headless"><use href="#m-square"/></svg><svg class="mk e-lightpanda"><use href="#m-diamond"/></svg>
+          </span>
+          All
+          <svg class="i" style="width:14px;height:14px"><use href="#i-down"/></svg>
+        </summary>
+        <div class="menu" role="group" aria-label="Engines">
+          <label><input type="checkbox" checked> <svg class="mk e-chromium"><use href="#m-circle"/></svg> Chromium</label>
+          <label><input type="checkbox" checked> <svg class="mk e-headless"><use href="#m-square"/></svg> chrome-headless-shell</label>
+          <label><input type="checkbox" checked> <svg class="mk e-lightpanda"><use href="#m-diamond"/></svg> Lightpanda</label>
+        </div>
+      </details>
+      <div class="seg" role="group" aria-label="Source">
+        <button aria-pressed="true">All</button>
+        <button aria-pressed="false">Real</button>
+        <button aria-pressed="false">Sim</button>
+      </div>
+      <button class="search" id="open-cmd" aria-label="Search sessions, pages and saved views (Command K)">
+        <svg class="i"><use href="#i-search"/></svg><span>Search sessions, pages, views</span><span class="kbd">&#8984;K</span>
+      </button>
+      <button class="btn icon theme" id="theme" aria-label="Toggle light and dark theme" title="Toggle theme">
+        <svg class="i sun"><use href="#i-sun"/></svg><svg class="i moon"><use href="#i-moon"/></svg>
+      </button>
+    </header>
+
+    <main class="canvas">
+      <div class="titlerow">
+        <div>
+          <h1>Overview</h1>
+          <p class="sub">Kestrel Labs, production. Last 1 h, 13:36 to 14:36 UTC, all engines.</p>
+        </div>
+        <div class="meta">
+          <a class="mix" href="#" title="Open sessions by source"><span class="chip real">real</span><b class="tn">1,214</b> <span class="chip sim">sim</span><b class="tn">628</b> <span>(34% simulated)</span></a>
+          <span>Updated 14:36:12 UTC</span>
+          <button class="btn icon" aria-label="Refresh"><svg class="i"><use href="#i-refresh"/></svg></button>
+        </div>
+      </div>
+
+      <!-- ===== status band: the 5-second answer ===== -->
+      <section class="card band" aria-label="Fleet status">
+        <div>
+          <div class="band-status"><svg class="i"><use href="#i-alert"/></svg><span>Degraded</span></div>
+          <p><b>Success rate 93.8%</b>, 3.9 pts below the prior hour. Lightpanda errors peaked at <b>21.4% at 14:32</b>, 20 minutes after the v0.2.9 rollout; most are <b class="mono" style="font-size:12px">unsupported_api</b>.</p>
+        </div>
+        <div>
+          <svg class="dist" role="img" aria-label="1,842 sessions: 1,592 healthy, 136 degraded, 87 failed, 27 blocked">
+            <rect class="s-h seam" x="0%" y="0" width="86.43%" height="8"/>
+            <rect class="s-d seam" x="86.43%" y="0" width="7.38%" height="8"/>
+            <rect class="s-f seam" x="93.81%" y="0" width="4.72%" height="8"/>
+            <rect class="s-b seam" x="98.53%" y="0" width="1.47%" height="8"/>
+          </svg>
+          <div class="counts">
+            <a href="#"><svg class="i c-h"><use href="#i-check"/></svg>Healthy <b class="tn">1,592</b></a>
+            <a href="#"><svg class="i c-d"><use href="#i-alert"/></svg>Degraded <b class="tn">136</b></a>
+            <a href="#"><svg class="i c-f"><use href="#i-x"/></svg>Failed <b class="tn">87</b></a>
+            <a href="#"><svg class="i c-b"><use href="#i-ban"/></svg>Blocked <b class="tn">27</b></a>
+          </div>
+        </div>
+        <a class="btn primary lg" href="#">Review 114 failures <svg class="i"><use href="#i-arrow"/></svg></a>
+      </section>
+
+      <!-- ===== KPI strip ===== -->
+      <section class="card kpis" aria-label="Key figures">
+        <a class="kpi" href="#">
+          <span class="l">Active sessions now</span>
+          <span class="v tn">64<small>/ 80 slots</small></span>
+          <span class="d">80% of capacity</span>
+          <span class="cap" aria-hidden="true"><i style="width:80%"></i></span>
+        </a>
+        <a class="kpi" href="#">
+          <span class="l">Sessions, 1 h</span>
+          <span class="v tn">1,842</span>
+          <span class="d">+6.1% vs prior 1 h</span>
+        </a>
+        <a class="kpi" href="#">
+          <span class="l">Success rate</span>
+          <span class="v tn">93.8<small>%</small></span>
+          <span class="d bad">&#9660; &minus;3.9 pts vs prior 1 h<span class="sr"> (worse)</span></span>
+        </a>
+        <a class="kpi" href="#">
+          <span class="l">p95 action latency</span>
+          <span class="v tn">1.84<small>s</small></span>
+          <span class="d bad">&#9650; +0.31 s vs prior 1 h<span class="sr"> (worse)</span></span>
+        </a>
+        <a class="kpi" href="#">
+          <span class="l">CPU in use</span>
+          <span class="v tn">21.4<small>cores</small></span>
+          <span class="d">of 48, 45%</span>
+        </a>
+        <a class="kpi" href="#">
+          <span class="l">Memory</span>
+          <span class="v tn">38.4<small>GB</small></span>
+          <span class="d">of 96 GB, 40%</span>
+        </a>
+        <a class="kpi" href="#">
+          <span class="l">Est. cost, 1 h</span>
+          <span class="v tn">$14.62</span>
+          <span class="d">+$0.88 vs prior 1 h</span>
+        </a>
+      </section>
+
+      <!-- ===== charts + recent failures ===== -->
+      <div class="zone">
+        <div class="leftcol">
+          <div class="legendrow" role="group" aria-label="Engine legend">
+            <span class="eng"><svg class="mk e-chromium"><use href="#m-circle"/></svg><span class="n">Chromium</span></span>
+            <span class="eng"><svg class="mk e-headless"><use href="#m-square"/></svg><span class="n">chrome-headless-shell</span></span>
+            <span class="eng"><svg class="mk e-lightpanda"><use href="#m-diamond"/></svg><span class="n">Lightpanda</span></span>
+            <span class="hint">Click any point to open the sessions behind it</span>
+          </div>
+
+          <section class="card cc" aria-label="Error rate">
+            <div class="cc-h"><h2>Error rate</h2><span class="m"><b class="tn">6.2%</b> over 1 h (114 of 1,842), Lightpanda <b class="tn">14.2%</b> now</span></div>
+            <div class="plot" id="c-err"></div>
+          </section>
+
+          <div class="pair">
+            <section class="card cc" aria-label="Active sessions">
+              <div class="cc-h"><h2>Active sessions</h2><span class="m"><b class="tn" id="act-now">64</b> now of 80 slots</span></div>
+              <div class="plot" id="c-act"></div>
+            </section>
+            <section class="card cc" aria-label="Actions per minute">
+              <div class="cc-h"><h2>Actions per minute</h2><span class="m"><b class="tn" id="apm-now"></b> now</span></div>
+              <div class="plot" id="c-apm"></div>
+            </section>
+          </div>
+        </div>
+
+        <section class="card rail" aria-label="Recent failures">
+          <div class="rail-h"><h2>Recent failures</h2><span class="m tn">114 in the last hour</span></div>
+          <div class="fl">
+            <a class="fr" href="session.html">
+              <div class="l1"><span class="badge b-failed"><svg class="i"><use href="#i-x"/></svg>Failed</span><span class="mono id">ses_7f3a91c2</span><time class="tn">14:34</time></div>
+              <div class="l2"><span class="t"><span class="eng e-lightpanda"><svg class="mk"><use href="#m-diamond"/></svg><span class="n" style="color:var(--text)">Lightpanda</span></span><span>checkout-form</span><span class="code">unsupported_api</span></span><span class="chip real">real</span></div>
+            </a>
+            <a class="fr" href="#">
+              <div class="l1"><span class="badge b-failed"><svg class="i"><use href="#i-x"/></svg>Failed</span><span class="mono id">ses_b20d58e1</span><time class="tn">14:33</time></div>
+              <div class="l2"><span class="t"><span class="eng e-lightpanda"><svg class="mk"><use href="#m-diamond"/></svg><span class="n" style="color:var(--text)">Lightpanda</span></span><span>checkout-form</span><span class="code">unsupported_api</span></span><span class="chip sim">sim</span></div>
+            </a>
+            <a class="fr" href="#">
+              <div class="l1"><span class="badge b-blocked"><svg class="i"><use href="#i-ban"/></svg>Blocked</span><span class="mono id">ses_41ac09d7</span><time class="tn">14:33</time></div>
+              <div class="l2"><span class="t"><span class="eng e-headless"><svg class="mk"><use href="#m-square"/></svg><span class="n" style="color:var(--text)">chrome-headless-shell</span></span><span>heavy-page-crawl</span><span class="code">captcha</span></span><span class="chip real">real</span></div>
+            </a>
+            <a class="fr" href="#">
+              <div class="l1"><span class="badge b-failed"><svg class="i"><use href="#i-x"/></svg>Failed</span><span class="mono id">ses_e5d7c130</span><time class="tn">14:31</time></div>
+              <div class="l2"><span class="t"><span class="eng e-chromium"><svg class="mk"><use href="#m-circle"/></svg><span class="n" style="color:var(--text)">Chromium</span></span><span>long-idle-session</span><span class="code">timeout</span></span><span class="chip sim">sim</span></div>
+            </a>
+            <a class="fr" href="#">
+              <div class="l1"><span class="badge b-failed"><svg class="i"><use href="#i-x"/></svg>Failed</span><span class="mono id">ses_0d96b4f8</span><time class="tn">14:29</time></div>
+              <div class="l2"><span class="t"><span class="eng e-headless"><svg class="mk"><use href="#m-square"/></svg><span class="n" style="color:var(--text)">chrome-headless-shell</span></span><span>memory-hog</span><span class="code">crash</span></span><span class="chip real">real</span></div>
+            </a>
+            <a class="fr" href="#">
+              <div class="l1"><span class="badge b-blocked"><svg class="i"><use href="#i-ban"/></svg>Blocked</span><span class="mono id">ses_c83e2a15</span><time class="tn">14:28</time></div>
+              <div class="l2"><span class="t"><span class="eng e-lightpanda"><svg class="mk"><use href="#m-diamond"/></svg><span class="n" style="color:var(--text)">Lightpanda</span></span><span>login-and-search</span><span class="code">captcha</span></span><span class="chip sim">sim</span></div>
+            </a>
+          </div>
+          <a class="rail-f" href="#"><span>View all 114 failures</span><svg class="i"><use href="#i-arrow"/></svg></a>
+        </section>
+      </div>
+
+      <!-- ===== by engine ===== -->
+      <section class="card tcard" aria-label="By engine">
+        <div class="tcard-h"><h2>By engine</h2><span class="m">Last 1 h. Select an engine to filter every page.</span></div>
+        <table>
+          <thead>
+            <tr>
+              <th>Engine</th><th>Status</th>
+              <th class="r">Active now</th><th class="r">Sessions</th><th class="r">Success rate</th>
+              <th class="r">p95 latency</th><th class="r">CPU</th><th class="r">Memory</th><th class="r">Cost, 1 h</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="eng-c"><a class="eng e-chromium" href="#"><svg class="mk"><use href="#m-circle"/></svg><span class="n">Chromium</span></a><small>141.0</small></td>
+              <td><span class="badge b-healthy"><svg class="i"><use href="#i-check"/></svg>Healthy</span></td>
+              <td class="r"><a href="#">28</a></td><td class="r"><a href="#">802</a></td><td class="r"><a href="#">96.5<small>%</small></a></td>
+              <td class="r"><a href="#">1.71<small>s</small></a></td><td class="r"><a href="#">12.3<small>cores</small></a></td><td class="r"><a href="#">26.6<small>GB</small></a></td><td class="r"><a href="#">$7.94</a></td>
+            </tr>
+            <tr>
+              <td class="eng-c"><a class="eng e-headless" href="#"><svg class="mk"><use href="#m-square"/></svg><span class="n">chrome-headless-shell</span></a><small>141.0</small></td>
+              <td><span class="badge b-degraded"><svg class="i"><use href="#i-alert"/></svg>Degraded</span></td>
+              <td class="r"><a href="#">22</a></td><td class="r"><a href="#">611</a></td><td class="r"><a href="#">94.9<small>%</small></a></td>
+              <td class="r"><a href="#">1.52<small>s</small></a></td><td class="r"><a href="#">7.6<small>cores</small></a></td><td class="r"><a href="#">11.0<small>GB</small></a></td><td class="r"><a href="#">$4.81</a></td>
+            </tr>
+            <tr>
+              <td class="eng-c"><a class="eng e-lightpanda" href="#"><svg class="mk"><use href="#m-diamond"/></svg><span class="n">Lightpanda</span></a><small>v0.2.9</small></td>
+              <td><span class="badge b-failed"><svg class="i"><use href="#i-x"/></svg>Failed</span></td>
+              <td class="r"><a href="#">14</a></td><td class="r"><a href="#">429</a></td><td class="r"><a href="#" class="bad-t">87.2<small>%</small></a></td>
+              <td class="r"><a href="#" class="bad-t">2.46<small>s</small></a></td><td class="r"><a href="#">1.5<small>cores</small></a></td><td class="r"><a href="#">0.8<small>GB</small></a></td><td class="r"><a href="#">$1.87</a></td>
+            </tr>
+          </tbody>
+          <tfoot>
+            <tr>
+              <td>All engines</td>
+              <td><span class="badge b-degraded"><svg class="i"><use href="#i-alert"/></svg>Degraded</span></td>
+              <td class="r">64</td><td class="r">1,842</td><td class="r">93.8<small>%</small></td>
+              <td class="r">1.84<small>s</small></td><td class="r">21.4<small>cores</small></td><td class="r">38.4<small>GB</small></td><td class="r">$14.62</td>
+            </tr>
+          </tfoot>
+        </table>
+      </section>
+    </main>
+  </div>
+</div>
+
+<!-- ===== command palette ===== -->
+<dialog id="cmdk" aria-label="Command palette">
+  <div class="cmd-in"><svg class="i"><use href="#i-search"/></svg><input type="text" placeholder="Jump to a session id, page or saved view" aria-label="Search"><span class="kbd">esc</span></div>
+  <div class="cmd-g">
+    <h3>Sessions</h3>
+    <a href="session.html" class="on"><span class="mono">ses_7f3a91c2</span><span class="badge b-failed"><svg class="i"><use href="#i-x"/></svg>Failed</span><span class="r">Lightpanda, checkout-form</span></a>
+    <a href="#"><span class="mono">ses_b20d58e1</span><span class="badge b-failed"><svg class="i"><use href="#i-x"/></svg>Failed</span><span class="r">Lightpanda, checkout-form</span></a>
+    <h3>Pages</h3>
+    <a href="#"><svg class="i"><use href="#i-list"/></svg>Sessions</a>
+    <a href="#"><svg class="i"><use href="#i-globe"/></svg>Browsers</a>
+    <h3>Saved views</h3>
+    <a href="#"><svg class="i"><use href="#i-bookmark"/></svg>Lightpanda regressions</a>
+  </div>
+</dialog>
+
+<script>
+(function(){
+  /* ---------- theme + palette ---------- */
+  var root=document.documentElement;
+  document.getElementById('theme').addEventListener('click',function(){
+    var n=root.getAttribute('data-theme')==='light'?'dark':'light';
+    root.setAttribute('data-theme',n);try{localStorage.setItem('fs-theme',n)}catch(e){}
+  });
+  var dlg=document.getElementById('cmdk');
+  document.getElementById('open-cmd').addEventListener('click',function(){dlg.showModal()});
+  document.addEventListener('keydown',function(e){
+    if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();dlg.open?dlg.close():dlg.showModal();}
+  });
+  dlg.addEventListener('click',function(e){if(e.target===dlg)dlg.close()});
+  // segmented controls: single select
+  document.querySelectorAll('.seg').forEach(function(g){
+    g.addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;
+      g.querySelectorAll('button').forEach(function(x){x.setAttribute('aria-pressed',x===b?'true':'false')});});
+  });
+
+  /* ---------- data (seeded, 61 one-minute points, 13:36 to 14:36) ---------- */
+  var N=61,T0=13*60+36;
+  function fmtT(i){var m=T0+i;return String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0')}
+  function rng(s){return function(){s|=0;s=s+0x6D2B79F5|0;var t=Math.imul(s^s>>>15,1|s);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+  var r=rng(20261022);function nz(a){return (r()-.5)*2*a}
+  var ENG=[{k:'chromium',n:'Chromium',s:'circle'},{k:'headless',n:'chrome-headless-shell',s:'square'},{k:'lightpanda',n:'Lightpanda',s:'diamond'}];
+  var S={act:[[],[],[]],apm:[[],[],[]],err:[[],[],[]]};
+  for(var i=0;i<N;i++){
+    S.act[0].push(Math.round(27.5+1.8*Math.sin(i/7)+nz(1.2)));
+    S.act[1].push(Math.round(21.5+1.4*Math.sin(i/5+1)+nz(1)));
+    S.act[2].push(Math.round(i<36?13+nz(1.3):13-Math.min(3,(i-36)/6)+nz(1)));
+    S.apm[0].push(Math.round(690+25*Math.sin(i/6)+nz(25)));
+    S.apm[1].push(Math.round(495+20*Math.sin(i/8+2)+nz(18)));
+    S.apm[2].push(Math.round(i<36?320+nz(18):320-(i-36)*4.3+nz(14)));
+    S.err[0].push(+Math.max(1.8,3.5+nz(1)).toFixed(1));
+    S.err[1].push(+Math.max(2.5,5.1+nz(1.4)).toFixed(1));
+    S.err[2].push(+(i<36?7.5+nz(1.8):9+(i-36)*0.62+nz(0.5)).toFixed(1));
+  }
+  // pin the values the page text quotes (single source for header + KPI copy)
+  S.act[0][60]=28;S.act[1][60]=22;S.act[2][60]=14;
+  S.err[0][60]=3.1;S.err[1][60]=5.2;S.err[2][56]=21.4;[19.8,17.9,16.0,14.2].forEach(function(v,k){S.err[2][57+k]=v});
+  document.getElementById('apm-now').textContent=(S.apm[0][60]+S.apm[1][60]+S.apm[2][60]).toLocaleString('en-US');
+
+  /* ---------- tiny chart helper (mirrors what Recharts will do) ---------- */
+  function marker(shape,x,y,cls,s){
+    if(shape==='circle')return '<circle class="mkr '+cls+'" cx="'+x+'" cy="'+y+'" r="'+(s/2)+'"/>';
+    if(shape==='square')return '<rect class="mkr '+cls+'" x="'+(x-s/2)+'" y="'+(y-s/2)+'" width="'+s+'" height="'+s+'"/>';
+    var d=s*.85;return '<rect class="mkr '+cls+'" x="'+(x-d/2)+'" y="'+(y-d/2)+'" width="'+d+'" height="'+d+'" transform="rotate(45 '+x+' '+y+')"/>';
+  }
+  function draw(host,c){
+    var W=host.clientWidth||600,H=c.h,m={l:36,r:10,t:c.top||8,b:20};
+    var iw=W-m.l-m.r,ih=H-m.t-m.b,slot=iw/N;
+    function X(i){return +(m.l+(i+.5)*slot).toFixed(1)} function Y(v){return +(m.t+ih-(v/c.max)*ih).toFixed(1)}
+    var s='<svg width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'" role="img" aria-label="'+c.label+'">';
+    c.ticks.forEach(function(t){
+      s+='<line class="'+(t===0?'base':'grid')+'" x1="'+m.l+'" x2="'+(W-m.r)+'" y1="'+Y(t)+'" y2="'+Y(t)+'"/>';
+      s+='<text class="ax" x="'+(m.l-6)+'" y="'+(Y(t)+4)+'" text-anchor="end">'+(c.tf?c.tf(t):t)+'</text>';
+    });
+    [4,14,24,34,44,54].forEach(function(i){s+='<text class="ax" x="'+X(i)+'" y="'+(H-5)+'" text-anchor="middle">'+fmtT(i)+'</text>'});
+    if(c.ref){var ry=Y(c.ref.v);s+='<line class="ref" x1="'+m.l+'" x2="'+(W-m.r)+'" y1="'+ry+'" y2="'+ry+'"/><text class="reft" x="'+(c.ref.left?m.l+4:W-m.r)+'" y="'+(ry-4)+'" text-anchor="'+(c.ref.left?'start':'end')+'">'+c.ref.label+'</text>'}
+    if(c.type==='stack'){
+      for(var i=0;i<N;i++){var base=0;for(var k=0;k<3;k++){var v=c.data[k][i],y1=Y(base+v),h=Y(base)-y1;
+        s+='<rect class="bar '+'e-'+ENG[k].k+'" x="'+(X(i)-slot/2+.75).toFixed(1)+'" y="'+y1+'" width="'+Math.max(1,slot-1.5).toFixed(1)+'" height="'+h.toFixed(1)+'"/>';base+=v;}}
+    } else {
+      ENG.forEach(function(e,k){var d='';c.data[k].forEach(function(v,i){d+=(i?'L':'M')+X(i)+','+Y(v)});
+        s+='<path class="ln e-'+e.k+'" d="'+d+'"/>'+marker(e.s,X(N-1),Y(c.data[k][N-1]),'e-'+e.k,7);});
+    }
+    if(c.anno){c.anno.forEach(function(a){var ax=X(a.i);
+      s+='<line class="anno" x1="'+ax+'" x2="'+ax+'" y1="'+(m.t-8)+'" y2="'+(m.t+ih)+'"/><text class="annot" x="'+(ax+5)+'" y="'+(m.t-10)+'">'+a.label+'</text>'})}
+    if(c.peak){var pk=c.peak,px=X(pk.i),py=Y(c.data[pk.s][pk.i]);
+      s+=marker(ENG[pk.s].s,px,py,'e-'+ENG[pk.s].k,9)+'<text class="peakt" x="'+(px+6)+'" y="'+(py-9)+'" text-anchor="end">'+pk.label+'</text>'}
+    s+='<line class="cross" x1="0" x2="0" y1="'+m.t+'" y2="'+(m.t+ih)+'" style="display:none"/><rect x="'+m.l+'" y="'+m.t+'" width="'+iw+'" height="'+ih+'" fill="transparent"/></svg><div class="tip"></div>';
+    host.innerHTML=s;
+    var cross=host.querySelector('.cross'),tip=host.querySelector('.tip');
+    host.onpointermove=function(ev){
+      var bx=ev.clientX-host.getBoundingClientRect().left;
+      var i=Math.max(0,Math.min(N-1,Math.round((bx-m.l)/slot-.5)));
+      cross.style.display='';cross.setAttribute('x1',X(i));cross.setAttribute('x2',X(i));
+      var h='<b>'+fmtT(i)+'</b>';
+      ENG.forEach(function(e,k){h+='<div class="r"><svg class="mk e-'+e.k+'"><use href="#m-'+e.s+'"/></svg>'+e.n+'<span class="tn">'+c.fmt(c.data[k][i])+'</span></div>'});
+      if(c.type==='stack')h+='<div class="r">Total<span class="tn">'+(c.data[0][i]+c.data[1][i]+c.data[2][i])+'</span></div>';
+      h+='<div class="f">Click to open sessions</div>';
+      tip.innerHTML=h;tip.style.display='block';
+      var left=X(i)+12;if(left+tip.offsetWidth>W-4)left=X(i)-tip.offsetWidth-12;tip.style.left=left+'px';
+    };
+    host.onpointerleave=function(){cross.style.display='none';tip.style.display='none'};
+  }
+  var charts=[
+    {el:'c-err',label:'Error rate per minute by engine',h:168,top:24,max:25,ticks:[0,5,10,15,20,25],tf:function(v){return v+'%'},type:'lines',data:S.err,fmt:function(v){return v.toFixed(1)+'%'},
+      ref:{v:10,label:'alert threshold 10%',left:true},anno:[{i:36,label:'14:12 Lightpanda v0.2.9 rollout'}],peak:{s:2,i:56,label:'21.4% at 14:32'}},
+    {el:'c-act',label:'Active sessions per minute by engine',h:132,max:100,ticks:[0,20,40,60,80,100],type:'stack',data:S.act,fmt:function(v){return String(v)},ref:{v:80,label:'capacity 80'}},
+    {el:'c-apm',label:'Actions per minute by engine',h:132,max:800,ticks:[0,200,400,600,800],tf:function(v){return v.toLocaleString('en-US')},type:'lines',data:S.apm,fmt:function(v){return v.toLocaleString('en-US')}}
+  ];
+  function drawAll(){charts.forEach(function(c){draw(document.getElementById(c.el),c)})}
+  drawAll();
+  var t=null;new ResizeObserver(function(){clearTimeout(t);t=setTimeout(drawAll,60)}).observe(document.querySelector('.canvas'));
+  if(document.fonts&&document.fonts.ready)document.fonts.ready.then(drawAll);
+})();
+</script>
+</body>
+</html>

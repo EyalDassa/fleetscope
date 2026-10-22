@@ -1,0 +1,679 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fleetscope · Overview (promax v2)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* ===== tokens (system.md v2). No external CSS: this file renders offline. ===== */
+:root, [data-theme="dark"] {
+  --bg:#0B0F14; --surface:#111821; --surface-2:#17212C; --line:#243142; --line-strong:#5B6B80;
+  --fg:#E6EDF5; --fg-muted:#9AA9BB; --fg-subtle:#7D8DA1; --ink:#E6EDF5; --on-ink:#0B0F14;
+  --ok-fg:#6EE7A8; --ok-bg:#10281C; --warn-fg:#FFD95A; --warn-bg:#2E2410;
+  --err-fg:#FF7B7B; --err-bg:#33191B; --blk-fg:#D9CCFF; --blk-bg:#2B2159;
+  --eng-c:#56B4E9; --eng-h:#E69F00; --eng-l:#CC79A7;
+  --shadow:0 8px 24px rgba(0,0,0,.45); color-scheme:dark;
+}
+[data-theme="light"] {
+  --bg:#F4F6F9; --surface:#FFFFFF; --surface-2:#F0F3F7; --line:#DDE3EA; --line-strong:#7A889B;
+  --fg:#0F1722; --fg-muted:#475569; --fg-subtle:#5F6E82; --ink:#0F1722; --on-ink:#FFFFFF;
+  --ok-fg:#0B6B39; --ok-bg:#DDF5E7; --warn-fg:#6B4400; --warn-bg:#FDF1D3;
+  --err-fg:#B42318; --err-bg:#FDE4E1; --blk-fg:#3D2A9E; --blk-bg:#ECE7FB;
+  --eng-c:#0072B2; --eng-h:#B86E00; --eng-l:#B0457F;
+  --shadow:0 8px 24px rgba(15,23,34,.14); color-scheme:light;
+}
+
+/* ===== reset + base ===== */
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:400 13px/20px Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+h1,h2,p,ul,dl,dd,dt,figure,table{margin:0}
+ul{padding:0;list-style:none}
+a{color:inherit;text-decoration:none}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+code,.mono{font-family:"JetBrains Mono",ui-monospace,Consolas,"Courier New",monospace}
+code{font-size:12px;color:var(--fg)}
+.tnum{font-variant-numeric:tabular-nums}
+.muted{color:var(--fg-muted)} .subtle{color:var(--fg-subtle)}
+.t12{font-size:12px;line-height:16px}
+.row{display:flex;align-items:center;gap:8px}
+.sp{margin-left:auto}
+.nowrap{white-space:nowrap}
+.trunc{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+:focus-visible{outline:2px solid var(--fg);outline-offset:2px;border-radius:4px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+.ic{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.ic12{width:12px;height:12px}
+.ic14{width:14px;height:14px}
+
+/* ===== shell ===== */
+.app{display:flex;min-height:100vh}
+.side{width:216px;flex:none;background:var(--surface);border-right:1px solid var(--line);position:sticky;top:0;height:100vh;display:flex;flex-direction:column}
+.brand{height:48px;display:flex;align-items:center;gap:8px;padding:0 16px;border-bottom:1px solid var(--line);font-weight:600;font-size:14px}
+.nav{padding:8px;display:flex;flex-direction:column;gap:2px;flex:1}
+.nav a{display:flex;align-items:center;gap:10px;height:36px;padding:0 10px;border-radius:6px;color:var(--fg-muted)}
+.nav a:hover{background:var(--surface-2);color:var(--fg)}
+.nav a[aria-current="page"]{background:var(--surface-2);color:var(--fg);font-weight:600}
+.nav .ct{margin-left:auto;font-size:12px;line-height:16px;color:var(--fg-subtle);font-weight:400}
+.sidefoot{padding:12px 16px;border-top:1px solid var(--line);font-size:12px;line-height:16px;color:var(--fg-muted)}
+.main{flex:1;min-width:0}
+.top{position:sticky;top:0;z-index:20;height:48px;background:var(--bg);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px;padding:0 24px}
+.page{padding:20px 24px 32px;max-width:1600px}
+.dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--ok-fg);animation:pulse 2s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.35}}
+
+/* ===== controls ===== */
+.ctl{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 10px;border:1px solid var(--line-strong);border-radius:6px;font-size:13px;color:var(--fg);background:var(--surface);white-space:nowrap}
+.ctl:hover,.seg button:hover,.ib:hover{background:var(--surface-2)}
+.ctl.sm{height:28px;padding:0 8px;font-size:12px}
+.ctl.ink{background:var(--ink);color:var(--on-ink);border-color:var(--ink);font-weight:600}
+.ctl.ink:hover{background:var(--ink);opacity:.9}
+.ib{width:28px;height:28px;border:1px solid var(--line-strong);border-radius:6px;display:inline-flex;align-items:center;justify-content:center;background:var(--surface);flex:none}
+.seg{display:inline-flex;height:32px;border:1px solid var(--line-strong);border-radius:6px;overflow:hidden;background:var(--surface)}
+.seg button{display:inline-flex;align-items:center;gap:6px;padding:0 10px;font-size:13px;color:var(--fg-muted)}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--on-ink);font-weight:600}
+.search{width:240px}
+kbd{font:400 12px/16px "JetBrains Mono",ui-monospace,monospace;padding:0 4px;border:1px solid var(--line-strong);border-radius:4px;color:var(--fg-muted)}
+.eng{display:inline-block;width:10px;height:10px;flex:none}
+.e-c{background:var(--eng-c);border-radius:50%}
+.e-h{background:var(--eng-h);border-radius:2px}
+.e-l{background:var(--eng-l);transform:rotate(45deg) scale(.88)}
+.engs{display:inline-flex;gap:4px}
+
+/* ===== badges + chips ===== */
+.badge{display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 6px;border-radius:4px;font-size:12px;line-height:16px;font-weight:500;white-space:nowrap}
+.badge .ic,.chip .ic{width:12px;height:12px}
+.b-ok{background:var(--ok-bg);color:var(--ok-fg)}
+.b-warn{background:var(--warn-bg);color:var(--warn-fg)}
+.b-err{background:var(--err-bg);color:var(--err-fg)}
+.b-blk{background:var(--blk-bg);color:var(--blk-fg)}
+.chip{display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 6px;border-radius:4px;font-size:12px;line-height:16px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--fg-muted);white-space:nowrap}
+.src-real{border:1px solid var(--line-strong)}
+.src-sim{border:1px dashed var(--line-strong);background-image:repeating-linear-gradient(135deg,transparent 0 4px,var(--line) 4px 5px)}
+.src-real::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--fg-muted)}
+.src-sim::before{content:"";width:6px;height:6px;border-radius:50%;border:1px solid var(--fg-muted)}
+
+/* ===== page header + banner ===== */
+.pagehead{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:8px}
+.pagehead h1{font-size:20px;line-height:28px;font-weight:600;letter-spacing:-.01em}
+.banner{display:flex;flex-wrap:wrap;gap:16px 28px;align-items:center;padding:16px 16px 16px 20px;border-radius:8px;background:var(--warn-bg);border:1px solid var(--line);box-shadow:inset 4px 0 0 var(--warn-fg);margin-top:12px}
+.banner .st{display:flex;gap:12px;flex:1 1 340px;min-width:300px}
+.banner .lead{font-size:28px;line-height:32px;font-weight:600;letter-spacing:-.01em}
+.banner .dist{flex:0 1 380px;min-width:280px}
+.dbar{display:flex;gap:2px;height:8px}
+.dbar i{display:block;height:100%;border-radius:2px}
+.dleg{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:8px;font-size:12px;line-height:16px;color:var(--fg-muted)}
+.dleg span{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+.dleg b{color:var(--fg);font-weight:600}
+.facts{margin-top:6px;font-size:12px;line-height:16px;color:var(--fg-muted)}
+.facts b{color:var(--fg);font-weight:600}
+
+/* ===== KPI strip: one card, divided cells, every cell is a link ===== */
+.kpis{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-top:12px}
+.k{display:block;background:var(--surface);padding:12px;position:relative;min-height:104px}
+.k:hover{background:var(--surface-2)}
+.k .go{position:absolute;top:12px;right:10px;color:var(--fg-subtle)}
+.k:hover .go{color:var(--fg)}
+.k .kl{font-size:12px;line-height:16px;color:var(--fg-muted);white-space:nowrap}
+.k .kv{font-size:26px;line-height:30px;font-weight:600;margin-top:2px;white-space:nowrap}
+.k .kv small{font-size:12px;font-weight:400;color:var(--fg-muted)}
+.k .kd{font-size:12px;line-height:16px;color:var(--fg-muted);display:flex;align-items:center;gap:2px;white-space:nowrap}
+.k .kd.bad{color:var(--err-fg)}
+.k .kd s{text-decoration:none;color:var(--fg-subtle);margin-left:2px}
+.k .kx{margin-top:8px;font-size:12px;line-height:16px;color:var(--fg-subtle);white-space:nowrap}
+.k.breach{box-shadow:inset 3px 0 0 var(--warn-fg)}
+.track{height:4px;border-radius:2px;background:var(--surface-2);border:1px solid var(--line);overflow:hidden}
+.track i{display:block;height:100%;background:var(--fg-muted)}
+.split{display:flex;height:8px;border:1px solid var(--line-strong);border-radius:2px;overflow:hidden}
+.spark{display:block;width:100%;height:20px}
+
+/* ===== charts + cards ===== */
+.cols{display:grid;grid-template-columns:minmax(0,1fr) 400px;gap:12px;margin-top:12px;align-items:start}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:8px}
+.ch{display:flex;align-items:flex-start;gap:8px;padding:12px 16px 0}
+.ch h2{font-size:14px;line-height:20px;font-weight:600}
+.ch .sub{font-size:12px;line-height:16px;color:var(--fg-muted)}
+.now{display:inline-flex;gap:10px;font-size:12px;line-height:16px;color:var(--fg-muted);white-space:nowrap;margin-top:2px}
+.now span{display:inline-flex;align-items:center;gap:4px}
+.now b{color:var(--fg);font-weight:600}
+.lgbar{display:flex;align-items:center;gap:4px;padding:0 0 8px;flex-wrap:wrap}
+.lgbar button{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 8px;border-radius:4px;font-size:12px;color:var(--fg);white-space:nowrap}
+.lgbar button:hover{background:var(--surface-2)}
+.lgbar button[aria-pressed="false"]{color:var(--fg-subtle);text-decoration:line-through}
+.lgbar button[aria-pressed="false"] .eng{opacity:.35}
+.lgbar .hint{margin-left:auto;font-size:12px;color:var(--fg-subtle)}
+.plot{position:relative}
+.ax{font-size:12px;fill:var(--fg-subtle);font-family:Inter,system-ui,sans-serif}
+.tip{position:absolute;z-index:5;width:196px;background:var(--surface-2);border:1px solid var(--line-strong);border-radius:6px;padding:6px 10px;box-shadow:var(--shadow);font-size:12px;line-height:16px}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}
+.srcrow{display:flex;align-items:center;gap:8px;padding:0 16px 4px;font-size:12px;line-height:16px;color:var(--fg-muted)}
+.srcrow .plot{flex:1;height:14px}
+.srccap{padding:0 16px 12px;font-size:12px;line-height:16px;color:var(--fg-muted);display:flex;gap:12px;flex-wrap:wrap}
+
+/* ===== table ===== */
+.tbl{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+.tbl th,.tbl td{height:40px;padding:0 8px;white-space:nowrap;text-align:left;font-weight:400}
+.tbl thead th{height:32px;font-size:12px;line-height:16px;font-weight:500;color:var(--fg-subtle);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.tbl .r{text-align:right}
+.tbl th:first-child,.tbl td:first-child{padding-left:16px}
+.tbl th:last-child,.tbl td:last-child{padding-right:16px}
+.tbl tbody tr{border-bottom:1px solid var(--line);cursor:pointer}
+.tbl tbody tr:hover{background:var(--surface-2)}
+.tbl tbody th{font-weight:500}
+.tbl tfoot td,.tbl tfoot th{color:var(--fg-muted)}
+.tbl tfoot td{color:var(--fg);font-weight:600}
+.bar{display:inline-block;width:48px;height:6px;border-radius:3px;background:var(--surface-2);overflow:hidden;border:1px solid var(--line);vertical-align:middle;margin-left:8px}
+.bar i{display:block;height:100%}
+.tscroll{overflow-x:auto}
+
+/* ===== failures rail ===== */
+.fl li{border-top:1px solid var(--line)}
+.fl a{display:block;padding:10px 16px}
+.fl a:hover{background:var(--surface-2)}
+.fl .l1{display:flex;align-items:center;gap:8px}
+.fl .l2{display:flex;align-items:center;gap:6px;margin-top:4px;font-size:12px;line-height:16px;color:var(--fg-muted)}
+.fl .l3{margin-top:2px;font-size:12px;line-height:16px;color:var(--fg-muted)}
+.fl .foot a{display:flex;align-items:center;justify-content:space-between;font-weight:500}
+
+/* ===== responsive: 1024 = icon rail, no horizontal scroll ===== */
+@media (max-width:1279px){
+  .side{width:56px}
+  .hr{display:none!important}
+  .brand{padding:0 16px}
+  .nav a{justify-content:center;padding:0}
+  .top{padding:0 16px}
+  .page{padding:16px}
+  .search{width:32px;padding:0;justify-content:center}
+  .cols{grid-template-columns:minmax(0,1fr)}
+  .kpis{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .kpis .k:last-child{grid-column:span 2}
+  .fl{display:grid;grid-template-columns:1fr 1fr}
+  .fl li:nth-child(odd){border-right:1px solid var(--line)}
+  .hide-md{display:none}
+}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.46 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></symbol>
+  <symbol id="i-ban" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></symbol>
+  <symbol id="i-cpu" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/></symbol>
+  <symbol id="i-coin" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M15 9h-4a2 2 0 0 0 0 4h2a2 2 0 0 1 0 4H9M12 6v2M12 16v2"/></symbol>
+  <symbol id="i-bulb" viewBox="0 0 24 24"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.3h6c0-1 .4-1.8 1-2.3A7 7 0 0 0 12 2Z"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-up-right" viewBox="0 0 24 24"><path d="M7 17 17 7M7 7h10v10"/></symbol>
+  <symbol id="i-arrow-up" viewBox="0 0 24 24"><path d="m5 12 7-7 7 7M12 19V5"/></symbol>
+  <symbol id="i-arrow-down" viewBox="0 0 24 24"><path d="M12 5v14m7-7-7 7-7-7"/></symbol>
+  <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></symbol>
+  <symbol id="i-table" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/></symbol>
+</svg>
+
+<div class="app">
+
+  <!-- ===== SIDEBAR: 216px with labels, 56px icon rail below 1280px ===== -->
+  <aside class="side">
+    <div class="brand">
+      <svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><rect x="1" y="1" width="22" height="22" rx="6" style="fill:var(--ink)"/><circle cx="12" cy="12" r="4" style="fill:none;stroke:var(--on-ink);stroke-width:2"/><path d="M12 4v3M12 17v3M4 12h3M17 12h3" style="stroke:var(--on-ink);stroke-width:2;stroke-linecap:round"/></svg>
+      <span class="hr">Fleetscope</span>
+    </div>
+    <nav class="nav" aria-label="Main">
+      <a href="#" aria-current="page" title="Overview" aria-label="Overview"><svg class="ic"><use href="#i-grid"/></svg><span class="hr">Overview</span></a>
+      <a href="session.html" title="Sessions, 128 live" aria-label="Sessions, 128 live"><svg class="ic"><use href="#i-list"/></svg><span class="hr">Sessions</span><span class="ct tnum hr">128 live</span></a>
+      <a href="#" title="Browsers" aria-label="Browsers"><svg class="ic"><use href="#i-cpu"/></svg><span class="hr">Browsers</span></a>
+      <a href="#" title="Usage and cost" aria-label="Usage and cost"><svg class="ic"><use href="#i-coin"/></svg><span class="hr">Usage &amp; cost</span></a>
+      <a href="#" title="Insights, 5 open" aria-label="Insights, 5 open"><svg class="ic"><use href="#i-bulb"/></svg><span class="hr">Insights</span><span class="ct hr">5 open</span></a>
+    </nav>
+    <div class="sidefoot hr">
+      <div class="row" style="gap:8px"><span class="dot"></span><span>Collector live · last event 0.8 s ago</span></div>
+    </div>
+  </aside>
+
+  <div class="main">
+
+    <!-- ===== TOP BAR ===== -->
+    <header class="top">
+      <div class="seg" role="group" aria-label="Time range" data-seg>
+        <button aria-pressed="false">15m</button><button aria-pressed="true">1h</button><button aria-pressed="false">24h</button><button aria-pressed="false">7d</button><button aria-pressed="false" aria-label="Custom range"><svg class="ic"><use href="#i-calendar"/></svg><span class="hr">Custom</span></button>
+      </div>
+      <button class="ctl" aria-haspopup="listbox" aria-label="Engine filter: all three engines">
+        <span class="engs"><i class="eng e-c"></i><i class="eng e-h"></i><i class="eng e-l"></i></span>
+        <span class="hr muted">Engines</span><span>All 3</span>
+        <svg class="ic ic14"><use href="#i-chev"/></svg>
+      </button>
+      <div class="seg" role="group" aria-label="Source" data-seg>
+        <button aria-pressed="true">All</button><button aria-pressed="false">Real</button><button aria-pressed="false">Sim</button>
+      </div>
+      <span class="chip src-sim hr" title="62% of sessions in range are simulated">62% sim</span>
+      <div class="row sp">
+        <span class="row hr muted t12 tnum"><span class="dot"></span>Live · 14:42:07</span>
+        <button class="ctl search" aria-label="Search (Command K)">
+          <svg class="ic"><use href="#i-search"/></svg>
+          <span class="hr muted">Search sessions, pages…</span>
+          <kbd class="hr sp">⌘K</kbd>
+        </button>
+        <button class="ctl" id="theme" style="width:32px;padding:0;justify-content:center" aria-label="Toggle light or dark theme"><svg class="ic"><use href="#i-sun" id="theme-ic"/></svg></button>
+      </div>
+    </header>
+
+    <main class="page">
+
+      <div class="pagehead">
+        <div>
+          <h1>Overview</h1>
+          <p class="t12 muted">Last 1 hour · 13:42–14:42 · all engines · real + simulated</p>
+        </div>
+        <p class="t12 subtle tnum">Updated 1 s ago · stream connected</p>
+      </div>
+
+      <!-- ===== VERDICT: the 5-second answer ===== -->
+      <section class="banner" role="status" aria-label="Fleet status: degraded">
+        <div class="st">
+          <svg class="ic" style="width:32px;height:32px;color:var(--warn-fg);margin-top:2px"><use href="#i-alert"/></svg>
+          <div>
+            <p class="lead">Degraded</p>
+            <p class="muted">Success rate is <b style="color:var(--fg)">91.6%</b>, 3.4 pts below the prior hour (target 95%). Lightpanda errors peaked at <b style="color:var(--fg)">28.4% at 14:25</b>; 71 of its 89 failures are <code>unsupported_api</code>.</p>
+          </div>
+        </div>
+        <div class="dist">
+          <div class="dbar" role="img" aria-label="1,642 healthy, 122 degraded, 111 failed, 51 blocked">
+            <i style="width:85.3%;background:var(--ok-fg)"></i><i style="width:6.3%;background:var(--warn-fg)"></i><i style="width:5.8%;background:var(--err-fg)"></i><i style="width:2.6%;background:var(--blk-fg)"></i>
+          </div>
+          <div class="dleg tnum">
+            <span><svg class="ic ic12" style="color:var(--ok-fg)"><use href="#i-check"/></svg>Healthy <b>1,642</b></span>
+            <span><svg class="ic ic12" style="color:var(--warn-fg)"><use href="#i-alert"/></svg>Degraded <b>122</b></span>
+            <span><svg class="ic ic12" style="color:var(--err-fg)"><use href="#i-x"/></svg>Failed <b>111</b></span>
+            <span><svg class="ic ic12" style="color:var(--blk-fg)"><use href="#i-ban"/></svg>Blocked <b>51</b></span>
+          </div>
+          <p class="facts tnum">Capacity <b>128 / 200</b> slots (64%) · engines reporting <b>3 / 3</b></p>
+        </div>
+        <a href="#failures" class="ctl ink">Review 162 failures <svg class="ic"><use href="#i-up-right"/></svg></a>
+      </section>
+
+      <!-- ===== KPI strip ===== -->
+      <section class="kpis" aria-label="Key metrics">
+        <a href="#" class="k" aria-label="Active now 128 of 200 slots. View active sessions">
+          <p class="kl">Active now</p><svg class="ic ic14 go"><use href="#i-up-right"/></svg>
+          <p class="kv tnum">128 <small>/ 200</small></p>
+          <p class="kd tnum"><svg class="ic ic12"><use href="#i-arrow-up"/></svg>+9 <s>vs prior 1 h</s></p>
+          <div class="kx"><div class="track"><i style="width:64%"></i></div></div>
+        </a>
+        <a href="#" class="k" aria-label="Sessions in range 1,926: 741 real, 1,185 simulated">
+          <p class="kl">Sessions · 1 h</p><svg class="ic ic14 go"><use href="#i-up-right"/></svg>
+          <p class="kv tnum">1,926</p>
+          <p class="kd tnum"><svg class="ic ic12"><use href="#i-arrow-up"/></svg>+12% <s>vs prior 1 h</s></p>
+          <div class="kx"><div class="split" aria-hidden="true"><i style="width:38%;background:var(--fg-subtle)"></i><i style="width:62%;background-image:repeating-linear-gradient(135deg,transparent 0 3px,var(--fg-subtle) 3px 4px)"></i></div><span class="tnum" style="display:block;margin-top:4px">741 real · 1,185 sim</span></div>
+        </a>
+        <a href="#" class="k breach" aria-label="Success rate 91.6 percent, below target. View failed sessions">
+          <p class="kl">Success rate</p><svg class="ic ic14 go"><use href="#i-up-right"/></svg>
+          <p class="kv tnum">91.6<small>%</small></p>
+          <p class="kd bad tnum"><svg class="ic ic12"><use href="#i-arrow-down"/></svg>−3.4 pts <s>vs prior 1 h</s></p>
+          <div class="kx"><svg class="spark" data-spark="succ" viewBox="0 0 100 20" preserveAspectRatio="none" aria-hidden="true"></svg></div>
+        </a>
+        <a href="#" class="k breach" aria-label="p95 action latency 1.84 seconds, above prior hour. View slowest sessions">
+          <p class="kl">p95 action latency</p><svg class="ic ic14 go"><use href="#i-up-right"/></svg>
+          <p class="kv tnum">1.84<small> s</small></p>
+          <p class="kd bad tnum"><svg class="ic ic12"><use href="#i-arrow-up"/></svg>+0.31 s <s>vs prior 1 h</s></p>
+          <div class="kx"><svg class="spark" data-spark="lat" viewBox="0 0 100 20" preserveAspectRatio="none" aria-hidden="true"></svg></div>
+        </a>
+        <a href="#" class="k" aria-label="CPU cores in use 36.2">
+          <p class="kl">CPU in use</p><svg class="ic ic14 go"><use href="#i-up-right"/></svg>
+          <p class="kv tnum">36.2<small> cores</small></p>
+          <p class="kd tnum"><svg class="ic ic12"><use href="#i-arrow-up"/></svg>+2.4 <s>vs prior 1 h</s></p>
+          <p class="kx tnum">0.28 cores / session</p>
+        </a>
+        <a href="#" class="k" aria-label="Memory in use 58.4 gigabytes">
+          <p class="kl">Memory</p><svg class="ic ic14 go"><use href="#i-up-right"/></svg>
+          <p class="kv tnum">58.4<small> GB</small></p>
+          <p class="kd tnum"><svg class="ic ic12"><use href="#i-arrow-up"/></svg>+4.1 GB <s>vs prior 1 h</s></p>
+          <p class="kx tnum">456 MB / session</p>
+        </a>
+        <a href="#" class="k" aria-label="Estimated cost 8.73 dollars in the last hour">
+          <p class="kl">Est. cost · 1 h</p><svg class="ic ic14 go"><use href="#i-up-right"/></svg>
+          <p class="kv tnum">$8.73</p>
+          <p class="kd tnum"><svg class="ic ic12"><use href="#i-arrow-up"/></svg>+$0.62 <s>vs prior 1 h</s></p>
+          <p class="kx tnum">≈ $210 / day</p>
+        </a>
+      </section>
+
+      <!-- ===== CHARTS (left, shared legend) + RECENT FAILURES (right rail) ===== -->
+      <div class="cols">
+        <div>
+          <div class="lgbar" role="group" aria-label="Engines shown in all charts" id="legend">
+            <button data-eng="c" aria-pressed="true"><i class="eng e-c"></i>Chromium</button>
+            <button data-eng="h" aria-pressed="true"><i class="eng e-h"></i>chrome-headless-shell</button>
+            <button data-eng="l" aria-pressed="true"><i class="eng e-l"></i>Lightpanda</button>
+            <span class="hint">Click any point to open the sessions behind it</span>
+          </div>
+
+          <article class="card">
+            <header class="ch">
+              <div><h2>Error rate by engine</h2><p class="sub">% of sessions not successful, per minute</p></div>
+              <div class="sp row" style="gap:12px">
+                <span class="now tnum" aria-label="Now: Chromium 4.9 percent, headless-shell 6.0, Lightpanda 13.1"><span><i class="eng e-c"></i><b>4.9%</b></span><span><i class="eng e-h"></i><b>6.0%</b></span><span><i class="eng e-l"></i><b>13.1%</b></span></span>
+                <button class="ib" aria-label="View as table"><svg class="ic ic14"><use href="#i-table"/></svg></button>
+                <a href="#" class="ib" aria-label="Open these sessions"><svg class="ic ic14"><use href="#i-up-right"/></svg></a>
+              </div>
+            </header>
+            <div id="c-err" class="plot" style="height:260px;margin-top:4px"></div>
+          </article>
+
+          <div class="pair">
+            <article class="card">
+              <header class="ch">
+                <div><h2>Active sessions</h2><p class="sub">Per minute · capacity 200</p></div>
+                <div class="sp row" style="gap:8px">
+                  <span class="now tnum" aria-label="Now: Chromium 44, headless-shell 52, Lightpanda 32"><span><i class="eng e-c"></i><b>44</b></span><span><i class="eng e-h"></i><b>52</b></span><span><i class="eng e-l"></i><b>32</b></span></span>
+                  <a href="#" class="ib" aria-label="Open these sessions"><svg class="ic ic14"><use href="#i-up-right"/></svg></a>
+                </div>
+              </header>
+              <div id="c-act" class="plot" style="height:176px;margin-top:4px"></div>
+              <div class="srcrow"><span>Source</span><div id="c-src" class="plot" role="img" aria-label="Share of simulated sessions per minute, about 62 percent"></div></div>
+              <div class="srccap"><span class="row" style="gap:6px"><span class="chip src-real">Real</span>solid</span><span class="row" style="gap:6px"><span class="chip src-sim">Sim</span>hatched · 62%</span></div>
+            </article>
+
+            <article class="card">
+              <header class="ch">
+                <div><h2>Actions per minute</h2><p class="sub">Stacked by engine</p></div>
+                <div class="sp row" style="gap:8px">
+                  <span class="now tnum" aria-label="Now: Chromium 781, headless-shell 904, Lightpanda 466"><span><i class="eng e-c"></i><b>781</b></span><span><i class="eng e-h"></i><b>904</b></span><span><i class="eng e-l"></i><b>466</b></span></span>
+                  <a href="#" class="ib" aria-label="Open these sessions"><svg class="ic ic14"><use href="#i-up-right"/></svg></a>
+                </div>
+              </header>
+              <div id="c-actions" class="plot" style="height:224px;margin-top:4px"></div>
+              <p class="t12 subtle" style="padding:0 16px 12px">2,151 actions/min now · real + sim</p>
+            </article>
+          </div>
+        </div>
+
+        <aside id="failures" class="card" aria-label="Recent failures">
+          <header class="ch" style="padding-bottom:10px">
+            <div><h2>Recent failures</h2><p class="sub">Newest first · 162 in range</p></div>
+            <a href="#" class="ctl sm sp">View all <svg class="ic ic12"><use href="#i-up-right"/></svg></a>
+          </header>
+          <ul class="fl">
+            <li><a href="session.html">
+              <div class="l1"><span class="badge b-err"><svg class="ic"><use href="#i-x"/></svg>Failed</span><code>s_9Kd2xQ</code><span class="chip src-real sp">Real</span><span class="t12 subtle tnum">4m</span></div>
+              <div class="l2"><i class="eng e-l"></i>Lightpanda<span class="subtle">·</span>checkout-form</div>
+              <p class="l3 trunc"><code>unsupported_api</code> IntersectionObserver is not defined</p>
+            </a></li>
+            <li><a href="#">
+              <div class="l1"><span class="badge b-blk"><svg class="ic"><use href="#i-ban"/></svg>Blocked</span><code>s_4Tn8bW</code><span class="chip src-real sp">Real</span><span class="t12 subtle tnum">6m</span></div>
+              <div class="l2"><i class="eng e-h"></i>chrome-headless-shell<span class="subtle">·</span>login-and-search</div>
+              <p class="l3 trunc"><code>captcha</code> reCAPTCHA challenge on shop.acme-demo.test</p>
+            </a></li>
+            <li><a href="#">
+              <div class="l1"><span class="badge b-err"><svg class="ic"><use href="#i-x"/></svg>Failed</span><code>s_2Hq7vE</code><span class="chip src-real sp">Real</span><span class="t12 subtle tnum">9m</span></div>
+              <div class="l2"><i class="eng e-c"></i>Chromium<span class="subtle">·</span>memory-hog</div>
+              <p class="l3 trunc"><code>crash</code> Renderer killed at 2.1 GB (OOM)</p>
+            </a></li>
+            <li><a href="#">
+              <div class="l1"><span class="badge b-err"><svg class="ic"><use href="#i-x"/></svg>Failed</span><code>s_6Pz1mA</code><span class="chip src-sim sp">Sim</span><span class="t12 subtle tnum">11m</span></div>
+              <div class="l2"><i class="eng e-l"></i>Lightpanda<span class="subtle">·</span>checkout-form</div>
+              <p class="l3 trunc"><code>unsupported_api</code> IntersectionObserver is not defined</p>
+            </a></li>
+            <li><a href="#">
+              <div class="l1"><span class="badge b-err"><svg class="ic"><use href="#i-x"/></svg>Timeout</span><code>s_8Lc3yR</code><span class="chip src-sim sp">Sim</span><span class="t12 subtle tnum">14m</span></div>
+              <div class="l2"><i class="eng e-h"></i>chrome-headless-shell<span class="subtle">·</span>heavy-page-crawl</div>
+              <p class="l3 trunc"><code>timeout</code> Navigation exceeded 30 s</p>
+            </a></li>
+            <li><a href="#">
+              <div class="l1"><span class="badge b-blk"><svg class="ic"><use href="#i-ban"/></svg>Blocked</span><code>s_1Vb5sN</code><span class="chip src-sim sp">Sim</span><span class="t12 subtle tnum">17m</span></div>
+              <div class="l2"><i class="eng e-l"></i>Lightpanda<span class="subtle">·</span>login-and-search</div>
+              <p class="l3 trunc"><code>blocked</code> HTTP 403 from cdn.acme-demo.test</p>
+            </a></li>
+            <li><a href="#">
+              <div class="l1"><span class="badge b-err"><svg class="ic"><use href="#i-x"/></svg>Failed</span><code>s_5Wd6nH</code><span class="chip src-real sp">Real</span><span class="t12 subtle tnum">18m</span></div>
+              <div class="l2"><i class="eng e-l"></i>Lightpanda<span class="subtle">·</span>checkout-form</div>
+              <p class="l3 trunc"><code>unsupported_api</code> IntersectionObserver is not defined</p>
+            </a></li>
+            <li class="foot"><a href="#">View all 162 failures <svg class="ic ic14"><use href="#i-up-right"/></svg></a></li>
+          </ul>
+        </aside>
+      </div>
+
+      <!-- ===== ENGINES: own height, status per row ===== -->
+      <article class="card" style="margin-top:12px;overflow:hidden">
+        <header class="ch" style="padding-bottom:10px">
+          <div><h2>Engines, last hour</h2><p class="sub">Click a row to open the Browsers comparison for that engine</p></div>
+          <a href="#" class="ctl sm sp">Compare engines <svg class="ic ic12"><use href="#i-up-right"/></svg></a>
+        </header>
+        <div class="tscroll">
+        <table class="tbl">
+          <thead>
+            <tr>
+              <th scope="col" style="min-width:240px">Engine</th>
+              <th scope="col">Status</th>
+              <th scope="col" class="r hide-md">Active</th>
+              <th scope="col" class="r">Sessions</th>
+              <th scope="col" class="r">Success</th>
+              <th scope="col" class="r">p95 latency</th>
+              <th scope="col" class="r hide-md">CPU</th>
+              <th scope="col" class="r">Mem / session</th>
+              <th scope="col" class="r">Cost / 1k</th>
+              <th scope="col">Top issue</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row"><span class="row"><i class="eng e-c"></i>Chromium <span class="t12 subtle" style="font-weight:400">142.0</span></span></th>
+              <td><span class="badge b-ok"><svg class="ic"><use href="#i-check"/></svg>Healthy</span></td>
+              <td class="r hide-md">44</td><td class="r">612</td>
+              <td class="r">95.1%<span class="bar"><i style="width:95.1%;background:var(--ok-fg)"></i></span></td>
+              <td class="r">2.21 s</td><td class="r hide-md">14.8 cores</td><td class="r">820 MB</td><td class="r">$8.25</td>
+              <td><code>timeout</code> <span class="subtle tnum">×12</span></td>
+            </tr>
+            <tr>
+              <th scope="row"><span class="row"><i class="eng e-h"></i>chrome-headless-shell <span class="t12 subtle" style="font-weight:400">142.0</span></span></th>
+              <td><span class="badge b-warn"><svg class="ic"><use href="#i-alert"/></svg>Degraded</span></td>
+              <td class="r hide-md">52</td><td class="r">701</td>
+              <td class="r">94.0%<span class="bar"><i style="width:94%;background:var(--warn-fg)"></i></span></td>
+              <td class="r">1.96 s</td><td class="r hide-md">17.9 cores</td><td class="r">400 MB</td><td class="r">$5.12</td>
+              <td><code>captcha</code> <span class="subtle tnum">×19</span></td>
+            </tr>
+            <tr>
+              <th scope="row"><span class="row"><i class="eng e-l"></i>Lightpanda <span class="t12 subtle" style="font-weight:400">0.2.8</span></span></th>
+              <td><span class="badge b-warn"><svg class="ic"><use href="#i-alert"/></svg>Degraded</span></td>
+              <td class="r hide-md">32</td><td class="r">613</td>
+              <td class="r">85.4%<span class="bar"><i style="width:85.4%;background:var(--warn-fg)"></i></span></td>
+              <td class="r">0.74 s</td><td class="r hide-md">3.5 cores</td><td class="r">45 MB</td><td class="r">$0.15</td>
+              <td><code>unsupported_api</code> <span class="subtle tnum">×71</span></td>
+            </tr>
+          </tbody>
+          <tfoot>
+            <tr style="border-top:1px solid var(--line-strong)">
+              <th scope="row" style="font-weight:500">Fleet</th>
+              <td><span class="badge b-warn"><svg class="ic"><use href="#i-alert"/></svg>Degraded</span></td>
+              <td class="r hide-md">128</td><td class="r">1,926</td><td class="r">91.6%</td><td class="r">1.84 s</td>
+              <td class="r hide-md">36.2 cores</td><td class="r">456 MB</td><td class="r">$4.53</td><td></td>
+            </tr>
+          </tfoot>
+        </table>
+        </div>
+      </article>
+
+      <p class="t12 subtle" style="margin-top:12px">fleet_minute · 60 buckets · UTC+03:00 · cost estimated from pricing.config.json · degraded = success with a retry, slow action or logged issue</p>
+    </main>
+  </div>
+</div>
+
+<script>
+(function () {
+  /* ----- theme toggle (also ?theme=light) + segmented controls ----- */
+  var root = document.documentElement;
+  function setTheme(light) {
+    root.setAttribute('data-theme', light ? 'light' : 'dark');
+    document.getElementById('theme-ic').setAttribute('href', light ? '#i-moon' : '#i-sun');
+  }
+  if (/theme=light/.test(location.search)) setTheme(true);
+  document.getElementById('theme').addEventListener('click', function () { setTheme(root.getAttribute('data-theme') !== 'light'); });
+  document.querySelectorAll('[data-seg]').forEach(function (g) {
+    g.addEventListener('click', function (e) {
+      var b = e.target.closest('button'); if (!b) return;
+      g.querySelectorAll('button').forEach(function (x) { x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); });
+    });
+  });
+
+  /* ----- deterministic fake data ----- */
+  function rng(a){return function(){a|=0;a=a+0x6D2B79F5|0;var t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+  var r = rng(42), N = 60, T0 = 13*60+43;
+  var idx = Array.from({length:N}, function(_, i){return i;});
+  function noise(a){return (r()-.5)*2*a;}
+  function bump(i,c,w){return Math.max(0,1-Math.abs(i-c)/w);}
+  function lab(i){var t=T0+i;return Math.floor(t/60)+':'+String(t%60).padStart(2,'0');}
+  var D = {
+    act: {
+      c: idx.map(function(i){return Math.round(40+5*Math.sin(i/8)+noise(1.5));}),
+      h: idx.map(function(i){return Math.round(50+4*Math.sin(i/5+1)+noise(1.5));}),
+      l: idx.map(function(i){return Math.round(30+3*Math.sin(i/7+2)+noise(1.2)-8*bump(i,42,5));})
+    },
+    acts: {
+      c: idx.map(function(i){return Math.round(740+55*Math.sin(i/6)+noise(30));}),
+      h: idx.map(function(i){return Math.round(880+60*Math.sin(i/5+1)+noise(35));}),
+      l: idx.map(function(i){return Math.round(480+30*Math.sin(i/7+2)+noise(25)-110*bump(i,42,5));})
+    },
+    err: {
+      c: idx.map(function(i){return +(4.9+0.5*Math.sin(i/4)+noise(0.7)).toFixed(1);}),
+      h: idx.map(function(i){return +(6.0+0.6*Math.sin(i/5+2)+noise(0.8)).toFixed(1);}),
+      l: idx.map(function(i){return +(12.3+0.8*Math.sin(i/6)+noise(1.0)+15.5*bump(i,42,4)).toFixed(1);})
+    }
+  };
+  D.act.c[N-1]=44; D.act.h[N-1]=52; D.act.l[N-1]=32;
+  D.err.l[42]=28.4; D.err.c[42]=5.2; D.err.h[42]=6.1; D.err.c[N-1]=4.9; D.err.h[N-1]=6.0; D.err.l[N-1]=13.1;
+
+  /* ----- sparklines (breaching KPIs only) ----- */
+  function spark(el, d, color) {
+    var mn=Math.min.apply(null,d), mx=Math.max.apply(null,d), pad=2;
+    var pts=d.map(function(v,i){return (i/(d.length-1)*100).toFixed(1)+','+(20-pad-(v-mn)/(mx-mn||1)*(20-2*pad)).toFixed(1);}).join(' ');
+    el.innerHTML='<polyline points="'+pts+'" fill="none" style="stroke:'+color+'" stroke-width="1.5" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>';
+  }
+  var sr = rng(9);
+  var S = {
+    succ: Array.from({length:24},function(_,i){return 95.5-(i>16?(i-16)*0.9:0)+(sr()-.5)*0.8;}),
+    lat: Array.from({length:24},function(_,i){return 1.5+(i>16?0.4:0)+(sr()-.5)*0.25;})
+  };
+  document.querySelectorAll('[data-spark]').forEach(function(el){spark(el,S[el.getAttribute('data-spark')],'var(--fg-muted)');});
+
+  /* ----- charts: plain SVG standing in for Recharts ----- */
+  var ENG = [
+    {k:'c', color:'var(--eng-c)', dash:'', name:'Chromium', sh:'e-c'},
+    {k:'h', color:'var(--eng-h)', dash:'7 4', name:'headless-shell', sh:'e-h'},
+    {k:'l', color:'var(--eng-l)', dash:'1.5 3.5', name:'Lightpanda', sh:'e-l'}
+  ];
+  var hidden = {};
+  function shown(){ return ENG.filter(function(e){return !hidden[e.k];}); }
+  function marker(k, x, y, s) {
+    var c = ENG.filter(function(e){return e.k===k;})[0].color, st='fill:'+c+';stroke:var(--surface);stroke-width:1.5';
+    if (k==='c') return '<circle cx="'+x+'" cy="'+y+'" r="'+s+'" style="'+st+'"/>';
+    if (k==='h') return '<rect x="'+(x-s)+'" y="'+(y-s)+'" width="'+(2*s)+'" height="'+(2*s)+'" rx="1.5" style="'+st+'"/>';
+    return '<rect x="'+(x-s)+'" y="'+(y-s)+'" width="'+(2*s)+'" height="'+(2*s)+'" transform="rotate(45 '+x+' '+y+')" style="'+st+'"/>';
+  }
+  function chart(el, o) {
+    var W=el.clientWidth, H=el.clientHeight, m={l:38,r:12,t:o.top||10,b:22};
+    var pw=W-m.l-m.r, ph=H-m.t-m.b;
+    var bw=pw/N;
+    var x=function(i){return o.type==='bars' ? m.l+(i+.5)*bw : m.l+pw*i/(N-1);};
+    var y=function(v){return m.t+ph*(1-v/o.max);};
+    var s='<svg width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'" role="img" aria-label="'+o.label+'" style="display:block;overflow:visible">';
+    o.ticks.forEach(function(t){
+      s+='<line x1="'+m.l+'" x2="'+(W-m.r)+'" y1="'+y(t)+'" y2="'+y(t)+'" style="stroke:var(--line)"/>'+
+         '<text x="'+(m.l-6)+'" y="'+(y(t)+4)+'" text-anchor="end" class="ax">'+o.fmt(t)+'</text>';
+    });
+    idx.forEach(function(i){ if((T0+i)%10===0) s+='<text x="'+x(i)+'" y="'+(H-5)+'" text-anchor="middle" class="ax">'+lab(i)+'</text>'; });
+    if (o.band) {
+      var bx0=o.type==='bars'?m.l+o.band[0]*bw:x(o.band[0]), bx1=o.type==='bars'?m.l+o.band[1]*bw:x(o.band[1]);
+      s+='<rect x="'+bx0+'" y="'+m.t+'" width="'+(bx1-bx0)+'" height="'+ph+'" style="fill:var(--err-fg)" fill-opacity=".10"/>';
+      if (o.note) {   /* annotation lives in the reserved row above the plot; flips to end-anchor near the right edge */
+        var flip = bx0 + 190 > W - m.r;
+        s+='<text x="'+(flip?bx1:bx0)+'" y="'+(m.t-8)+'" text-anchor="'+(flip?'end':'start')+'" class="ax" style="fill:var(--err-fg);font-weight:600">'+o.note+'</text>';
+      }
+    }
+    if (o.thresh) {   /* label sits BELOW the line, left, in the empty band between 6% and 10% */
+      s+='<line x1="'+m.l+'" x2="'+(W-m.r)+'" y1="'+y(o.thresh)+'" y2="'+y(o.thresh)+'" style="stroke:var(--warn-fg)" stroke-dasharray="2 3"/>'+
+         '<text x="'+(m.l+6)+'" y="'+(y(o.thresh)+14)+'" class="ax" style="fill:var(--warn-fg)">alert at '+o.thresh+'%</text>';
+    }
+    if (o.cap) {      /* capacity line; label below, right-aligned, above the tallest column */
+      s+='<line x1="'+m.l+'" x2="'+(W-m.r)+'" y1="'+y(o.cap)+'" y2="'+y(o.cap)+'" style="stroke:var(--fg-muted)" stroke-dasharray="4 3"/>'+
+         '<text x="'+(W-m.r)+'" y="'+(y(o.cap)+14)+'" text-anchor="end" class="ax" style="fill:var(--fg-muted)">capacity '+o.cap+'</text>';
+    }
+    var vs=shown();
+    if (o.type==='bars') {
+      var base=new Array(N).fill(0);
+      vs.forEach(function(e){
+        idx.forEach(function(i){
+          var v=o.data[e.k][i], y0=y(base[i]), y1=y(base[i]+v);
+          s+='<rect x="'+(m.l+i*bw+.5)+'" y="'+y1+'" width="'+Math.max(1,bw-1)+'" height="'+Math.max(0,y0-y1-1)+'" style="fill:'+e.color+'"/>';
+          base[i]+=v;
+        });
+      });
+    } else if (o.type==='area') {
+      var b2=new Array(N).fill(0);
+      vs.forEach(function(e){
+        var d=o.data[e.k], top=d.map(function(v,i){return b2[i]+v;});
+        var up=top.map(function(v,i){return (i?'L':'M')+x(i).toFixed(1)+' '+y(v).toFixed(1);}).join('');
+        var dn=idx.slice().reverse().map(function(i){return 'L'+x(i).toFixed(1)+' '+y(b2[i]).toFixed(1);}).join('');
+        s+='<path d="'+up+dn+'Z" style="fill:'+e.color+'" fill-opacity=".24"/><path d="'+up+'" fill="none" style="stroke:'+e.color+'" stroke-width="1.75"/>';
+        b2=top;
+      });
+    } else {
+      vs.forEach(function(e){
+        var d=o.data[e.k], p=d.map(function(v,i){return (i?'L':'M')+x(i).toFixed(1)+' '+y(v).toFixed(1);}).join('');
+        s+='<path d="'+p+'" fill="none" style="stroke:'+e.color+'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"'+(e.dash?' stroke-dasharray="'+e.dash+'"':'')+'/>';
+        s+=marker(e.k, x(N-1), y(d[N-1]), 4);
+      });
+    }
+    var tip='';
+    if (o.focus!=null) {
+      var fi=o.focus, fx=x(fi);
+      s+='<line x1="'+fx+'" x2="'+fx+'" y1="'+m.t+'" y2="'+(m.t+ph)+'" style="stroke:var(--fg)" stroke-dasharray="3 3" stroke-opacity=".7"/>';
+      vs.forEach(function(e){ s+=marker(e.k, fx, y(o.data[e.k][fi]), 4.5); });
+      /* pinned top-left, in the empty region above the baselines; never over the threshold label or the spike */
+      tip='<div class="tip" style="left:'+(m.l+10)+'px;top:'+(m.t+2)+'px">'+
+        '<div class="row" style="justify-content:space-between"><b>'+lab(fi)+'</b><span class="row" style="gap:4px;color:var(--err-fg)"><svg class="ic ic12"><use href="#i-alert"/></svg>Spike</span></div>'+
+        ENG.slice().reverse().map(function(e){return '<div class="row" style="justify-content:space-between;margin-top:2px"><span class="row" style="gap:6px;color:var(--fg-muted)"><i class="eng '+e.sh+'"></i>'+e.name+'</span><b class="tnum">'+o.data[e.k][fi].toFixed(1)+'%</b></div>';}).join('')+
+        '<a href="#" class="row" style="justify-content:space-between;margin-top:4px;padding-top:4px;border-top:1px solid var(--line)"><span>3 failed this minute</span><span class="row" style="gap:4px;font-weight:600">Open <svg class="ic ic12"><use href="#i-up-right"/></svg></span></a></div>';
+    }
+    el.innerHTML=s+'</svg>'+tip;
+  }
+  function srcStrip(el){
+    var W=el.clientWidth, H=el.clientHeight, bw=(W-2)/N, rr=rng(5);
+    var s='<svg width="'+W+'" height="'+H+'" style="display:block"><defs><pattern id="hatch" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="4" height="4" style="fill:var(--surface)"/><rect width="1.6" height="4" style="fill:var(--fg-subtle)"/></pattern></defs>';
+    idx.forEach(function(i){
+      var hs=H*(0.62+(rr()-.5)*0.14);
+      s+='<rect x="'+(1+i*bw)+'" y="0" width="'+Math.max(1,bw-1)+'" height="'+(H-hs)+'" style="fill:var(--fg-subtle)"/>';
+      s+='<rect x="'+(1+i*bw)+'" y="'+(H-hs)+'" width="'+Math.max(1,bw-1)+'" height="'+hs+'" style="fill:url(#hatch)"/>';
+    });
+    el.innerHTML=s+'</svg>';
+  }
+  function render() {
+    chart(document.getElementById('c-err'), {type:'line', data:D.err, max:30, ticks:[0,10,20,30], fmt:function(v){return v+'%';}, top:26,
+      label:'Error rate per minute by engine, last hour. Lightpanda spikes to 28.4 percent at 14:25.', band:[38,46], note:'Spike 14:21–14:28 · 31 failed', thresh:10, focus:42});
+    chart(document.getElementById('c-act'), {type:'bars', data:D.act, max:200, ticks:[0,100,200], fmt:function(v){return v;}, cap:200,
+      label:'Active sessions by engine per minute, last hour, against a capacity of 200. Currently 128.'});
+    chart(document.getElementById('c-actions'), {type:'area', data:D.acts, max:2800, ticks:[0,1000,2000], fmt:function(v){return v?(v/1000)+'k':'0';},
+      label:'Actions per minute by engine, last hour. Currently 2,151.', band:[38,46]});
+    srcStrip(document.getElementById('c-src'));
+  }
+  document.querySelectorAll('#legend button').forEach(function(b){
+    b.addEventListener('click', function(){
+      var k=b.getAttribute('data-eng'), off=b.getAttribute('aria-pressed')==='true';
+      hidden[k]=off; b.setAttribute('aria-pressed', off?'false':'true'); render();
+    });
+  });
+  render();
+  if (window.ResizeObserver) { var ro=new ResizeObserver(function(){render();}); ['c-err','c-act','c-actions'].forEach(function(id){ro.observe(document.getElementById(id));}); }
+  else window.addEventListener('resize', render);
+})();
+</script>
+</body>
+</html>

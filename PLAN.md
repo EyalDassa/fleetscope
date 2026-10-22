@@ -108,14 +108,14 @@ Verify current image names, ports and Playwright compatibility in each project's
 
 ## 5. Event schema (`packages/schema`, version 1)
 
-All events share: `v`, `event_id` (uuid, used to drop duplicates), `ts` (ms), `session_id`, `source` ("real"|"sim"), `agent_id`, `engine`, `provider`.
+All events share: `v`, `type` (the event name below, used as the discriminator), `event_id` (uuid, used to drop duplicates), `ts` (ms), `session_id`, `source` ("real"|"sim"), `agent_id`, `engine` (`chromium`/`chrome-headless-shell`/`lightpanda`), `provider`.
 
 | Event | Extra fields |
 |---|---|
 | `session.started` | engine_version, scenario, region, startup_ms, connect_ms |
 | `session.ended` | status (`success`/`failed`/`blocked`/`timeout`/`crashed`), reason, duration_ms |
-| `action` | seq, type (`goto`/`click`/`fill`/`extract`/`screenshot`/`wait`/`eval`), target (selector or domain), duration_ms, ok, error_code |
-| `resource.sample` | cpu_pct, mem_mb, net_rx_bytes, net_tx_bytes, js_heap_mb?, origin (`container`/`cdp`) |
+| `action` | seq, action_type (`goto`/`click`/`fill`/`extract`/`screenshot`/`wait`/`eval`), target (selector or domain), duration_ms, ok, error_code |
+| `resource.sample` | origin (`container`/`cdp`), cpu_pct, mem_mb, net_rx_bytes, net_tx_bytes, js_heap_mb? (container samples carry CPU, memory and network; cdp samples carry js_heap_mb; whatever a sample can't measure is `null`) |
 | `network.request` | domain, status, bytes, duration_ms, resource_type (sampled) |
 | `issue` | kind (`blocked`/`captcha`/`crash`/`timeout`/`nav_error`/`unsupported_api`), message |
 | `screenshot` | action_seq, url (stored locally or in object storage; optional) |
@@ -124,8 +124,9 @@ Ingest: `POST /v1/events` accepts batches of up to 1,000 events. The API validat
 
 ## 6. ClickHouse data model
 
-- `sessions`: ReplacingMergeTree, ORDER BY `session_id`. Holds the latest state per session.
-- `actions`, `resource_samples`, `network_requests`, `issues`: MergeTree, PARTITION BY `toDate(ts)`, ORDER BY `(engine, session_id, ts)`, TTL 30 days.
+- `sessions`: ReplacingMergeTree, ORDER BY `session_id`. Holds the latest state per session. PARTITION BY `toDate(started_at)`, TTL 30 days, like the raw tables.
+- `actions`, `resource_samples`, `network_requests`, `issues`: MergeTree, PARTITION BY `toDate(ts)`, ORDER BY `(engine, session_id, ts)`, TTL 30 days. `ts` is `DateTime64(3, 'UTC')`; inserts send it as a `YYYY-MM-DD HH:MM:SS.mmm` string, because ClickHouse reads an integer as seconds.
+- `screenshot` events have no table yet; it is added with the screenshots feature (the first thing cut if behind).
 - `fleet_minute`: AggregatingMergeTree, filled by a materialized view. Per minute and engine it keeps: active sessions, action count, `quantileState(0.5/0.95)` of action latency, error counts, CPU and memory sums. TTL 1 year. The Overview charts read from this table, not from raw rows.
 - Cost is computed in queries from a pricing config: $/browser-hour per engine/provider, $/GB bandwidth, and $/1M LLM tokens (optional).
 
@@ -137,7 +138,7 @@ Global layout: left sidebar navigation; a top bar with a time range picker (15m/
 
 1. **Overview `/`**: KPI cards (active sessions now, sessions in range, success rate, p95 action latency, CPU cores in use, memory GB, estimated cost); live charts (active sessions, actions/min, error rate); a breakdown by engine; a "recent failures" list that links into sessions.
 2. **Sessions `/sessions`**: a filterable, sortable table (status, engine, agent, scenario, duration, peak memory, cost) with a small memory sparkline per row.
-3. **Session detail `/sessions/[id]`**: a header (status, engine, duration, cost); an **action waterfall** (Gantt timeline); CPU and memory charts on the same time axis; network and issues tabs; screenshots; an "Explain this session" button (Claude Haiku summarizes what happened and the likely cause).
+3. **Session detail `/sessions/[id]`**: a header (status, engine, duration, cost); an **action waterfall** (Gantt timeline); CPU and memory charts on the same time axis; an always-visible issues side panel and a network tab (see `design/DESIGN.md`); screenshots; an "Explain this session" button (Claude Haiku summarizes what happened and the likely cause).
 4. **Browsers `/browsers`**: engines side by side: startup time, memory per session, p95 action latency, success rate, cost per 1k sessions, and a per-scenario compatibility matrix (where Lightpanda fails and Chrome succeeds).
 5. **Usage and cost `/usage`**: browser-hours, bandwidth and cost over time, broken down by engine, agent and scenario.
 6. **Insights `/insights`**: problems found by SQL rules, each with severity and a link to the affected sessions:
@@ -241,7 +242,7 @@ Design versions with critiques and `changes.md`, the lead's round notes, `design
 3. In Claude Code (opened in the repo folder), install the skills. In each install panel choose **project** scope, so the choice is saved in `.claude/settings.json` and committed:
    - UI/UX Pro Max: `/plugin marketplace add nextlevelbuilder/ui-ux-pro-max-skill`, then `/plugin install ui-ux-pro-max@ui-ux-pro-max-skill`
    - Taste: `/plugin marketplace add Leonxlnx/taste-skill`, then `/plugin install taste-skill@taste-skill`
-   - Superpowers: `/plugin marketplace add obra/superpowers-marketplace`, then `/plugin install superpowers@superpowers-marketplace`
+   - Superpowers: `/plugin marketplace add obra/superpowers-marketplace`, then `/plugin install superpowers@claude-plugins-official` (the ID that ended up in `.claude/settings.json`)
    - Run `/reload-plugins`, check that all three appear in `/plugin`, then ask Claude "which subagents are available to you?" and check that all 8 agents are listed.
    - Read each SKILL.md before installing; third-party skills can contain hidden instructions.
 4. Accounts for later milestones: Vercel, Railway or Fly, ClickHouse Cloud (trial), Sentry, PostHog, an Anthropic API key.

@@ -1,0 +1,31 @@
+{
+  "name": "fleetscope",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Observability for AI browser fleets",
+  "type": "module",
+  "packageManager": "pnpm@12.15.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "turbo run dev --filter=@fleetscope/web --filter=@fleetscope/api",
+    "build": "turbo run build",
+    "lint": "turbo run lint //#lint:root",
+    "lint:root": "biome check --config-path=biome.root.json .",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "test:integration": "turbo run test:integration",
+    "format": "biome check --write .",
+    "infra:up": "docker compose --project-directory . -f infra/docker-compose.yml up -d --wait",
+    "infra:down": "docker compose --project-directory . -f infra/docker-compose.yml down",
+    "db:migrate": "pnpm --filter @fleetscope/db migrate",
+    "db:seed": "pnpm --filter @fleetscope/db seed"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.6.2",
+    "turbo": "^2.11.10",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  }
+}

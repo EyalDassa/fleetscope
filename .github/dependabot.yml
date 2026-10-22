@@ -1,0 +1,31 @@
+version: 2
+updates:
+  - package-ecosystem: npm # also handles pnpm workspaces and pnpm-lock.yaml
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3 # skip brand-new releases, same idea as pnpm's minimumReleaseAge
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(ci)"
+
+  - package-ecosystem: docker-compose # watches infra/docker-compose.yml (the `docker` ecosystem only reads Dockerfiles)
+    directory: /infra
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(infra)"

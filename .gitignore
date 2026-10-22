@@ -1,0 +1,38 @@
+# dependencies
+node_modules/
+
+# build output and caches
+.turbo/
+.next/
+dist/
+out/
+build/
+coverage/
+*.tsbuildinfo
+next-env.d.ts
+
+# environment: every .env* file is ignored, only the template is committed
+.env*
+!.env.example
+
+# Playwright
+playwright-report/
+test-results/
+blob-report/
+playwright/.cache/
+
+# local data and logs
+*.log
+.vercel/
+infra/.data/
+
+# Node falls back to a folder literally named "undefined" (undefined/temp) as its temp dir when
+# TEMP/TMP/SystemRoot are unset (stripped env on Windows). tsx then writes its cache there.
+**/undefined/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json

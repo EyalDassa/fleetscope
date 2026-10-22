@@ -1,0 +1,560 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Session ses_7f3a91c2 - Fleetscope (Taste v1)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<script>
+  (function(){var q=new URLSearchParams(location.search).get('theme');var s=null;try{s=localStorage.getItem('fs-theme')}catch(e){}
+  document.documentElement.setAttribute('data-theme',q||s||'dark');})();
+</script>
+<style>
+/* ===== tokens (see system.md) ===== */
+:root, :root[data-theme="dark"]{
+  --ground:#0B0B0C; --surface:#121214; --raised:#1A1A1D; --active:#1E1E22;
+  --border:#26262A; --control:#63636A; --grid:#26262A;
+  --text:#F2F2F3; --muted:#B0B0B6; --faint:#8E8E95;
+  --primary:#F2F2F3; --primary-fg:#0B0B0C;
+  --healthy:#3FC07A; --healthy-bg:#12281C;
+  --degraded:#E8A93A; --degraded-bg:#2B2110;
+  --failed:#F4694B; --failed-bg:#2D1912; --failed-line:#5A2D20; --blocked:#A6A6AE; --on-failed:#0B0B0C; --on-bar:#0B0B0C;
+  --eng-chromium:#4C9BE6; --eng-headless:#D98AB8; --eng-lightpanda:#6FD6E6;
+  --pop-shadow:0 8px 24px rgba(0,0,0,.35);
+  --avatar-bg:#26303A; --avatar-fg:#C9D6E2;
+}
+:root[data-theme="light"]{
+  --ground:#F5F5F6; --surface:#FFFFFF; --raised:#EFEFF1; --active:#E9E9EC;
+  --border:#E3E3E7; --control:#8A8A92; --grid:#E6E6EA;
+  --text:#111113; --muted:#55555C; --faint:#67676F;
+  --primary:#111113; --primary-fg:#FFFFFF;
+  --healthy:#17683F; --healthy-bg:#DDF3E6;
+  --degraded:#8A5A00; --degraded-bg:#FBF0D6;
+  --failed:#B8321A; --failed-bg:#FCE5DF; --failed-line:#F0B9AB; --blocked:#3D3D44; --on-failed:#FFFFFF; --on-bar:#111113;
+  --eng-chromium:#1A5FB4; --eng-headless:#B8408A; --eng-lightpanda:#139AB2;
+  --pop-shadow:0 8px 24px rgba(0,0,0,.12);
+  --avatar-bg:#DCE6F0; --avatar-fg:#24384C;
+}
+/* ===== base ===== */
+*{box-sizing:border-box;margin:0;padding:0}
+html{color-scheme:dark}
+html[data-theme="light"]{color-scheme:light}
+body{font:400 13px/20px "IBM Plex Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--ground);color:var(--text);-webkit-font-smoothing:antialiased}
+a{color:inherit;text-decoration:none}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+:focus-visible{outline:2px solid var(--text);outline-offset:2px;border-radius:4px}
+.tn,td,.kpi .v,.badge,.chip{font-variant-numeric:tabular-nums}
+.mono{font-family:"IBM Plex Mono",ui-monospace,Consolas,monospace;font-size:12px;line-height:16px}
+.i{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}
+.mk{width:10px;height:10px;flex:none;fill:currentColor}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.e-chromium{--c:var(--eng-chromium);color:var(--eng-chromium)}
+.e-headless{--c:var(--eng-headless);color:var(--eng-headless)}
+.e-lightpanda{--c:var(--eng-lightpanda);color:var(--eng-lightpanda)}
+.ink{color:var(--text)}
+
+/* ===== shell (same as Overview) ===== */
+.app{display:grid;grid-template-columns:232px minmax(0,1fr);min-height:100vh}
+.side{position:sticky;top:0;height:100vh;display:flex;flex-direction:column;padding:12px 8px;border-right:1px solid var(--border);overflow:hidden}
+.brand{display:flex;align-items:center;gap:8px;padding:2px 8px 12px;font-size:15px;font-weight:600;letter-spacing:-.01em}
+.brand svg{width:22px;height:22px;flex:none}
+.scope{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;padding:6px 8px;margin-bottom:10px;text-align:left;background:var(--surface);border:1px solid var(--border);border-radius:6px}
+.scope:hover{background:var(--raised)}
+.scope b{display:block;font-weight:500;font-size:13px;line-height:16px}
+.scope small{display:block;color:var(--muted);font-size:12px;line-height:16px}
+.nav a{display:flex;align-items:center;gap:10px;height:32px;margin-bottom:2px;padding:0 8px;border-radius:6px;color:var(--muted)}
+.nav a:hover{background:var(--raised);color:var(--text)}
+.nav a[aria-current="page"]{background:var(--active);color:var(--text);font-weight:500}
+.nav .count{margin-left:auto;font-size:11px;color:var(--muted)}
+.grp{padding:16px 8px 4px;font-size:12px;line-height:16px;color:var(--faint)}
+.side-bottom{margin-top:auto;display:flex;flex-direction:column;gap:2px}
+.live{display:flex;align-items:center;gap:8px;padding:6px 8px;font-size:12px;line-height:16px;color:var(--muted)}
+.live b{color:var(--text);font-weight:500;display:block}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--healthy);flex:none}
+.user{display:flex;align-items:center;gap:8px;padding:6px 8px;border-top:1px solid var(--border);margin-top:6px;padding-top:10px}
+.avatar{width:24px;height:24px;border-radius:50%;background:var(--avatar-bg);color:var(--avatar-fg);display:grid;place-items:center;font-size:11px;font-weight:600;flex:none}
+.user small{display:block;color:var(--muted);font-size:12px;line-height:14px}
+
+.top{position:sticky;top:0;z-index:20;min-height:48px;display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:6px 24px;background:var(--ground);border-bottom:1px solid var(--border)}
+.crumb{display:flex;align-items:center;gap:8px;color:var(--muted)}
+.crumb a:hover{color:var(--text);text-decoration:underline;text-underline-offset:3px}
+.crumb .cur{color:var(--text)}
+.btn{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;font-size:12.5px;white-space:nowrap;background:var(--surface);border:1px solid var(--control);border-radius:6px}
+.btn:hover{background:var(--raised)}
+.btn.primary{background:var(--primary);color:var(--primary-fg);border-color:var(--primary);font-weight:500}
+.btn.primary:hover{opacity:.9;background:var(--primary)}
+.btn.icon{width:28px;padding:0;justify-content:center}
+.search{display:flex;align-items:center;gap:8px;flex:1 1 220px;min-width:180px;max-width:300px;height:28px;margin-left:auto;padding:0 6px 0 8px;text-align:left;color:var(--faint);background:var(--surface);border:1px solid var(--control);border-radius:6px}
+.search:hover{background:var(--raised)}
+.kbd{margin-left:auto;padding:0 5px;font:500 11px/16px "IBM Plex Sans",sans-serif;color:var(--muted);background:var(--raised);border:1px solid var(--border);border-radius:4px}
+.theme .sun{display:none}
+html[data-theme="light"] .theme .sun{display:block}
+html[data-theme="light"] .theme .moon{display:none}
+.canvas{padding:20px 24px 40px;max-width:1480px}
+
+/* ===== shared parts ===== */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:8px}
+.badge{display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 6px;border:1px solid transparent;border-radius:4px;font-size:12px;line-height:18px;font-weight:500;white-space:nowrap;flex:none}
+.badge .i{width:14px;height:14px}
+.badge.lg{height:24px;padding:0 8px;font-size:13px}
+.badge.lg .i{width:16px;height:16px}
+.b-healthy{background:var(--healthy-bg);color:var(--healthy)}
+.b-degraded{background:var(--degraded-bg);color:var(--degraded)}
+.b-failed{background:var(--failed-bg);color:var(--failed)}
+.b-blocked{color:var(--blocked);border-color:var(--blocked)}
+.chip{display:inline-flex;align-items:center;height:18px;padding:0 6px;font-size:11px;line-height:16px;font-weight:500;border:1px solid var(--control);border-radius:4px;flex:none}
+.chip.real{color:var(--muted)}
+.chip.sim{color:var(--text);border-style:dashed}
+.eng{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.eng span.n{color:var(--text)}
+.link:hover{text-decoration:underline;text-underline-offset:3px}
+
+/* ===== session header ===== */
+.titlerow{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:12px}
+.idrow{display:flex;align-items:center;gap:10px}
+h1{font:600 20px/26px "IBM Plex Mono",ui-monospace,Consolas,monospace;letter-spacing:-.01em}
+.chips{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;margin-top:6px;font-size:12px;color:var(--muted)}
+.chips .sep{color:var(--faint)}
+.acts{display:flex;align-items:center;gap:8px}
+.find{display:flex;align-items:flex-start;gap:12px;padding:12px 16px;margin-bottom:12px;background:var(--failed-bg);border-color:var(--failed-line)}
+.find > .i{width:20px;height:20px;margin-top:0;color:var(--failed)}
+.find p{flex:1;color:var(--muted);max-width:110ch}
+.find p b{color:var(--text);font-weight:500}
+.find p code{font:500 12px "IBM Plex Mono",ui-monospace,Consolas,monospace;color:var(--text)}
+.find .go{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;color:var(--text)}
+.find .go:hover{text-decoration:underline;text-underline-offset:3px}
+
+.kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));overflow:hidden}
+.kpi{display:flex;flex-direction:column;gap:2px;padding:12px 14px;border-left:1px solid var(--border);min-width:0}
+.kpi:first-child{border-left:0}
+.kpi .l{font-size:12px;line-height:16px;color:var(--muted);white-space:nowrap}
+.kpi .v{font-size:22px;line-height:28px;font-weight:500;white-space:nowrap}
+.kpi .v small{margin-left:3px;font-size:12px;font-weight:400;color:var(--muted)}
+.kpi .d{font-size:12px;line-height:16px;color:var(--muted)}
+.d.bad{color:var(--failed)}
+
+.sg{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:12px;margin-top:12px;align-items:start}
+.tabs{display:flex;gap:20px;margin-bottom:12px;border-bottom:1px solid var(--border)}
+.tabs a{margin-bottom:-1px;padding:6px 0 8px;color:var(--muted);border-bottom:2px solid transparent}
+.tabs a:hover{color:var(--text)}
+.tabs a[aria-selected="true"]{color:var(--text);font-weight:500;border-bottom-color:var(--text)}
+.tabs small{margin-left:5px;font-size:12px;color:var(--faint)}
+
+/* ===== timeline (waterfall + resources share one x axis) ===== */
+.tl{--lab:260px;--c:var(--eng-lightpanda);overflow:hidden}
+.tl-h{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:12px 16px 8px}
+.tl-h h2{font-size:14px;line-height:20px;font-weight:600}
+.tl-h .m{display:flex;align-items:center;gap:14px;font-size:12px;color:var(--muted)}
+.lg-i{display:inline-flex;align-items:center;gap:6px}
+.sw{display:inline-block;width:14px;height:8px;border-radius:2px;background:var(--c);flex:none}
+.sw.f{background:var(--failed)} .sw.ph{background:var(--faint)}
+.sw.sp{background:var(--failed);opacity:.25}
+.tl-body{position:relative;padding-right:16px;padding-bottom:8px}
+.ov,.ov2{position:absolute;top:40px;bottom:0;left:var(--lab);right:16px;pointer-events:none}
+.ov{z-index:0}
+.ov2{z-index:3}
+.ov i{position:absolute;top:0;bottom:0;width:1px;background:var(--grid)}
+.ov .span{position:absolute;top:0;bottom:0;background:var(--failed);opacity:.08}
+.ov .endl{position:absolute;top:0;bottom:0;width:0;border-left:1px dashed var(--faint)}
+.ov2 .issue{position:absolute;top:0;bottom:0;width:1px;background:var(--failed)}
+.ov2 .cross{position:absolute;top:0;bottom:0;width:1px;background:var(--muted);display:none}
+.row{position:relative;z-index:1;display:grid;grid-template-columns:var(--lab) minmax(0,1fr);align-items:center;height:28px}
+.row .lb{display:flex;align-items:center;gap:6px;min-width:0;height:100%;padding-left:16px;font-size:12.5px}
+.row:hover .lb{background:var(--raised)}
+.row .pl{position:relative;height:100%}
+.axis{height:40px;align-items:stretch}
+.axis .lb{align-items:flex-end;padding-bottom:3px;color:var(--faint);font-size:11px}
+.axis .lb:hover{background:none}
+.axis .tk{position:absolute;bottom:3px;transform:translateX(-50%);font-size:11px;line-height:14px;color:var(--faint);font-variant-numeric:tabular-nums;white-space:nowrap}
+.axis .ev{position:absolute;top:3px;display:flex;align-items:center;gap:4px;font-size:11px;line-height:14px;font-weight:500;white-space:nowrap;color:var(--failed)}
+.axis .ev .i{width:12px;height:12px}
+.seq{width:20px;flex:none;text-align:right;font-size:12px;color:var(--faint);font-variant-numeric:tabular-nums}
+.ty{width:66px;flex:none;color:var(--muted)}
+.tg{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fx{flex:none;margin-right:8px;display:flex}
+.fx .i{width:14px;height:14px}
+.row.fail .seq,.row.fail .ty{color:var(--failed)}
+.row.fail .tg{font-weight:500}
+.bar2{position:absolute;top:7px;height:14px;min-width:3px;border-radius:2px;background:var(--c)}
+.bar2.ph{background:var(--faint)}
+.bar2.f{background:var(--failed)}
+.bin{position:absolute;left:0;right:0;top:0;bottom:0;display:flex;align-items:center;padding:0 6px;font-size:11px;font-weight:500;line-height:14px;white-space:nowrap;overflow:hidden;color:var(--on-bar);font-variant-numeric:tabular-nums}
+.bar2.f .bin{color:var(--on-failed)}
+.dl{position:absolute;top:6px;font-size:12px;line-height:16px;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
+.sect{position:relative;z-index:1;height:24px;display:flex;align-items:flex-end;padding:0 0 3px 16px;font-size:12px;line-height:16px;color:var(--faint)}
+.rrow{height:84px;align-items:stretch}
+.rrow .lb{position:relative;flex-direction:column;align-items:flex-start;justify-content:flex-start;gap:0;padding-top:8px}
+.rrow .lb b{font-weight:500;font-size:13px;line-height:18px}
+.rrow .lb span{font-size:12px;line-height:16px;color:var(--muted)}
+.rrow .tickl{font-style:normal;position:absolute;right:8px;font-size:11px;line-height:14px;color:var(--faint);font-variant-numeric:tabular-nums}
+.rrow svg{display:block}
+.rs-grid{stroke:var(--grid);stroke-width:1}
+.rs-base{stroke:var(--faint);stroke-width:1}
+.rs-ln{fill:none;stroke:var(--c);stroke-width:2;stroke-linejoin:round}
+.rs-dot{fill:var(--c);stroke:var(--surface);stroke-width:1.5}
+.nrow{height:40px}
+.na{position:absolute;left:0;right:0;top:5px;bottom:5px;display:flex;align-items:center;padding:0 10px;font-size:12px;color:var(--muted);border:1px dashed var(--control);border-radius:4px}
+.tip{position:absolute;top:44px;z-index:6;display:none;pointer-events:none;padding:6px 8px;font-size:12px;line-height:16px;white-space:nowrap;background:var(--raised);border:1px solid var(--control);border-radius:6px;box-shadow:var(--pop-shadow)}
+.tip b{display:block;font-weight:600;margin-bottom:2px}
+.tip .r{display:flex;gap:14px;color:var(--muted)}
+.tip .r span:last-child{margin-left:auto;color:var(--text);font-weight:500}
+
+/* ===== right rail ===== */
+.rail{display:flex;flex-direction:column;gap:12px}
+.rc-h{display:flex;align-items:baseline;justify-content:space-between;padding:12px 16px 8px}
+.rc-h h2{font-size:14px;line-height:20px;font-weight:600}
+.rc-h .m{font-size:12px;color:var(--muted)}
+.iss{padding:12px 16px;border-top:1px solid var(--border)}
+.iss .t{display:flex;align-items:center;gap:8px}
+.iss .t .when{margin-left:auto;font-size:12px;color:var(--muted)}
+.iss .msg{margin:8px 0;padding:6px 8px;background:var(--raised);border-radius:4px;word-break:break-word}
+.iss p{color:var(--muted);font-size:12.5px;line-height:18px}
+.iss p b{color:var(--text);font-weight:500}
+.iss .lk{display:flex;flex-direction:column;gap:2px;margin-top:8px;font-size:12.5px}
+.iss .lk a{display:inline-flex;align-items:center;gap:6px}
+.iss .lk a:hover{text-decoration:underline;text-underline-offset:3px}
+.iss .cause{display:inline-flex;align-items:center;gap:4px;margin-top:6px;font-size:12px;color:var(--muted)}
+dl.kv{display:grid;grid-template-columns:auto 1fr;gap:0 16px;padding:0 16px 8px}
+dl.kv dt,dl.kv dd{padding:5px 0;border-top:1px solid var(--border);font-size:12.5px;line-height:18px}
+dl.kv dt{color:var(--muted)}
+dl.kv dd{text-align:right;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ===== command palette ===== */
+dialog{margin:12vh auto 0;width:min(560px,92vw);padding:0;color:var(--text);background:var(--raised);border:1px solid var(--control);border-radius:8px;box-shadow:var(--pop-shadow)}
+dialog::backdrop{background:rgba(0,0,0,.5)}
+.cmd-in{display:flex;align-items:center;gap:8px;height:44px;padding:0 14px;border-bottom:1px solid var(--border);color:var(--faint)}
+.cmd-in input{flex:1;font:inherit;font-size:14px;color:var(--text);background:none;border:0;outline:0}
+.cmd-in input::placeholder{color:var(--faint)}
+.cmd-g{padding:6px}
+.cmd-g h3{padding:6px 8px 2px;font-size:12px;line-height:16px;font-weight:400;color:var(--faint)}
+.cmd-g a{display:flex;align-items:center;gap:8px;height:36px;padding:0 8px;border-radius:4px}
+.cmd-g a:hover,.cmd-g a.on{background:var(--active)}
+.cmd-g a .r{margin-left:auto;font-size:12px;color:var(--muted)}
+
+/* ===== narrow (1024) ===== */
+@media (max-width:1100px){
+  .app{grid-template-columns:56px minmax(0,1fr)}
+  .side .lbl,.side .grp,.side .scope,.brand span,.live .t,.user .t,.nav .count{display:none}
+  .brand,.nav a,.live,.user{justify-content:center;padding-left:0;padding-right:0}
+  .top{padding:6px 16px}
+  .canvas{padding:16px 16px 32px}
+  .kpis{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .kpi:nth-child(4){border-left:0}
+  .kpi:nth-child(n+4){border-top:1px solid var(--border)}
+  .sg{grid-template-columns:minmax(0,1fr)}
+  .rail{order:-1;display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);align-items:start}
+  .titlerow{flex-wrap:wrap}
+}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="m-circle" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4.2"/></symbol>
+    <symbol id="m-square" viewBox="0 0 10 10"><rect x="1" y="1" width="8" height="8"/></symbol>
+    <symbol id="m-diamond" viewBox="0 0 10 10"><path d="M5 .3 9.7 5 5 9.7.3 5z"/></symbol>
+    <symbol id="i-dash" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></symbol>
+    <symbol id="i-bars" viewBox="0 0 24 24"><path d="M4 20V11M10 20V4M16 20v-6M22 20H2"/></symbol>
+    <symbol id="i-bulb" viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-4 10.5c.8.8 1 1.5 1 2.5h6c0-1 .2-1.7 1-2.5A6 6 0 0 0 12 3z"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><path d="M4 6h9M19 6h1M4 12h3M13 12h7M4 18h11M21 18h-1"/><circle cx="16" cy="6" r="2.5"/><circle cx="10" cy="12" r="2.5"/><circle cx="18" cy="18" r="2.5"/></symbol>
+    <symbol id="i-bookmark" viewBox="0 0 24 24"><path d="M6 3h12v18l-6-4-6 4z"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></symbol>
+    <symbol id="i-updown" viewBox="0 0 24 24"><path d="m7 15 5 5 5-5M7 9l5-5 5 5"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m15 9-6 6M9 9l6 6"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/></symbol>
+    <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.7 2.3L22 19l-2.3.7L19 22l-.7-2.3L16 19l2.3-.7z"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></symbol>
+  </defs>
+</svg>
+
+<div class="app">
+  <aside class="side" aria-label="Primary">
+    <div class="brand">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="2.6" fill="currentColor"/><path d="M12 1.5v4M12 18.5v4M1.5 12h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <span>Fleetscope</span>
+    </div>
+    <button class="scope" aria-label="Switch workspace">
+      <span class="lbl"><b>Kestrel Labs</b><small>production, eu-west</small></span>
+      <svg class="i lbl"><use href="#i-updown"/></svg>
+    </button>
+    <nav class="nav" aria-label="Pages">
+      <a href="overview.html" title="Overview"><svg class="i"><use href="#i-dash"/></svg><span class="lbl">Overview</span></a>
+      <a href="#" aria-current="page" title="Sessions"><svg class="i"><use href="#i-list"/></svg><span class="lbl">Sessions</span></a>
+      <a href="#" title="Browsers"><svg class="i"><use href="#i-globe"/></svg><span class="lbl">Browsers</span></a>
+      <a href="#" title="Usage and cost"><svg class="i"><use href="#i-bars"/></svg><span class="lbl">Usage and cost</span></a>
+      <a href="#" title="Insights"><svg class="i"><use href="#i-bulb"/></svg><span class="lbl">Insights</span><span class="count" aria-label="4 open findings">4 open</span></a>
+    </nav>
+    <div class="grp">Saved views</div>
+    <nav class="nav" aria-label="Saved views">
+      <a href="#" title="Lightpanda regressions"><svg class="i"><use href="#i-bookmark"/></svg><span class="lbl">Lightpanda regressions</span></a>
+      <a href="#" title="Real traffic only"><svg class="i"><use href="#i-bookmark"/></svg><span class="lbl">Real traffic only</span></a>
+    </nav>
+    <div class="side-bottom">
+      <div class="live" title="Collector connected, last event 0.8 s ago">
+        <span class="dot" aria-hidden="true"></span>
+        <span class="t"><b>Collector live</b>last event 0.8 s ago</span>
+      </div>
+      <nav class="nav" aria-label="Utility"><a href="#" title="Settings"><svg class="i"><use href="#i-gear"/></svg><span class="lbl">Settings</span></a></nav>
+      <div class="user">
+        <span class="avatar" aria-hidden="true">ED</span>
+        <span class="t"><span class="ink">Eyal D.</span><small>Owner</small></span>
+      </div>
+    </div>
+  </aside>
+
+  <div class="main">
+    <!-- session pages are their own scope: global time/engine/source filters are hidden, search + theme stay -->
+    <header class="top">
+      <nav class="crumb" aria-label="Breadcrumb"><a href="#">Sessions</a><span aria-hidden="true">/</span><span class="cur mono">ses_7f3a91c2</span></nav>
+      <button class="search" id="open-cmd" aria-label="Search sessions, pages and saved views (Command K)">
+        <svg class="i"><use href="#i-search"/></svg><span>Search sessions, pages, views</span><span class="kbd">&#8984;K</span>
+      </button>
+      <button class="btn icon theme" id="theme" aria-label="Toggle light and dark theme" title="Toggle theme">
+        <svg class="i sun"><use href="#i-sun"/></svg><svg class="i moon"><use href="#i-moon"/></svg>
+      </button>
+    </header>
+
+    <main class="canvas">
+      <div class="titlerow">
+        <div>
+          <div class="idrow">
+            <h1>ses_7f3a91c2</h1>
+            <button class="btn icon" aria-label="Copy session id"><svg class="i"><use href="#i-copy"/></svg></button>
+            <span class="badge lg b-failed"><svg class="i"><use href="#i-x"/></svg>Failed</span>
+          </div>
+          <div class="chips">
+            <span class="eng e-lightpanda"><svg class="mk"><use href="#m-diamond"/></svg><span class="n">Lightpanda</span> v0.2.9</span>
+            <span class="chip real">real</span>
+            <span class="sep">/</span><span>checkout-form</span>
+            <span class="sep">/</span><span>agent-checkout-07</span>
+            <span class="sep">/</span><span>eu-west-1</span>
+            <span class="sep">/</span><span class="tn">2026-10-22 14:34:02 UTC</span>
+          </div>
+        </div>
+        <div class="acts">
+          <button class="btn"><svg class="i"><use href="#i-link"/></svg>Copy link</button>
+          <button class="btn primary"><svg class="i"><use href="#i-spark"/></svg>Explain this session</button>
+        </div>
+      </div>
+
+      <section class="card find" aria-label="Why it failed">
+        <svg class="i"><use href="#i-x"/></svg>
+        <p><b>Lightpanda v0.2.9 does not implement <code>IntersectionObserver</code>.</b> checkout.js:214 threw at +5.74 s, so the click on <code>button#place-order</code> waited 8.0 s and timed out. The same scenario passes on Chromium in 97.2% of runs over 24 h (211 of 217).</p>
+        <a class="go" href="#">Compare engines <svg class="i"><use href="#i-arrow"/></svg></a>
+      </section>
+
+      <section class="card kpis" aria-label="Session figures">
+        <div class="kpi"><span class="l">Duration</span><span class="v tn">14.1<small>s</small></span><span class="d bad">ended by action_timeout</span></div>
+        <div class="kpi"><span class="l">Actions</span><span class="v tn">11</span><span class="d">10 ok, 1 failed</span></div>
+        <div class="kpi"><span class="l">Startup</span><span class="v tn">118<small>ms</small></span><span class="d">connect 41 ms</span></div>
+        <div class="kpi"><span class="l">Peak CPU</span><span class="v tn">64<small>%</small></span><span class="d">at 4 s, container</span></div>
+        <div class="kpi"><span class="l">Peak memory</span><span class="v tn">71<small>MB</small></span><span class="d">at 6 s, JS heap not available</span></div>
+        <div class="kpi"><span class="l">Cost</span><span class="v tn">$0.0002</span><span class="d">23 requests, 1.2 MB</span></div>
+      </section>
+
+      <div class="sg">
+        <div class="mainc">
+          <div class="tabs" role="tablist" aria-label="Session views">
+            <a href="#" role="tab" aria-selected="true">Timeline</a>
+            <a href="#" role="tab" aria-selected="false">Network<small class="tn">23</small></a>
+            <a href="#" role="tab" aria-selected="false">Screenshots<small class="tn">3</small></a>
+            <a href="#" role="tab" aria-selected="false">Raw events<small class="tn">49</small></a>
+          </div>
+
+          <section class="card tl" aria-label="Action waterfall with CPU and memory">
+            <div class="tl-h">
+              <h2>Action waterfall</h2>
+              <span class="m">
+                <span class="lg-i"><i class="sw"></i>Action</span>
+                <span class="lg-i"><i class="sw f"></i>Failed action</span>
+                <span class="lg-i"><i class="sw ph"></i>Browser start</span>
+                <span class="lg-i"><i class="sw sp"></i>Failing span</span>
+              </span>
+            </div>
+            <div class="tl-body" id="tlb"></div>
+          </section>
+        </div>
+
+        <aside class="rail" aria-label="Issues and session facts">
+          <section class="card" aria-label="Issues">
+            <div class="rc-h"><h2>Issues</h2><span class="m tn">2 on this session</span></div>
+            <article class="iss">
+              <div class="t"><span class="badge b-failed"><svg class="i"><use href="#i-x"/></svg>unsupported_api</span><span class="when tn">+5.74 s, action 10</span></div>
+              <div class="msg mono">ReferenceError: IntersectionObserver is not defined (checkout.js:214)</div>
+              <p>Lightpanda v0.2.9 has no <b>IntersectionObserver</b>. On <span class="mono">checkout-form</span> over 24 h: Chromium 97.2% success (211 of 217), Lightpanda 41.0% (59 of 144).</p>
+              <div class="lk">
+                <a class="link" href="#">48 sessions with this issue in the last hour <svg class="i"><use href="#i-arrow"/></svg></a>
+                <a class="link" href="#">Compatibility matrix for checkout-form <svg class="i"><use href="#i-arrow"/></svg></a>
+              </div>
+            </article>
+            <article class="iss">
+              <div class="t"><span class="badge b-failed"><svg class="i"><use href="#i-x"/></svg>timeout</span><span class="when tn">+13.72 s, action 10</span></div>
+              <div class="msg mono">click button#place-order did not settle within 8,000 ms</div>
+              <span class="cause"><svg class="i" style="width:14px;height:14px"><use href="#i-arrow"/></svg>Follows from unsupported_api: the handler never ran.</span>
+            </article>
+          </section>
+
+          <section class="card" aria-label="Session facts">
+            <div class="rc-h"><h2>Session</h2><span class="m">source <span class="chip real" style="margin-left:4px">real</span></span></div>
+            <dl class="kv">
+              <dt>Engine</dt><dd><span class="eng e-lightpanda"><svg class="mk"><use href="#m-diamond"/></svg><span class="n">Lightpanda</span></span> v0.2.9</dd>
+              <dt>Scenario</dt><dd>checkout-form</dd>
+              <dt>Agent</dt><dd>agent-checkout-07</dd>
+              <dt>Region</dt><dd>eu-west-1</dd>
+              <dt>Container</dt><dd class="mono">lp-pool-07</dd>
+              <dt>Started</dt><dd class="tn">14:34:02.380 UTC</dd>
+              <dt>Ended</dt><dd class="tn">14:34:16.500 UTC</dd>
+              <dt>Reason</dt><dd class="mono">action_timeout</dd>
+            </dl>
+          </section>
+        </aside>
+      </div>
+    </main>
+  </div>
+</div>
+
+<dialog id="cmdk" aria-label="Command palette">
+  <div class="cmd-in"><svg class="i"><use href="#i-search"/></svg><input type="text" placeholder="Jump to a session id, page or saved view" aria-label="Search"><span class="kbd">esc</span></div>
+  <div class="cmd-g">
+    <h3>Sessions</h3>
+    <a href="#" class="on"><span class="mono">ses_7f3a91c2</span><span class="badge b-failed"><svg class="i"><use href="#i-x"/></svg>Failed</span><span class="r">Lightpanda, checkout-form</span></a>
+    <a href="#"><span class="mono">ses_b20d58e1</span><span class="badge b-failed"><svg class="i"><use href="#i-x"/></svg>Failed</span><span class="r">Lightpanda, checkout-form</span></a>
+    <h3>Pages</h3>
+    <a href="overview.html"><svg class="i"><use href="#i-dash"/></svg>Overview</a>
+    <a href="#"><svg class="i"><use href="#i-globe"/></svg>Browsers</a>
+    <h3>Saved views</h3>
+    <a href="#"><svg class="i"><use href="#i-bookmark"/></svg>Lightpanda regressions</a>
+  </div>
+</dialog>
+
+<script>
+(function(){
+  /* theme + palette */
+  var root=document.documentElement;
+  document.getElementById('theme').addEventListener('click',function(){
+    var n=root.getAttribute('data-theme')==='light'?'dark':'light';
+    root.setAttribute('data-theme',n);try{localStorage.setItem('fs-theme',n)}catch(e){}
+  });
+  var dlg=document.getElementById('cmdk');
+  document.getElementById('open-cmd').addEventListener('click',function(){dlg.showModal()});
+  document.addEventListener('keydown',function(e){
+    if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();dlg.open?dlg.close():dlg.showModal();}
+  });
+  dlg.addEventListener('click',function(e){if(e.target===dlg)dlg.close()});
+
+  /* ---------- session data (events from the schema, relative to session start, ms) ---------- */
+  var D=14400;            // x domain: 0 to 14.4 s, shared by every row below
+  var END=14120;          // session.ended duration_ms
+  var ISSUE=5742;         // issue unsupported_api, during action 10
+  var PH=[{n:'startup',s:0,d:118},{n:'connect',s:118,d:41}];
+  var ACT=[
+    {t:'goto',x:'/login',s:160,d:842},
+    {t:'fill',x:'#email',s:1020,d:38},
+    {t:'fill',x:'#password',s:1070,d:35},
+    {t:'click',x:'button[type=submit]',s:1120,d:410},
+    {t:'goto',x:'/shop',s:1560,d:1260},
+    {t:'extract',x:'.product-card (12)',s:2860,d:310},
+    {t:'click',x:'.product-card:first-child',s:3200,d:120},
+    {t:'goto',x:'/checkout',s:3350,d:2180,slow:1900},
+    {t:'fill',x:'form#shipping',s:5600,d:95},
+    {t:'click',x:'button#place-order',s:5720,d:8000,fail:'timeout'},
+    {t:'screenshot',x:'full page',s:13740,d:320}
+  ];
+  var SMP=[0,2000,4000,6000,8000,10000,12000,14000];     // resource.sample every 2 s (origin: container)
+  var CPU=[22,47,64,31,4,3,3,3];                          // cpu_pct
+  var MEM=[31,44,58,71,71,70,70,69];                      // mem_mb
+  // consistency checks the page text relies on
+  console.assert(ACT.length===11,'11 actions');
+  console.assert(ACT.filter(function(a){return !a.fail}).length===10,'10 ok, 1 failed');
+  console.assert(Math.max.apply(null,CPU)===64&&Math.max.apply(null,MEM)===71,'peaks in KPI strip');
+  console.assert(ACT[9].s+ACT[9].d===13720,'timeout lands at +13.72 s');
+
+  function pct(ms){return (ms/D*100).toFixed(3)+'%'}
+  function fmt(n){return n.toLocaleString('en-US')}
+  function sec(ms,dp){return (ms/1000).toFixed(dp)}
+  var h='';
+  // axis
+  h+='<div class="ov" id="ov"></div><div class="ov2" id="ov2"><div class="issue" style="left:'+pct(ISSUE)+'"></div><div class="cross" id="cross"></div></div>';
+  h+='<div class="row axis"><div class="lb">Elapsed since session start</div><div class="pl">';
+  for(var s=0;s<=14;s+=2){h+='<span class="tk" style="left:'+pct(s*1000)+'">'+(s===0?'0':s+' s')+'</span>'}
+  h+='<span class="ev" style="left:'+pct(ISSUE)+'"><svg class="i"><use href="#i-x"/></svg>unsupported_api</span>';
+  h+='</div></div>';
+  // phases
+  PH.forEach(function(p){
+    h+='<div class="row"><div class="lb"><span class="seq"></span><span class="ty mono">boot</span><span class="tg">'+p.n+'</span></div><div class="pl"><span class="bar2 ph" style="left:'+pct(p.s)+';width:'+(p.d/D*100).toFixed(3)+'%"></span><span class="dl" style="left:calc('+pct(p.s+p.d)+' + 6px)">'+p.d+' ms</span></div></div>';
+  });
+  // actions
+  ACT.forEach(function(a,i){
+    var seq=i+1,w=(a.d/D*100).toFixed(3)+'%',endp=(a.s+a.d)/D*100,inside=a.d>=2000;
+    var cls=a.fail?'row fail':'row';
+    h+='<div class="'+cls+'" id="act-'+seq+'"><div class="lb" title="'+a.t+' '+a.x+'"><span class="seq">'+seq+'</span><span class="ty mono">'+a.t+'</span><span class="tg">'+a.x+'</span>';
+    if(a.fail)h+='<span class="fx" style="color:var(--failed)"><svg class="i"><use href="#i-x"/></svg><span class="sr">failed</span></span>';
+    else if(a.slow)h+='<span class="fx" style="color:var(--degraded)" title="slow: '+fmt(a.d)+' ms against a p95 of '+fmt(a.slow)+' ms"><svg class="i"><use href="#i-alert"/></svg><span class="sr">slow, p95 '+fmt(a.slow)+' ms</span></span>';
+    h+='</div><div class="pl"><span class="bar2'+(a.fail?' f':'')+'" style="left:'+pct(a.s)+';width:'+w+'">';
+    if(a.fail)h+='<span class="bin">'+a.fail+', '+fmt(a.d)+' ms</span>';
+    else if(inside)h+='<span class="bin">'+fmt(a.d)+' ms</span>';
+    h+='</span>';
+    if(!a.fail&&!inside){
+      if(endp>82)h+='<span class="dl" style="right:calc('+(100-a.s/D*100).toFixed(3)+'% + 6px)">'+fmt(a.d)+' ms</span>';
+      else h+='<span class="dl" style="left:calc('+pct(a.s+a.d)+' + 6px)">'+fmt(a.d)+' ms</span>';
+    }
+    h+='</div></div>';
+  });
+  // resources
+  h+='<div class="sect">Resources, sampled every 2 s from the container (origin: container)</div>';
+  h+='<div class="row rrow"><div class="lb"><b>CPU</b><span>peak 64% at 4 s</span><i class="tickl" style="top:1px">100%</i><i class="tickl" style="top:35px">50%</i><i class="tickl" style="top:69px">0</i></div><div class="pl" id="p-cpu"></div></div>';
+  h+='<div class="row rrow"><div class="lb"><b>Memory</b><span>peak 71 MB at 6 s</span><i class="tickl" style="top:1px">80 MB</i><i class="tickl" style="top:35px">40</i><i class="tickl" style="top:69px">0</i></div><div class="pl" id="p-mem"></div></div>';
+  h+='<div class="row nrow"><div class="lb"><b style="font-weight:500">JS heap</b></div><div class="pl"><div class="na">Not available. Lightpanda has no CDP Performance.getMetrics.</div></div></div>';
+  h+='<div class="tip" id="tip"></div>';
+  var body=document.getElementById('tlb');body.innerHTML=h;
+
+  // vertical grid every 2 s, failing span, end-of-session line
+  var ov=document.getElementById('ov'),o='';
+  for(var g=0;g<=14;g+=2){o+='<i style="left:'+pct(g*1000)+'"></i>'}
+  o+='<div class="span" style="left:'+pct(5720)+';width:'+(8000/D*100).toFixed(3)+'%"></div><div class="endl" style="left:'+pct(END)+'"></div>';
+  ov.innerHTML=o;
+
+  // resource charts: same x scale as the rows above (they live in the same plot column)
+  function line(host,vals,max){
+    var W=host.clientWidth,H=84,pt=8,ih=68;
+    function X(ms){return +(ms/D*W).toFixed(1)} function Y(v){return +(pt+ih*(1-v/max)).toFixed(1)}
+    var s='<svg width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'" role="img" aria-label="resource samples">';
+    [0,.5,1].forEach(function(f){var y=+(pt+ih*(1-f)).toFixed(1);s+='<line class="'+(f===0?'rs-base':'rs-grid')+'" x1="0" x2="'+W+'" y1="'+y+'" y2="'+y+'"/>'});
+    var d='';vals.forEach(function(v,i){d+=(i?'L':'M')+X(SMP[i])+','+Y(v)});
+    s+='<path class="rs-ln" d="'+d+'"/>';
+    vals.forEach(function(v,i){s+='<circle class="rs-dot" cx="'+X(SMP[i])+'" cy="'+Y(v)+'" r="3"/>'});
+    host.innerHTML=s+'</svg>';
+  }
+  function drawRes(){line(document.getElementById('p-cpu'),CPU,100);line(document.getElementById('p-mem'),MEM,80)}
+  drawRes();
+  var t=null;new ResizeObserver(function(){clearTimeout(t);t=setTimeout(drawRes,60)}).observe(body);
+  if(document.fonts&&document.fonts.ready)document.fonts.ready.then(drawRes);
+
+  // shared crosshair + tooltip
+  var cross=document.getElementById('cross'),tip=document.getElementById('tip');
+  body.addEventListener('pointermove',function(e){
+    var pl=body.querySelector('.axis .pl').getBoundingClientRect(),br=body.getBoundingClientRect();
+    var x=e.clientX-pl.left;
+    if(x<0||x>pl.width||e.clientY<pl.bottom-1){cross.style.display='none';tip.style.display='none';return}
+    var ms=x/pl.width*D,idx=Math.max(0,Math.min(7,Math.round(ms/2000)));
+    cross.style.display='block';cross.style.left=x+'px';
+    var run=ACT.filter(function(a){return ms>=a.s&&ms<=a.s+a.d}).map(function(a){return a.t+' '+a.x});
+    tip.innerHTML='<b>+'+sec(ms,2)+' s</b><div class="r"><span>Running</span><span>'+(run[0]||'idle')+'</span></div><div class="r"><span>CPU, sample at '+sec(SMP[idx],0)+' s</span><span>'+CPU[idx]+'%</span></div><div class="r"><span>Memory</span><span>'+MEM[idx]+' MB</span></div>';
+    tip.style.display='block';
+    var left=(pl.left-br.left)+x+12;if(left+tip.offsetWidth>br.width-8)left=(pl.left-br.left)+x-tip.offsetWidth-12;
+    tip.style.left=left+'px';
+  });
+  body.addEventListener('pointerleave',function(){cross.style.display='none';tip.style.display='none'});
+})();
+</script>
+</body>
+</html>
