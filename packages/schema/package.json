@@ -1,0 +1,18 @@
+{
+  "name": "@fleetscope/schema",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Fleetscope event schemas (zod): the single source of truth for event shapes",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "lint": "biome check .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "zod": "^4.6.7"
+  }
+}
