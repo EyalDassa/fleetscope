@@ -242,7 +242,7 @@ Design versions with critiques and `changes.md`, the lead's round notes, `design
    - UI/UX Pro Max: `/plugin marketplace add nextlevelbuilder/ui-ux-pro-max-skill`, then `/plugin install ui-ux-pro-max@ui-ux-pro-max-skill`
    - Taste: `/plugin marketplace add Leonxlnx/taste-skill`, then `/plugin install taste-skill@taste-skill`
    - Superpowers: `/plugin marketplace add obra/superpowers-marketplace`, then `/plugin install superpowers@superpowers-marketplace`
-   - Run `/reload-plugins`, check that all three appear in `/plugin`, and run `/agents` to check that all 8 agents are listed.
+   - Run `/reload-plugins`, check that all three appear in `/plugin`, then ask Claude "which subagents are available to you?" and check that all 8 agents are listed.
    - Read each SKILL.md before installing; third-party skills can contain hidden instructions.
 4. Accounts for later milestones: Vercel, Railway or Fly, ClickHouse Cloud (trial), Sentry, PostHog, an Anthropic API key.
 5. First prompt to Claude Code: *"You are the tech lead. Read PLAN.md and CLAUDE.md. Start M0: run the design sprint from section 10 in the background (designer-promax and designer-taste in parallel, then the feedback rounds with design-lead), and at the same time plan the walking skeleton and assign it to the platform and backend engineers. Stop for my approval when the design is ready and when M0 is done."*
