@@ -1,0 +1,18 @@
+import type { CollectedPage } from "@fleetscope/collector";
+import type { Logger } from "pino";
+import type { Rng } from "../rng";
+
+export interface ScenarioContext {
+  /** Demo site as the browser sees it, e.g. `http://host.docker.internal:3100`. No trailing slash. */
+  baseUrl: string;
+  /** Seeded per session: every random choice a scenario makes comes from here. */
+  rng: Rng;
+  logger: Logger;
+}
+
+/**
+ * A scenario is the work an "agent" does in one session. It uses only the collector-wrapped page, so
+ * every step is measured. Throwing ends the session: `BlockedError` becomes `blocked`, a timeout
+ * becomes `timeout`, anything else `failed`. Returning normally is `success`.
+ */
+export type Scenario = (page: CollectedPage, ctx: ScenarioContext) => Promise<void>;

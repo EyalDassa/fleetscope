@@ -31,7 +31,7 @@ export function isMissingApiError(error: { name?: string; message?: string }): b
 }
 
 const CLOSED =
-  /has been closed|target closed|page closed|browser closed|connection closed|has disconnected/i;
+  /has been closed|target closed|page closed|browser closed|connection closed|has disconnected|target crashed|page crashed/i;
 const NAV = /net::ERR_|NS_ERROR_|Navigation failed|interrupted by another navigation/i;
 
 /**

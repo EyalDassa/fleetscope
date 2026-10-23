@@ -12,7 +12,7 @@ import type { IssueKind } from "@fleetscope/schema";
  *  captcha            the page contains [data-testid=captcha]
  *  js_error           the page script threw something other than a missing API
  *  unsupported_api    the page used an API the engine does not have ("X is not defined")
- *  browser_closed     the page, context or browser went away during the action
+ *  browser_closed     the page, context or browser closed, disconnected or crashed during the action
  *  unknown            anything else (the message is in the thrown error)
  */
 export const ERROR_CODES = [

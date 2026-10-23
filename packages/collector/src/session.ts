@@ -55,6 +55,7 @@ export class CollectedSession implements PageSink {
   private seq = 0;
   private failedActionCount = 0;
   private ended = false;
+  private recordedDurationMs: number | null = null;
 
   constructor(
     envelope: Omit<EventEnvelope, "session_id">,
@@ -96,10 +97,17 @@ export class CollectedSession implements PageSink {
     return this.ended;
   }
 
+  /** The `duration_ms` sent with `session.ended`; `null` until the session has ended. */
+  get durationMs(): number | null {
+    return this.recordedDurationMs;
+  }
+
   /** Wraps a Playwright page. Its actions, errors, requests and JS heap are recorded here. */
   async collectPage(page: Page): Promise<CollectedPage> {
     const collected = await CollectedPage.attach(page, this, this.config);
     this.pages.add(collected);
+    // The session may have ended while the heap sampler was starting.
+    if (this.ended) await collected.dispose();
     return collected;
   }
 
@@ -121,15 +129,17 @@ export class CollectedSession implements PageSink {
   async endSession(status: SessionStatus, reason: string | null = null): Promise<void> {
     if (this.ended) return;
     const endedAt = Date.now();
+    const durationMs = wholeMs(endedAt - this.startedAt);
     this.emit(
       "session.ended",
       {
         status,
         reason: reason === null ? null : clip(reason, MAX_TEXT),
-        duration_ms: wholeMs(endedAt - this.startedAt),
+        duration_ms: durationMs,
       },
       endedAt,
     );
+    this.recordedDurationMs = durationMs;
     this.ended = true;
     await Promise.allSettled([...this.pages].map((page) => page.dispose()));
   }

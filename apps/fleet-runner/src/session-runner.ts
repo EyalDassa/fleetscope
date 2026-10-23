@@ -1,0 +1,193 @@
+import { randomUUID } from "node:crypto";
+import type { CollectedSession, Collector } from "@fleetscope/collector";
+import type { Engine, SessionStatus } from "@fleetscope/schema";
+import type { Logger } from "pino";
+import { type Browser, chromium } from "playwright-core";
+import type { RunnerConfig } from "./config";
+import type { BrowserContainer, DockerFleet } from "./docker";
+import { classifyOutcome } from "./outcome";
+import { createRng } from "./rng";
+import { SCENARIOS, type ScenarioName } from "./scenarios";
+import { StatsPoller } from "./stats";
+
+export interface SessionSpec {
+  index: number;
+  engine: Engine;
+  scenario: ScenarioName;
+  /** Seeds the scenario's random choices. */
+  seed: number;
+}
+
+export interface SessionDeps {
+  fleet: DockerFleet;
+  /** The collector for this engine. */
+  collector: Collector;
+  config: RunnerConfig;
+  sessionTimeoutMs: number;
+  logger: Logger;
+  /** Aborted by Ctrl+C. */
+  signal: AbortSignal;
+}
+
+/** `infra_error`: the container or browser never came up, so there is no session to report. */
+export type ResultStatus = SessionStatus | "infra_error";
+
+export interface SessionResult {
+  index: number;
+  sessionId: string;
+  engine: Engine;
+  scenario: ScenarioName;
+  status: ResultStatus;
+  reason: string | null;
+  /** The session's own duration (what `session.ended` carries). 0 for `infra_error`. */
+  durationMs: number;
+  startupMs: number | null;
+  actions: number;
+  failedActions: number;
+  /** Highest container memory reading, `null` if there was none. */
+  peakMemMb: number | null;
+}
+
+const VIEWPORT = { width: 1280, height: 720 };
+const CONNECT_TIMEOUT_MS = 60_000;
+const CLOSE_TIMEOUT_MS = 5000;
+
+/** Runs `promise`, but gives up waiting after `ms`. Never rejects. */
+async function bounded(promise: Promise<unknown> | undefined, ms: number): Promise<void> {
+  if (!promise) return;
+  let timer: NodeJS.Timeout | undefined;
+  await Promise.race([
+    promise.catch(() => undefined),
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, ms);
+    }),
+  ]);
+  clearTimeout(timer);
+}
+
+/**
+ * One session, start to finish:
+ *  1. start a fresh container and wait for the Playwright server (`startup_ms`)
+ *  2. connect to it (`connect_ms`) and tell the collector the session started
+ *  3. poll Docker stats every 2 s while the scenario runs
+ *  4. report the session's status, stop the poller, close the browser, remove the container
+ *
+ * The container is removed whatever happens. If the browser never came up, nothing is reported
+ * (there is no `startup_ms`/`connect_ms` to put in `session.started`) and the result is `infra_error`.
+ */
+export async function runSession(deps: SessionDeps, spec: SessionSpec): Promise<SessionResult> {
+  const sessionId = randomUUID();
+  const log = deps.logger.child({ sessionId, index: spec.index, scenario: spec.scenario });
+  const result: SessionResult = {
+    index: spec.index,
+    sessionId,
+    engine: spec.engine,
+    scenario: spec.scenario,
+    status: "infra_error",
+    reason: null,
+    durationMs: 0,
+    startupMs: null,
+    actions: 0,
+    failedActions: 0,
+    peakMemMb: null,
+  };
+
+  let container: BrowserContainer | undefined;
+  let browser: Browser | undefined;
+  // True once we close the browser ourselves, so its "disconnected" event is not a crash.
+  let closingByUs = false;
+  const closeBrowser = (): Promise<void> | undefined => {
+    closingByUs = true;
+    return browser?.close();
+  };
+
+  // Phase 1: infrastructure. A failure here leaves nothing to report.
+  let connectMs = 0;
+  try {
+    container = await deps.fleet.startBrowser({ sessionId, signal: deps.signal });
+    result.startupMs = Math.round(container.startupMs);
+    const connectStart = performance.now();
+    browser = await chromium.connect(container.wsEndpoint, { timeout: CONNECT_TIMEOUT_MS });
+    connectMs = performance.now() - connectStart;
+    if (deps.signal.aborted) throw new Error("interrupted before the session started");
+  } catch (error) {
+    result.reason = error instanceof Error ? error.message : String(error);
+    log.error({ err: error }, "could not get a browser, session not reported");
+    await bounded(closeBrowser(), CLOSE_TIMEOUT_MS);
+    await bounded(container?.remove(), CLOSE_TIMEOUT_MS * 3);
+    return result;
+  }
+
+  // Phase 2: the session.
+  let disconnected = false;
+  let timedOut = false;
+  browser.on("disconnected", () => {
+    if (!closingByUs) disconnected = true;
+  });
+  const session: CollectedSession = deps.collector.startSession({
+    sessionId,
+    scenario: spec.scenario,
+    region: "local",
+    engineVersion: browser.version(),
+    startupMs: container.startupMs,
+    connectMs,
+  });
+  const poller = new StatsPoller({
+    readStats: container.readStats,
+    onSample: (sample) => session.recordContainerSample(sample),
+    logger: log,
+  });
+  const onAbort = () => void bounded(closeBrowser(), CLOSE_TIMEOUT_MS); // unblocks a running action
+  deps.signal.addEventListener("abort", onAbort, { once: true });
+  const deadline = setTimeout(() => {
+    timedOut = true;
+    void bounded(closeBrowser(), CLOSE_TIMEOUT_MS);
+  }, deps.sessionTimeoutMs);
+
+  let error: unknown;
+  try {
+    poller.start();
+    const context = await browser.newContext({ viewport: VIEWPORT });
+    const page = await session.collectPage(await context.newPage());
+    await SCENARIOS[spec.scenario](page, {
+      baseUrl: deps.config.demoSiteContainerUrl,
+      rng: createRng(spec.seed),
+      logger: log,
+    });
+  } catch (caught) {
+    error = caught ?? new Error("scenario failed");
+  }
+
+  const outcome = classifyOutcome({
+    error,
+    interrupted: deps.signal.aborted,
+    timedOut,
+    sessionTimeoutMs: deps.sessionTimeoutMs,
+    disconnected,
+  });
+
+  clearTimeout(deadline);
+  deps.signal.removeEventListener("abort", onAbort);
+  await poller.stop();
+  await session.endSession(outcome.status, outcome.reason);
+  await bounded(closeBrowser(), CLOSE_TIMEOUT_MS);
+  await bounded(container.remove(), CLOSE_TIMEOUT_MS * 3);
+
+  log.info(
+    { status: outcome.status, reason: outcome.reason, actions: session.actionCount },
+    "session finished",
+  );
+  return {
+    ...result,
+    status: outcome.status,
+    reason: outcome.reason,
+    durationMs: sessionDurationMs(session),
+    actions: session.actionCount,
+    failedActions: session.failedActions,
+    peakMemMb: poller.sampleCount > 0 ? poller.peakMemMb : null,
+  };
+}
+
+function sessionDurationMs(session: CollectedSession): number {
+  return session.durationMs ?? 0;
+}
