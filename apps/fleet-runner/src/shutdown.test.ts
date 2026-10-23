@@ -50,7 +50,12 @@ function fleetThatRemoves(removed = 3, delayMs = 0) {
     if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
     return removed;
   });
-  return { fleet: { removeAllOwned } as unknown as DockerFleet, removeAllOwned };
+  const listOwned = vi.fn(async (_scope?: { runId?: string }) => [] as string[]);
+  return {
+    fleet: { removeAllOwned, listOwned } as unknown as DockerFleet,
+    removeAllOwned,
+    listOwned,
+  };
 }
 
 function maps(collector: Collector, fleet: DockerFleet) {
@@ -152,6 +157,7 @@ describe("forceShutdown (second Ctrl+C)", () => {
         if (sweeps === 3) starting = 0;
         return sweeps === 2 ? 1 : 0;
       }),
+      listOwned: vi.fn(async () => []),
     } as unknown as DockerFleet;
 
     await forceShutdown({ live: new Set(), runId: "r1", logger, ...maps(collector, fleet) });
@@ -160,11 +166,30 @@ describe("forceShutdown (second Ctrl+C)", () => {
     expect(starting).toBe(0);
   });
 
+  it("waits while Docker is still removing this run's containers (they stay listed for a few seconds)", async () => {
+    const { collector } = collectorWith();
+    let lists = 0;
+    const fleet = {
+      starting: 0,
+      removeAllOwned: vi.fn(async () => 0), // "removal already in progress" answers count as nothing removed
+      listOwned: vi.fn(async () => {
+        lists++;
+        return lists < 3 ? ["still-removing"] : [];
+      }),
+    } as unknown as DockerFleet;
+
+    await forceShutdown({ live: new Set(), runId: "r1", logger, ...maps(collector, fleet) });
+
+    expect(lists).toBe(3);
+    expect(fleet.listOwned).toHaveBeenCalledWith({ runId: "r1" });
+  });
+
   it("stops sweeping at the deadline even if containers keep appearing", async () => {
     const { collector } = collectorWith();
     const fleet = {
       starting: 1,
       removeAllOwned: vi.fn(async () => 1),
+      listOwned: vi.fn(async () => []),
     } as unknown as DockerFleet;
     const t0 = Date.now();
     await forceShutdown({
@@ -191,6 +216,7 @@ describe("forceShutdown (second Ctrl+C)", () => {
       removeAllOwned: vi.fn(async () => {
         throw new Error("docker is down");
       }),
+      listOwned: vi.fn(async () => []),
     } as unknown as DockerFleet;
     await expect(
       forceShutdown({ live: new Set(), runId: "r1", logger, ...maps(collector, fleet) }),
