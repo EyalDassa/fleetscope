@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { createCollector } from "@fleetscope/collector";
 import type { FleetEvent } from "@fleetscope/schema";
 import Docker from "dockerode";
@@ -327,6 +328,108 @@ describe.skipIf(!ENABLED)("QA-M1-05: container samples at high concurrency", () 
     );
     expect(without.map((r) => r.session_id)).toEqual([]);
   }, 280_000);
+});
+
+/**
+ * Ctrl+C, driven through the handlers the CLI registers (`process.emit("SIGINT")` inside the real
+ * CLI process, with real containers). A real keypress through pnpm and PowerShell was checked by
+ * hand: see qa/m1-report.md. The OS delivery of the signal is Node's job; what the runner does with
+ * it is tested here.
+ */
+function runWithSignals(
+  signalsAtMs: number[],
+  args: string[],
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  const code = `
+    process.argv = [process.argv[0], "cli.ts", "run", ...JSON.parse(process.env.QA_ARGS)];
+    for (const at of JSON.parse(process.env.QA_SIGNALS)) setTimeout(() => process.emit("SIGINT", "SIGINT"), at);
+    await import(process.env.QA_CLI);
+  `;
+  return new Promise((resolve) => {
+    execFile(
+      process.execPath,
+      ["--import", "tsx", "--input-type=module", "-e", code],
+      {
+        cwd: packageDir,
+        env: {
+          ...process.env,
+          LOG_LEVEL: "warn",
+          QA_ARGS: JSON.stringify(args),
+          QA_SIGNALS: JSON.stringify(signalsAtMs),
+          QA_CLI: pathToFileURL(join(packageDir, "src", "cli.ts")).href,
+        },
+        timeout: 120_000,
+      },
+      (error, stdout, stderr) =>
+        resolve({ code: error ? ((error as { code?: number }).code ?? 1) : 0, stdout, stderr }),
+    );
+  });
+}
+
+describe.skipIf(!ENABLED)("Ctrl+C", () => {
+  const baseArgs = (agent: string) => [
+    "--engines",
+    "chromium",
+    "--sessions",
+    "20",
+    "--concurrency",
+    "4",
+    "--scenario",
+    "heavy-page-crawl",
+    "--seed",
+    "5",
+    "--agent",
+    agent,
+  ];
+
+  async function expectTidy(agent: string) {
+    const rows = await sql<{ status: string; reason: string | null }>(
+      `SELECT status, reason FROM sessions FINAL WHERE agent_id = '${agent}'`,
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.filter((r) => r.status === "running")).toEqual([]); // none left running
+    for (const r of rows.filter((x) => x.status !== "success")) {
+      expect(r.status).toBe("failed");
+      expect(r.reason).toBe("interrupted");
+    }
+    const crashes = await sql(
+      `SELECT kind FROM issues WHERE agent_id = '${agent}' AND kind = 'crash'`,
+    );
+    expect(crashes).toEqual([]); // QA-M1-08 for Ctrl+C: we closed the browser, nothing crashed
+    const left = await new Docker().listContainers({
+      all: true,
+      filters: { label: ["fleetscope.session"] },
+    });
+    expect(left).toEqual([]);
+  }
+
+  it("one Ctrl+C: running sessions end failed/interrupted, the summary is printed, nothing is left, exit 130", async () => {
+    const agent = `qa-e2e-ctrlc1-${stamp}`;
+    const run = await runWithSignals([13_000], baseArgs(agent));
+    expect(run.code).toBe(130);
+    expect(run.stdout).toContain("not started (interrupted)");
+    await waitForSessions(agent, 1);
+    await expectTidy(agent);
+  }, 120_000);
+
+  it("one keypress delivered twice (two signals 150 ms apart) is still ONE interrupt: no 'second interrupt', graceful cleanup", async () => {
+    const agent = `qa-e2e-ctrlc2-${stamp}`;
+    const run = await runWithSignals([13_000, 13_150], baseArgs(agent));
+    expect(run.code).toBe(130);
+    expect(run.stderr + run.stdout).not.toContain("second interrupt");
+    expect(run.stdout).toContain("not started (interrupted)");
+    await waitForSessions(agent, 1);
+    await expectTidy(agent);
+  }, 120_000);
+
+  it("a deliberate second Ctrl+C (2.5 s later) takes the exit-now path: exit 130, nothing left, nothing stays running", async () => {
+    const agent = `qa-e2e-ctrlc3-${stamp}`;
+    const run = await runWithSignals([13_000, 15_500], baseArgs(agent));
+    expect(run.code).toBe(130);
+    expect(run.stderr + run.stdout).toContain("second interrupt");
+    await waitForSessions(agent, 1);
+    await expectTidy(agent);
+  }, 120_000);
 });
 
 describe.skipIf(!ENABLED)("sessions the runner cuts off itself", () => {
