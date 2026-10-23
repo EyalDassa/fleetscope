@@ -15,6 +15,13 @@ export const SCHEMA_VERSION = 1 as const;
 export const MAX_BATCH_SIZE = 1000;
 
 /**
+ * How many days raw events are kept. This is the `TTL toDate(ts) + INTERVAL 30 DAY` of the raw
+ * tables in infra/clickhouse (a db integration test checks that they agree). The API uses it to
+ * refuse events that ClickHouse would delete right after storing them.
+ */
+export const RETENTION_DAYS = 30;
+
+/**
  * The three engines of the fleet (PLAN.md section 3). These slugs are stable: they are stored in
  * ClickHouse and used in URLs and filters.
  *  - `chromium`              Playwright Chromium (the baseline)
@@ -73,9 +80,31 @@ export type IssueKind = z.infer<typeof IssueKind>;
 
 // Small building blocks -------------------------------------------------------------------
 
-const id = z.string().min(1).max(128);
-const label = z.string().min(1).max(128);
-const text = z.string().max(2000);
+/*
+ * Strings. ClickHouse cannot store a lone UTF-16 surrogate (half of an emoji): JSON.stringify
+ * sends it as the escape \ud83d, and the INSERT then fails with CANNOT_PARSE_ESCAPE_SEQUENCE on
+ * every retry. A page can produce one on purpose (`throw new Error("\ud800")`) and cutting a text
+ * by UTF-16 units can leave one by accident. So:
+ *  - free text (labels, targets, messages, urls) is repaired: each lone surrogate becomes U+FFFD,
+ *    the length stays the same, and the event is kept, because text that a page produced should not
+ *    sink a whole batch;
+ *  - ids (session_id, agent_id) are rejected instead, because a changed id would silently split or
+ *    merge sessions.
+ * `toWellFormed` is in Node 20+ and every current browser, but not in the ES2023 lib that
+ * tsconfig.base.json uses, hence the small typed wrapper.
+ */
+type WithWellFormed = { isWellFormed(): boolean; toWellFormed(): string };
+const isWellFormed = (value: string): boolean =>
+  (value as unknown as WithWellFormed).isWellFormed();
+const wellFormed = (value: string): string => (value as unknown as WithWellFormed).toWellFormed();
+
+const id = z
+  .string()
+  .min(1)
+  .max(128)
+  .refine(isWellFormed, { error: "must not contain an unpaired UTF-16 surrogate" });
+const label = z.string().min(1).max(128).transform(wellFormed);
+const text = z.string().max(2000).transform(wellFormed);
 /*
  * Numeric bounds mirror the ClickHouse column types (infra/clickhouse). A value the column cannot
  * hold would be silently wrapped or turned into NULL, so it is rejected here instead.
@@ -119,9 +148,20 @@ export const SessionStartedEvent = z.object({
   engine_version: label.nullable(),
   scenario: label,
   region: label,
-  /** Time to start the browser. */
+  /**
+   * From creating the container until the engine's endpoint answers (the server is ready to take a
+   * client). For a Playwright server (Chromium) no browser exists yet at this point: it is launched
+   * when the client connects, and that time is in `connect_ms`. For an engine that starts its
+   * browser before its endpoint answers (CDP: headless-shell, Lightpanda) the launch is in here.
+   */
   startup_ms: uint32,
-  /** Time to connect the client (CDP / Playwright) to it. */
+  /**
+   * From the client's `connect()` call until it has a usable browser. For a Playwright server this
+   * includes launching the browser; for a CDP engine it is only the connection.
+   *
+   * The two numbers mean different things per engine, so engines are compared on their sum,
+   * `startup_ms + connect_ms`: the time from "no container" to "a browser I can drive".
+   */
   connect_ms: uint32,
 });
 export type SessionStartedEvent = z.infer<typeof SessionStartedEvent>;
@@ -161,6 +201,12 @@ export const ResourceSampleEvent = z
     // container metrics (checked below); a cdp sample may have them null.
     cpu_pct: float32(MAX_CPU_PCT).nullable(),
     mem_mb: float32(MAX_MEMORY_MB).nullable(),
+    /**
+     * Network bytes of the CONTAINER since the previous sample (a delta, so samples can be summed;
+     * the first one counts from container start). It is everything crossing the container's
+     * interface, including the automation channel (Playwright or CDP protocol messages,
+     * screenshots), so it is not the size of the pages. For page bytes use `network.request.bytes`.
+     */
     net_rx_bytes: uint64.nullable(),
     net_tx_bytes: uint64.nullable(),
     /** JS heap size via CDP. `null` when the engine does not support it, absent on container samples. */
@@ -208,7 +254,7 @@ export const ScreenshotEvent = z.object({
   /** The `seq` of the action that took the screenshot. */
   action_seq: uint32,
   /** Where the image is stored (local path or object storage). Optional. */
-  url: z.string().min(1).max(2048).optional(),
+  url: z.string().min(1).max(2048).transform(wellFormed).optional(),
 });
 export type ScreenshotEvent = z.infer<typeof ScreenshotEvent>;
 
