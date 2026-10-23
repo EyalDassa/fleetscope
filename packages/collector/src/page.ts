@@ -1,6 +1,6 @@
 import type { ActionType, IssueKind } from "@fleetscope/schema";
 import type { Logger } from "pino";
-import type { Page, Request } from "playwright-core";
+import type { Page, Request, Response } from "playwright-core";
 import { HeapSampler } from "./cdp";
 import { type ErrorCode, ISSUE_FOR_CODE } from "./codes";
 import {
@@ -10,6 +10,7 @@ import {
   isMissingApiError,
   shortMessage,
 } from "./errors";
+import { clip } from "./text";
 
 /** What a page reports to its session. `CollectedSession` implements it. */
 export interface PageSink {
@@ -68,6 +69,9 @@ export interface GotoOptions extends ActionOptions {
  */
 export class CollectedPage {
   private requestsSeen = 0;
+  /** Main-frame navigation responses seen so far, and the latest one (a click can navigate). */
+  private navigations = 0;
+  private lastNavigation: { index: number; status: number; url: string } | null = null;
   private readonly requestStarts = new WeakMap<Request, number>();
   private readonly heap: HeapSampler | null;
   private readonly detachers: (() => void)[] = [];
@@ -119,8 +123,8 @@ export class CollectedPage {
 
   /**
    * Opens a URL. Returns the HTTP status of the main document (`null` if there was no response).
-   * Throws `BlockedError` on a 403 or a captcha page, `CollectedError("nav_error")` for other
-   * failures and HTTP >= 400.
+   * Throws `BlockedError` on a 403 or a captcha page, `CollectedError("http_5xx")` on a server
+   * error and `CollectedError("nav_error")` for other failures and HTTP 4xx.
    */
   goto(url: string, options: GotoOptions = {}): Promise<number | null> {
     return this.run({ type: "goto", target: domainOf(url) }, async () => {
@@ -129,21 +133,24 @@ export class CollectedPage {
         waitUntil: options.waitUntil ?? "load",
       });
       const status = response?.status() ?? null;
-      if (status === 403) throw new BlockedError("http_403", `HTTP 403 for ${url}`);
-      if (status !== null && status >= 400) {
-        throw new CollectedError("nav_error", `HTTP ${status} for ${url}`);
-      }
+      const bad = status === null ? null : statusError(status, url);
+      if (bad) throw bad;
       await this.throwIfCaptcha();
       return status;
     });
   }
 
-  /** Clicks, then waits for any navigation it started to reach DOMContentLoaded. */
+  /**
+   * Clicks, then waits for any navigation it started to reach DOMContentLoaded. If the click led to
+   * a page that answered 403, 4xx or 5xx, or to a captcha page, the action fails like `goto` does.
+   */
   click(selector: string, options: ActionOptions = {}): Promise<void> {
     const timeout = options.timeoutMs ?? this.config.actionTimeoutMs;
     return this.run({ type: "click", target: selector, selector }, async () => {
+      const before = this.navigations;
       await this.raw.click(selector, { timeout });
       await this.raw.waitForLoadState("domcontentloaded", { timeout }).catch(() => undefined);
+      this.throwIfBadNavigation(before);
       await this.throwIfCaptcha();
     });
   }
@@ -151,9 +158,11 @@ export class CollectedPage {
   /** Types a value into an input. The value is never recorded (it may be a password). */
   fill(selector: string, value: string, options: ActionOptions = {}): Promise<void> {
     const timeout = options.timeoutMs ?? this.config.actionTimeoutMs;
-    return this.run({ type: "fill", target: selector, selector }, () =>
-      this.raw.fill(selector, value, { timeout }),
-    );
+    return this.run({ type: "fill", target: selector, selector }, async () => {
+      const before = this.navigations;
+      await this.raw.fill(selector, value, { timeout });
+      this.throwIfBadNavigation(before);
+    });
   }
 
   /** Number of elements matching the selector. Zero is a valid answer, not an error. */
@@ -253,6 +262,14 @@ export class CollectedPage {
     }
   }
 
+  /** Fails like `goto` would if a navigation during this action ended on an error page. */
+  private throwIfBadNavigation(navigationsBefore: number): void {
+    const latest = this.lastNavigation;
+    if (!latest || latest.index <= navigationsBefore) return;
+    const bad = statusError(latest.status, latest.url);
+    if (bad) throw bad;
+  }
+
   private async throwIfCaptcha(): Promise<void> {
     let present = false;
     try {
@@ -278,9 +295,23 @@ export class CollectedPage {
     on("pageerror", (error: Error) => {
       // Only a missing API is evidence about the engine; other script errors are the page's own.
       if (isMissingApiError(error)) {
-        this.sink.recordIssue("unsupported_api", `${error.name}: ${error.message}`.slice(0, 500), {
+        this.sink.recordIssue("unsupported_api", clip(`${error.name}: ${error.message}`, 500), {
           once: true,
         });
+      }
+    });
+    on("response", (response: Response) => {
+      try {
+        const request = response.request();
+        if (request.isNavigationRequest() && request.frame() === page.mainFrame()) {
+          this.lastNavigation = {
+            index: ++this.navigations,
+            status: response.status(),
+            url: response.url(),
+          };
+        }
+      } catch {
+        // A response with no frame (service worker) or a frame that is already gone: ignore.
       }
     });
     on("crash", () => this.sink.recordIssue("crash", "page crashed", { once: true }));
@@ -334,11 +365,19 @@ export class CollectedPage {
   }
 }
 
+/** What an HTTP status of a page we loaded means for the action: 403 blocked, 5xx server error, other 4xx. */
+function statusError(status: number, url: string): CollectedError | null {
+  if (status === 403) return new BlockedError("http_403", `HTTP 403 for ${url}`);
+  if (status >= 500) return new CollectedError("http_5xx", `HTTP ${status} for ${url}`);
+  if (status >= 400) return new CollectedError("nav_error", `HTTP ${status} for ${url}`);
+  return null;
+}
+
 /** Hostname of a URL, or the input itself (clipped) if it is not an absolute URL. */
 export function domainOf(url: string): string {
   try {
-    return new URL(url).hostname || url.slice(0, 200);
+    return clip(new URL(url).hostname || url, 200);
   } catch {
-    return url.slice(0, 200);
+    return clip(url, 200);
   }
 }

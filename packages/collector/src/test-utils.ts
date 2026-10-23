@@ -95,6 +95,28 @@ export class FakePage extends EventEmitter {
 
   url = () => this.currentUrl;
 
+  /** Statuses of the main-frame navigation responses the next click causes (redirects, then the page). */
+  clickNavigations: number[] = [];
+  private readonly mainFrameObject = { name: "main" };
+  mainFrame = () => this.mainFrameObject;
+
+  /** Emits what Playwright's "response" event would carry. */
+  emitResponse(
+    status: number,
+    url: string,
+    options: { navigation?: boolean; mainFrame?: boolean } = {},
+  ) {
+    const { navigation = true, mainFrame = true } = options;
+    this.emit("response", {
+      status: () => status,
+      url: () => url,
+      request: () => ({
+        isNavigationRequest: () => navigation,
+        frame: () => (mainFrame ? this.mainFrameObject : { name: "child" }),
+      }),
+    });
+  }
+
   goto = async (url: string) => {
     if (this.gotoError) throw this.gotoError;
     this.currentUrl = url;
@@ -102,6 +124,8 @@ export class FakePage extends EventEmitter {
   };
   click = async () => {
     if (this.clickError) throw this.clickError;
+    // A click that navigates: the browser reports the response of every hop, the last one wins.
+    for (const status of this.clickNavigations) this.emitResponse(status, "http://demo.test/next");
   };
   fill = async () => undefined;
   waitForLoadState = async () => undefined;

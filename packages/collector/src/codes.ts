@@ -6,9 +6,10 @@ import type { IssueKind } from "@fleetscope/schema";
  * vocabulary.)
  *
  *  timeout            a Playwright timeout (element found but not ready, or a page that never settles)
- *  nav_error          navigation failed (DNS, connection refused, TLS) or the page answered HTTP >= 400
+ *  nav_error          navigation failed (DNS, connection refused, TLS) or the page answered another HTTP 4xx
  *  selector_not_found the selector matched nothing before the timeout
- *  http_403           the main document answered 403
+ *  http_403           a page the action loaded (a goto, or a click that navigated) answered 403
+ *  http_5xx           ... answered a server error (500 and up)
  *  captcha            the page contains [data-testid=captcha]
  *  js_error           the page script threw something other than a missing API
  *  unsupported_api    the page used an API the engine does not have ("X is not defined")
@@ -20,6 +21,7 @@ export const ERROR_CODES = [
   "nav_error",
   "selector_not_found",
   "http_403",
+  "http_5xx",
   "captcha",
   "js_error",
   "unsupported_api",
@@ -34,6 +36,7 @@ export const ISSUE_FOR_CODE: Readonly<Record<ErrorCode, IssueKind | null>> = {
   nav_error: "nav_error",
   selector_not_found: null,
   http_403: "blocked",
+  http_5xx: "nav_error",
   captcha: "captcha",
   js_error: null,
   unsupported_api: "unsupported_api",

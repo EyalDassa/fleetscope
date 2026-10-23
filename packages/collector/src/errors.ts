@@ -1,5 +1,6 @@
 import type { IssueKind } from "@fleetscope/schema";
 import { type ErrorCode, ISSUE_FOR_CODE } from "./codes";
+import { clip, wellFormed } from "./text";
 
 /** What a failed `CollectedPage` action throws. `code` is also what the action event recorded. */
 export class CollectedError extends Error {
@@ -49,9 +50,13 @@ export function classifyError(error: unknown, fallback: ErrorCode = "unknown"): 
   return fallback;
 }
 
-/** First line of an error message, capped, for `issue.message` (Playwright appends a call log). */
+/**
+ * First line of an error message, capped, for `issue.message` (Playwright appends a call log).
+ * Never cuts through an emoji, and is never empty.
+ */
 export function shortMessage(error: unknown, max = 500): string {
   const message = error instanceof Error ? error.message : String(error);
-  const first = message.split("\n", 1)[0] ?? "";
-  return first.length > max ? `${first.slice(0, max - 1)}…` : first;
+  const first = (message.split("\n", 1)[0] ?? "").trim();
+  if (first === "") return error instanceof Error ? error.name : "unknown error";
+  return first.length > max ? `${clip(first, max - 1)}…` : wellFormed(first);
 }

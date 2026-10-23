@@ -12,6 +12,7 @@ import type { Page } from "playwright-core";
 import type { ErrorCode } from "./codes";
 import { CollectedPage, type PageConfig, type PageSink } from "./page";
 import type { EventQueue } from "./queue";
+import { clip } from "./text";
 
 export interface StartSessionOptions {
   /** Defaults to a fresh UUID. */
@@ -20,24 +21,29 @@ export interface StartSessionOptions {
   region: string;
   /** `null` when the engine does not report a version. */
   engineVersion: string | null;
-  /** Milliseconds from asking for the browser to it being ready. */
+  /** Milliseconds from creating the container until the engine's endpoint answered. */
   startupMs: number;
-  /** Milliseconds to connect the client to it. */
+  /** Milliseconds for the client to connect. For a Playwright server this includes launching the browser. */
   connectMs: number;
 }
 
 /** The numbers the runner takes from Docker for one container, one moment. */
 export interface ContainerSample {
+  /** Percent of one core, so 200 means two cores busy. */
   cpuPct: number;
   memMb: number;
+  /** Bytes received since the previous sample (the first sample counts from container start). */
   netRxBytes: number;
   netTxBytes: number;
+  /**
+   * When Docker took this reading (epoch ms). It becomes the event's `ts`, so a reading handed over
+   * late still says when it was taken. Defaults to now; never earlier than the session start.
+   */
+  readAt?: number;
 }
 
 const MAX_LABEL = 128;
 const MAX_TEXT = 2000;
-const clip = (value: string, max: number): string =>
-  value.length > max ? value.slice(0, max) : value;
 
 /**
  * One browser session. Created by `collector.startSession()`, which has already queued
@@ -56,6 +62,7 @@ export class CollectedSession implements PageSink {
   private failedActionCount = 0;
   private ending = false;
   private ended = false;
+  private shuttingDown = false;
   private recordedDurationMs: number | null = null;
 
   constructor(
@@ -114,18 +121,34 @@ export class CollectedSession implements PageSink {
 
   /** Records one Docker stats reading as a `resource.sample` with `origin: "container"`. */
   recordContainerSample(sample: ContainerSample): void {
-    this.emit("resource.sample", {
-      origin: "container",
-      cpu_pct: sample.cpuPct,
-      mem_mb: sample.memMb,
-      net_rx_bytes: Math.round(sample.netRxBytes),
-      net_tx_bytes: Math.round(sample.netTxBytes),
-    });
+    const takenAt = Math.min(Math.max(sample.readAt ?? Date.now(), this.startedAt), Date.now());
+    this.emit(
+      "resource.sample",
+      {
+        origin: "container",
+        cpu_pct: sample.cpuPct,
+        mem_mb: sample.memMb,
+        net_rx_bytes: Math.round(sample.netRxBytes),
+        net_tx_bytes: Math.round(sample.netTxBytes),
+      },
+      takenAt,
+    );
   }
 
   /**
-   * Queues `session.ended` and closes the session. Duration is measured from `startSession`
-   * (browser startup is reported separately as `startup_ms`). Calling it twice does nothing.
+   * Call this just before the runner closes the browser on purpose (time limit, Ctrl+C, end of the
+   * session). Actions cut off by it still fail with `browser_closed`, but no `crash` issue is
+   * raised: nothing crashed, we closed it.
+   */
+  beginShutdown(): void {
+    this.shuttingDown = true;
+  }
+
+  /**
+   * Queues `session.ended` and closes the session. Duration is measured from `startSession`, so it
+   * does not include `startup_ms` or `connect_ms`, which are reported on `session.started`.
+   * Every ending that is not a success carries a reason (`"no reason recorded"` if the caller gave
+   * none), so "why did it fail" always has an answer. Calling it twice does nothing.
    */
   async endSession(status: SessionStatus, reason: string | null = null): Promise<void> {
     if (this.ending) return;
@@ -138,7 +161,7 @@ export class CollectedSession implements PageSink {
       "session.ended",
       {
         status,
-        reason: reason === null ? null : clip(reason, MAX_TEXT),
+        reason: endReason(status, reason),
         duration_ms: durationMs,
       },
       endedAt,
@@ -180,6 +203,8 @@ export class CollectedSession implements PageSink {
 
   recordIssue(kind: IssueKind, message: string, options: { once?: boolean } = {}): void {
     if (this.ended) return;
+    // We closed the browser ourselves: not a crash (see beginShutdown).
+    if (kind === "crash" && this.shuttingDown) return;
     if (options.once) {
       const key = `${kind}:${message}`;
       if (this.seenOnce.has(key)) return;
@@ -229,6 +254,12 @@ export class CollectedSession implements PageSink {
     }
     this.queue.push(newEvent(type, this.envelope, fields, ts));
   }
+}
+
+function endReason(status: SessionStatus, reason: string | null): string | null {
+  const text = reason?.trim() ?? "";
+  if (text !== "") return clip(text, MAX_TEXT);
+  return status === "success" ? null : "no reason recorded";
 }
 
 /** Durations must be whole, non-negative numbers that fit the schema. */

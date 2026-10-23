@@ -12,9 +12,10 @@ export interface QueueOptions {
   /** Largest request body, in events. Default 1000 (the API limit). */
   maxBatchSize?: number;
   /**
-   * Memory bound when the API is unreachable for a long time. Past this, the cheap high-volume
-   * events (samples, network requests) are dropped and counted; session and action events are
-   * still kept. Default 100 000.
+   * Memory bound while the API is unreachable. The batch at the head of the queue is retried for
+   * minutes (see `maxElapsedMs` of the HTTP transport) and everything behind it waits here, in
+   * order. Past this many events, the cheap high-volume ones (samples, network requests) are
+   * dropped and counted; session and action events are still kept. Default 100 000.
    */
   maxBuffered?: number;
 }
@@ -26,11 +27,14 @@ export interface QueueStats {
   sent: number;
   /** Events the API recognised as retries of events it already had. */
   duplicates: number;
-  /** Events that will never arrive (rejected by the API, retries exhausted, buffer full, closed). */
+  /** Events that will never arrive (rejected by the API, retry time used up, buffer full, closed). */
   dropped: number;
   /** Events waiting in memory, including a batch currently being sent. */
   pending: number;
 }
+
+/** How long close() waits for an aborted send to report back. */
+const ABORT_GRACE_MS = 1000;
 
 const DROPPABLE: ReadonlySet<FleetEvent["type"]> = new Set([
   "resource.sample",
@@ -55,6 +59,8 @@ export class EventQueue {
   private inFlight = 0;
   private draining: Promise<void> | null = null;
   private closed = false;
+  /** Set when close() gave up on a send that ignored the abort: its late answer is not counted. */
+  private abandoned = false;
   private readonly abort = new AbortController();
   private readonly counters = { pushed: 0, sent: 0, duplicates: 0, dropped: 0 };
 
@@ -95,7 +101,8 @@ export class EventQueue {
 
   /**
    * Stops the timer, drains what is left, and gives up after `timeoutMs`: pending retries are
-   * aborted and whatever could not be sent is counted as dropped. Safe to call twice.
+   * aborted and whatever could not be sent is counted as dropped. When this returns, `stats()` is
+   * final: nothing is pending and every lost event is in `dropped`. Safe to call twice.
    */
   async close(timeoutMs = 10_000): Promise<void> {
     clearInterval(this.timer);
@@ -112,13 +119,32 @@ export class EventQueue {
       }),
     ]);
     clearTimeout(deadline);
-    this.closed = true;
     if (timedOut) {
-      const lost = this.buffer.length + this.inFlight;
-      this.counters.dropped += this.buffer.length;
+      // The abort ends the send in progress almost at once. Wait for that, so its events are
+      // counted before we return: the caller reads stats() next and decides its exit code on it.
+      let grace: NodeJS.Timeout | undefined;
+      await Promise.race([
+        this.draining,
+        new Promise<void>((resolve) => {
+          grace = setTimeout(resolve, ABORT_GRACE_MS);
+        }),
+      ]);
+      clearTimeout(grace);
+      if (this.draining) {
+        // A transport that ignores the abort signal: count what it holds as lost and ignore its answer.
+        this.abandoned = true;
+        this.counters.dropped += this.inFlight;
+        this.inFlight = 0;
+      }
+      const lost = this.buffer.length;
+      this.counters.dropped += lost;
       this.buffer = [];
-      this.logger.warn({ lost, timeoutMs }, "collector closed before all events were sent");
+      this.logger.warn(
+        { timeoutMs, dropped: this.counters.dropped },
+        "collector closed before all events were sent",
+      );
     }
+    this.closed = true;
   }
 
   /** Starts the drain loop if it is not running. Returns the loop's promise. */
@@ -137,6 +163,7 @@ export class EventQueue {
       this.inFlight = batch.length;
       try {
         const result = await this.transport.send(batch, { signal: this.abort.signal });
+        if (this.abandoned) return;
         if (result.status === "accepted") {
           this.counters.sent += result.accepted;
           this.counters.duplicates += result.duplicates;
@@ -148,6 +175,7 @@ export class EventQueue {
           );
         }
       } catch (error) {
+        if (this.abandoned) return;
         // A transport should report, not throw; if it does, treat it like a failed send.
         this.counters.dropped += batch.length;
         this.logger.error({ err: error, dropped: batch.length }, "transport threw, events dropped");

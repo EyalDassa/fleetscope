@@ -29,8 +29,14 @@ export interface HttpTransportOptions {
   /** Base URL of the API, e.g. `http://localhost:4000`. */
   apiUrl: string;
   logger: Logger;
-  /** Total tries per batch, first one included. Default 8. */
+  /** Most tries per batch, first one included. Default: no limit, `maxElapsedMs` decides. */
   maxAttempts?: number;
+  /**
+   * How long one batch is retried before we give up on it. Default 10 minutes: long enough to
+   * ride out an API restart or deploy, short enough that a late resend is still inside the API's
+   * 15-minute window for recognising duplicate event ids.
+   */
+  maxElapsedMs?: number;
   /** First retry waits about this long, doubling each time (with jitter). Default 250. */
   baseDelayMs?: number;
   /** Backoff ceiling. Default 10 000. */
@@ -43,6 +49,7 @@ export interface HttpTransportOptions {
   fetch?: typeof fetch;
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   random?: () => number;
+  now?: () => number;
 }
 
 const RETRYABLE_STATUSES = new Set([408, 425, 429]);
@@ -83,7 +90,8 @@ export function createHttpTransport(options: HttpTransportOptions): Transport {
   const {
     apiUrl,
     logger,
-    maxAttempts = 8,
+    maxAttempts = Number.POSITIVE_INFINITY,
+    maxElapsedMs = 600_000,
     baseDelayMs = 250,
     maxDelayMs = 10_000,
     maxRetryAfterMs = 30_000,
@@ -91,6 +99,7 @@ export function createHttpTransport(options: HttpTransportOptions): Transport {
     fetch: doFetch = fetch,
     sleep = abortableSleep,
     random = Math.random,
+    now = Date.now,
   } = options;
   const url = new URL(INGEST_PATH, apiUrl).toString();
 
@@ -104,8 +113,9 @@ export function createHttpTransport(options: HttpTransportOptions): Transport {
     async send(events, { signal } = {}) {
       const body = JSON.stringify(events);
       let lastError = "no attempt made";
+      const startedAt = now();
 
-      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      for (let attempt = 1; ; attempt++) {
         if (signal?.aborted) return { status: "failed", error: `aborted (${lastError})` };
 
         let retryAfterMs: number | null = null;
@@ -146,13 +156,20 @@ export function createHttpTransport(options: HttpTransportOptions): Transport {
           lastError = error instanceof Error ? error.message : String(error);
         }
 
-        if (attempt === maxAttempts) break;
+        const elapsed = now() - startedAt;
+        if (attempt >= maxAttempts || elapsed >= maxElapsedMs) {
+          return {
+            status: "failed",
+            error: `${lastError} (gave up after ${attempt} attempts, ${Math.round(elapsed / 1000)}s)`,
+          };
+        }
         const delay =
           retryAfterMs === null ? backoff(attempt) : Math.min(retryAfterMs, maxRetryAfterMs);
-        logger.debug({ attempt, delay, error: lastError }, "ingest send failed, retrying");
+        // Say it once at a visible level, then quietly: an outage can last minutes.
+        const log = attempt === 1 ? logger.warn.bind(logger) : logger.debug.bind(logger);
+        log({ attempt, delay, error: lastError }, "ingest send failed, retrying");
         await sleep(delay, signal);
       }
-      return { status: "failed", error: `${lastError} (after ${maxAttempts} attempts)` };
     },
   };
 }

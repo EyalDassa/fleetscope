@@ -249,11 +249,11 @@ describe("actions", () => {
     expect(error.code).toBe("timeout");
   });
 
-  it("HTTP 500 is a nav_error", async () => {
+  it("a server error (HTTP 500) is http_5xx, with a nav_error issue", async () => {
     const { fake, page } = await setup();
     fake.gotoStatus = 500;
     const error = await rejection(page.goto("http://x.test/"));
-    expect(error.code).toBe("nav_error");
+    expect(error.code).toBe("http_5xx");
   });
 
   it("a 403 on the main document is http_403, a blocked issue and a BlockedError", async () => {
