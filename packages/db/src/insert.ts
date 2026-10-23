@@ -262,9 +262,12 @@ function insertSettings(token: string | undefined) {
   // Once a table has a dedup window (migration 0006), ClickHouse also skips an insert whose
   // CONTENT it has seen before. That would silently swallow legitimate repeats (the seed, tests),
   // so deduplication is on only when the caller says so, with a token.
+  //
+  // ClickHouse 26.x: `deduplicate_insert` replaced `insert_deduplicate`, which is now ignored
+  // unless `deduplicate_insert` is 'backward_compatible_choice'. Older servers do not know it.
   return token === undefined
-    ? ({ insert_deduplicate: 0 } as const)
-    : ({ insert_deduplicate: 1, insert_deduplication_token: token } as const);
+    ? ({ deduplicate_insert: "disable" } as const)
+    : ({ deduplicate_insert: "enable", insert_deduplication_token: token } as const);
 }
 
 /**

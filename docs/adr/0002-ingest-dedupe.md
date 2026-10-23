@@ -58,8 +58,11 @@ Details that matter:
   never be reused for different rows: the buffer cuts a flush once, gives it a fresh uuid, and
   retries exactly that batch. New events that arrive during the retry wait for the next flush.
 - Once a table has a window, ClickHouse also skips an INSERT whose content equals one it has seen.
-  `insertEvents` therefore sends `insert_deduplicate = 0` when the caller passes no token, so the
-  seed and tests behave as before, and deduplication happens only where we asked for it.
+  `insertEvents` therefore sends `deduplicate_insert = 'disable'` when the caller passes no token
+  (and `'enable'` with one), so the seed and tests behave as before, and deduplication happens only
+  where we asked for it. This is the ClickHouse 26.x setting: it replaced `insert_deduplicate`, which
+  is now ignored (we found out the hard way: our test still saw the content dedupe). A server older
+  than 25.x would reject the unknown setting, which is fine because the project pins 26.8 LTS.
 - The client sets `async_insert = 0` (ClickHouse 26.x defaults to 1). With async inserts the server
   merges many small INSERTs itself and deduplicates on its own terms; we already batch, and a plain
   synchronous INSERT behaves the same locally, in CI and on ClickHouse Cloud.

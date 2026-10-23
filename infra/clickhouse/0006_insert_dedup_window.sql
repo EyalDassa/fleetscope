@@ -6,8 +6,8 @@
 -- silently. The window counts the last N inserted blocks (one block per partition per INSERT).
 -- The buffer flushes about once a second, so 10000 covers well over an hour.
 --
--- insertEvents sets insert_deduplicate = 0 on inserts that carry no token, so these tables do not
--- also drop an insert whose content happens to repeat.
+-- insertEvents sends deduplicate_insert = 'disable' with inserts that carry no token, so these
+-- tables do not also drop an insert whose content happens to repeat.
 -- Re-running is harmless: MODIFY SETTING just sets the same value again.
 ALTER TABLE sessions         MODIFY SETTING non_replicated_deduplication_window = 10000;
 ALTER TABLE actions          MODIFY SETTING non_replicated_deduplication_window = 10000;

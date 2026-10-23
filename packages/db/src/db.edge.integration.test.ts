@@ -823,7 +823,7 @@ describe("migrations: concurrency and history", () => {
     try {
       await runMigrations(config);
       await runMigrations(config);
-      expect(Object.values(await ledgerCounts(config.database))).toEqual([1, 1, 1, 1, 1]);
+      expect(Object.values(await ledgerCounts(config.database))).toEqual([1, 1, 1, 1, 1, 1]);
     } finally {
       await dropDatabase(config);
     }
