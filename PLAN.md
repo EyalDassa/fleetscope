@@ -120,7 +120,11 @@ All events share: `v`, `type` (the event name below, used as the discriminator),
 | `issue` | kind (`blocked`/`captcha`/`crash`/`timeout`/`nav_error`/`unsupported_api`), message |
 | `screenshot` | action_seq, url (stored locally or in object storage; optional) |
 
-Ingest: `POST /v1/events` accepts batches of up to 1,000 events. The API validates them with zod, buffers them in memory, and flushes to ClickHouse every 1s or every 5k rows, whichever comes first. ClickHouse handles large batch inserts well and small frequent inserts badly. The collector batches and retries with backoff; `event_id` makes retries safe.
+Ingest: `POST /v1/events` accepts batches of up to 1,000 events. The API validates them with zod, buffers them in memory, and flushes to ClickHouse every 1s or every 5k rows, whichever comes first. ClickHouse handles large batch inserts well and small frequent inserts badly. The collector batches and retries with backoff; `event_id` makes retries safe. Events with a `ts` more than 5 minutes in the future or older than the 30-day retention are rejected (400). A flush that ClickHouse keeps refusing with a data error goes to a dead-letter file instead of blocking ingest (ADR 0002).
+
+**What the timings mean.** `startup_ms` = container created → browser server ready. `connect_ms` = the client's `connect()`, which includes launching the browser. Engines are compared on `startup_ms + connect_ms` ("time to a usable browser").
+
+**Why a session failed.** Every session that doesn't end in `success` has a `reason`, and the action that failed carries an `error_code`. "Why did session X fail" is answered from those two. `issue` events are for problems with the site or the engine (blocked, captcha, crash, timeout, navigation error, unsupported API), so a session can fail without an issue (for example a missing selector).
 
 ## 6. ClickHouse data model
 
@@ -219,7 +223,7 @@ Design versions with critiques and `changes.md`, the lead's round notes, `design
 | M0 | Thu night | Walking skeleton + design sprint | Monorepo, CI green, docker-compose ClickHouse up, migrations run, empty dashboard deployed on Vercel. In parallel: both design proposals, cross-reviews, and DESIGN.md approved by Eyal |
 | M1 | Fri morning | First real data | Collector + runner + demo site: 10 Chromium sessions land in ClickHouse with actions and container stats |
 | M2 | Fri afternoon | Core screens | Overview, Sessions and Session detail (waterfall + resource charts) on real data |
-| M3 | Fri evening | Multi-engine | chrome-headless-shell and Lightpanda in the pool; Browsers comparison page; simulator generating 500+ sessions |
+| M3 | Fri evening | Multi-engine | chrome-headless-shell and Lightpanda in the pool; Browsers comparison page; simulator generating 500+ sessions. Carried from M1: move the demo-site forwarder into a sidecar container so its memory isn't counted in the browser's samples; classify TypeError-shaped missing Web APIs as `unsupported_api` |
 | M4 | Sat morning | Product depth | Insights rules, Usage and cost page, live SSE updates, ⌘K palette |
 | M5 | Sat afternoon | Agents + production | MCP server, "Explain this session" button, production deploy, Sentry + PostHog |
 | M6 | Sat evening | Polish | README with screenshots and GIF, ADRs, demo script, recorded 2-minute backup video |
