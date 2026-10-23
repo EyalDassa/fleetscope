@@ -1,5 +1,6 @@
 import {
   type ClickHouseClient,
+  ClickHouseError,
   type Logger as ClickHouseLogger,
   ClickHouseLogLevel,
   createClient,
@@ -8,6 +9,7 @@ import type { DbConfig } from "./config";
 import { createLogger, type Logger } from "./logger";
 
 export type { ClickHouseClient };
+export { ClickHouseError };
 
 export interface ClientOptions {
   /** Override the database. `null` connects without selecting one (needed to create it). */
