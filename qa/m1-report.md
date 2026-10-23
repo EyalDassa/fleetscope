@@ -4,7 +4,7 @@ Branch `m1-first-real-data`, first QA pass. Environment: Windows 11, Git Bash, N
 
 Tested against the PR description (decisions, contracts, "done when"), PLAN.md sections 3 to 6, ADR 0002, `design/DESIGN.md` where it says what the data must support, and the three READMEs, not against what the code happens to do. The reviewer's file `reviews/m1.md` was not read or touched.
 
-## Verdict, first pass: NOT READY
+## Verdict, first pass (superseded by the re-test verdict at the end): NOT READY
 
 M1's headline works. Real Chromium sessions land in ClickHouse with actions, container samples, CDP heap samples and sampled network requests, a ClickHouse outage loses and duplicates nothing, the same `--seed` repeats exactly, nothing is left running. Three **major** bugs are open, and all three are cheap to fix:
 
@@ -82,6 +82,8 @@ Also done by hand, not automated: `docker stop` / `docker start` of ClickHouse w
 
 ### QA-M1-01 (major, backend-ingest): one valid request can stall all ingest (a batch over more than 100 days is refused by ClickHouse forever)
 
+**Re-test (round 1): VERIFIED.** See the re-test section.
+
 - **File:** `apps/api/src/ingest/validate.ts` (no lower bound on `ts`), `apps/api/src/ingest/buffer.ts` (retries a refused flush forever).
 - **Steps:** `POST /v1/events` with 120 valid actions whose `ts` is `now - i days` for `i = 0..119` (202). Then `POST` an ordinary session (202).
 - **Expected:** a valid event is stored or answered with a clear 4xx. One client cannot stop the others. ADR 0002: "Validated events should never be refused."
@@ -93,6 +95,8 @@ Also done by hand, not automated: `docker stop` / `docker start` of ClickHouse w
 
 ### QA-M1-02 (major, backend-fleet): preflight does not notice a stopped API or demo site on `localhost`
 
+**Re-test (round 1): VERIFIED.** The API, the demo site and Docker are all listed; the reason is never empty.
+
 - **File:** `apps/fleet-runner/src/preflight.ts`, `fetchOk()` and `if (problem)`.
 - **Steps:** with the API and the demo site stopped, run `pnpm fleet run --sessions 2` (defaults: `http://localhost:4000`, `http://localhost:3100`). Or `FLEETSCOPE_API_URL=http://localhost:4999 DEMO_SITE_URL=http://localhost:3999 DOCKER_HOST=tcp://127.0.0.1:1 pnpm fleet run`.
 - **Expected:** `Cannot start the run:` and one line each for the API, the demo site and Docker, exit 1, nothing started (C2 "checks /healthz + demo site first"; the brief: "preflight must list all problems").
@@ -101,6 +105,8 @@ Also done by hand, not automated: `docker stop` / `docker start` of ClickHouse w
 - **Tests:** `preflight.test.ts` (faked Node error, always runs; real sockets, where Node shows it) and `cli.test.ts`, `it.fails("QA-M1-02: ...")`.
 
 ### QA-M1-05 (major, backend-fleet): sessions without any container sample when Docker is slow
+
+**Re-test (round 1): VERIFIED**, on the streaming `StatsSampler`. 24 sessions at `--concurrency 12`: 0 without a container sample (was 11).
 
 - **File:** `apps/fleet-runner/src/stats.ts` (`stopTimeoutMs` default 2500), `session-runner.ts` (`finishSession`).
 - **Steps:** `pnpm fleet run --sessions 24 --concurrency 12 --scenario login-and-search --seed 3`, then count container samples per session.
@@ -112,12 +118,16 @@ Also done by hand, not automated: `docker stop` / `docker start` of ClickHouse w
 
 ### QA-M1-06 (minor, decision needed: lead / backend-fleet / frontend): a failed session can have no `issues` row
 
+**Re-test (round 1): ACCEPTED** (lead decision: the cause is `sessions.reason` plus the first failed action's `error_code`). The `it.fails` is now a test of that rule.
+
 - **File:** `packages/collector/src/codes.ts` (`ISSUE_FOR_CODE.selector_not_found = null`), PLAN section 5 (the six issue kinds).
 - **Reasoning for the lead's question.** The cause *is* answerable from the data: `sessions.reason` ("selector not found: [data-testid="flaky-button"] (page.click: Timeout 1500ms exceeded.)") and the failed `actions` row (`click`, `error_code selector_not_found`, `seq`, duration). DESIGN section 6.8 (root-cause banner: "action #9 click ...", error code and message) can be built from those two. So "why did session X fail" is not unanswerable, and I do not call it a defect of the collector against PLAN. But three DESIGN/PLAN surfaces read the `issues` table and will be empty for the one organic Chromium failure the demo has: the Issues panel (6.10, "one block per issue"), "Top issue" in the By-engine table, and `find_issues` / Insights. `sessions` has no reason *code* column, so the "Recent failures" row ("reason code in mono + message") also has no source unless M2 joins `actions`. In the real run: 1 of 1 failed session has no issue (blocked: 2 of 2 have one).
 - **Decision needed before M2:** (a) add a kind (for example `element_missing`) to `IssueKind` and map `selector_not_found` and `js_error` to it, or (b) write down in the M2 contract that the failure cause comes from the first failed action's `error_code` plus `sessions.reason`, and that `find_issues` / the Issues panel include failed actions. I lean to (b) for M2 (smaller, no schema change) and (a) if the Issues panel must be the single place for causes.
 - **Test:** `real-run.e2e.test.ts`, `it.fails("QA-M1-06: every failed session has at least one issue row")`. Delete it if the lead picks (b).
 
 ### QA-M1-08 (minor, backend-fleet): a timeout or Ctrl+C is recorded as a `crash`
+
+**Re-test (round 1): VERIFIED** with a real run: a runner timeout and three Ctrl+C variants raise no `crash` issue.
 
 - **File:** `apps/fleet-runner/src/session-runner.ts` (closes the browser on timeout / abort), `packages/collector/src/errors.ts` + `page.ts` (`browser_closed` becomes a `crash` issue).
 - **Steps:** `pnpm fleet run --sessions 3 --scenario heavy-page-crawl --session-timeout 3`, or Ctrl+C mid-run.
@@ -128,6 +138,8 @@ Also done by hand, not automated: `docker stop` / `docker start` of ClickHouse w
 
 ### QA-M1-04 (minor, backend-fleet): `stats()` right after `close()` under-counts the lost batch
 
+**Re-test (round 1): VERIFIED.** `stats()` is final when `close()` returns.
+
 - **File:** `packages/collector/src/queue.ts`, `close()`.
 - **Steps:** an API that accepts the connection and never answers; `await collector.close(500)`; read `collector.stats()`.
 - **Expected:** `dropped` is final when `close()` returns.
@@ -137,6 +149,8 @@ Also done by hand, not automated: `docker stop` / `docker start` of ClickHouse w
 
 ### QA-M1-03 (minor, backend-fleet; matters from M3): a missing `crypto.subtle` is not an `unsupported_api` issue
 
+**Re-test (round 1): DEFERRED to M3** (lead decision). Still three `it.fails` tests (two unit, one e2e).
+
 - **File:** `packages/collector/src/errors.ts`, `isMissingApiError`.
 - **Steps:** on `/js-heavy`, remove `crypto.subtle` (what a missing WebCrypto looks like). The page throws `TypeError: Cannot read properties of undefined (reading 'digest')`, exactly the message in the demo-site README.
 - **Expected:** `unsupported_api` issue, like for `IntersectionObserver`, `ResizeObserver`, `Worker`, `requestIdleCallback` (all four verified in a real Chromium: one issue each).
@@ -145,6 +159,8 @@ Also done by hand, not automated: `docker stop` / `docker start` of ClickHouse w
 - **Tests:** `collector.http.test.ts` (2 `it.fails`) and `real-run.e2e.test.ts` (1 `it.fails`).
 
 ### QA-M1-07 (minor, backend-ingest): the dedupe window gets slow once it is full
+
+**Re-test (round 1): VERIFIED.** The 30 s scenario now takes under 1 s, so it is an ordinary unit test (`recent-ids.scale.test.ts`).
 
 - **File:** `apps/api/src/ingest/recent-ids.ts` (`dropOldest`, `expire`: `seen.keys().next()` plus `delete` on a `Map`).
 - **Steps:** `QA_SLOW=1 pnpm --filter @fleetscope/api exec vitest run src/ingest/recent-ids.slow.test.ts`.
@@ -156,6 +172,8 @@ Also done by hand, not automated: `docker stop` / `docker start` of ClickHouse w
 
 ### QA-M1-09 (minor/nit, backend-ingest): a batch bigger than the buffer is told "retry later" forever
 
+**Re-test (round 1): VERIFIED.** 413 with a message and no `Retry-After`; a batch that fits is accepted.
+
 - **File:** `apps/api/src/env.ts` (`INGEST_BUFFER_CAPACITY` accepts 1 and up), `apps/api/src/ingest/buffer.ts` (`offer`).
 - **Steps:** capacity 500, `POST` 600 events.
 - **Expected:** a clear answer that cannot succeed (413 or 400), or a capacity floor of 1000 in `env.ts`.
@@ -164,11 +182,15 @@ Also done by hand, not automated: `docker stop` / `docker start` of ClickHouse w
 
 ### QA-M1-10 (minor, needs a decision: backend-fleet / platform): `IpcMode: "host"` contradicts the browser README
 
+**Re-test (round 1): VERIFIED.** `docker inspect` shows `IpcMode private`; the README is updated.
+
 - **Files:** `apps/fleet-runner/src/docker.ts` (`HostConfig.IpcMode: "host"`, pinned by `docker.test.ts`), `infra/browsers/README.md` ("`--ipc=host` ... is not needed ... and it would share one IPC namespace between concurrent sessions").
 - **Actual:** confirmed with `docker inspect` on a started container: `IpcMode host`, and `/dev/shm` is the VM's shared 3.9 GB tmpfs. The README's own table of what the runner should set has no IPC entry. So sessions share an IPC namespace (and shared memory they use is not in their own cgroup), which Decision 1 ("clean CPU/memory attribution, no state leaking between sessions") says they do not, and which is a hardening step back for browsers that will visit untrusted pages. Playwright's launch flags already move shared memory off `/dev/shm`, as the README says.
 - **Needed:** either remove `IpcMode` (and the test line) or update the README and say why it is needed. No test added.
 
 ### QA-M1-11 (nit, backend-fleet / lead): "each session has at least 5 actions" does not hold for blocked sessions
+
+**Re-test (round 1): VERIFIED (by reading).** The smoke assert needs 3 actions only for `success` sessions and 1 for the rest. The real-run test still checks 5 for non-blocked sessions.
 
 - **File:** `apps/fleet-runner/src/scenarios/checkout-form.ts` (the bot wall is the first page, 20 % of `checkout-form` sessions).
 - **Actual:** a blocked session has exactly 1 action. In the 12-session real run: 2 of 12 (seed 7). The lead's seed 42 run had none, so "every session has at least 8 actions" held there. The unit test "makes at least 5 actions" covers the success path.
@@ -233,7 +255,7 @@ Before the first push, check that my new unit tests also pass on the Linux runne
 
 Stopped exactly the API (:4000) and demo site (:3100) I started; no `fleetscope.session` containers left; ClickHouse running and healthy. I deleted my own rows from the dev database (every `agent_id` starting with `qa`, and my 5 default-agent sessions started after 13:20 UTC; the lead's earlier 21 sessions and the seed data are untouched) and dropped `fleetscope_test_902b9fb6c84c`, a leftover from the M0 QA pass.
 
-## Verdict (first pass): NOT READY
+## Verdict (first pass, superseded): NOT READY
 
 Open blockers: none.
 
@@ -245,3 +267,101 @@ Open majors (need a fix and a re-test):
 Open minors and nits: QA-M1-03, -04, -06 (decision), -07, -08, -09, -10 (decision), -11.
 
 For the re-test round the `it.fails` tests flip as the engineers fix: QA-M1-01 and -09 in `ingest.abuse.integration.test.ts`; QA-M1-02 in `preflight.test.ts` and `cli.test.ts`; QA-M1-03 and -04 in `collector.http.test.ts`; QA-M1-05 in `stats.load.test.ts`; QA-M1-06, -08 and the e2e half of -03 in `real-run.e2e.test.ts`; QA-M1-07 in `recent-ids.slow.test.ts`. Besides these, merging also needs the reviewer's approval, and the new tests need one green CI run once pushed.
+
+---
+
+# Re-test pass, round 1
+
+Environment: Docker 29.9.2 (after the WSL update), ClickHouse 26.8.34.13 healthy, the same image. HEAD after the engineers' fixes (`git log 4532a51..HEAD`: 15 commits) plus my re-test commits. Eyal's API and demo site were up for part of the run and went away during it; I started my own API for the rest and stopped it again. One e2e run failed only because of that (`122 events were not delivered`) and was re-run.
+
+## Status of every bug
+
+| Bug | Owner | Result | Evidence |
+|---|---|---|---|
+| QA-M1-01 ingest stall | backend-ingest | **verified** | below |
+| QA-M1-02 preflight | backend-fleet | **verified** | `preflight.test.ts` (faked Node error, real sockets) and `cli.test.ts` (API, demo site and Docker all down: three lines, exit 1) are plain tests now |
+| QA-M1-03 `crypto.subtle` / "not a constructor" | backend-fleet | **deferred to M3** | 3 `it.fails` remain, the only ones left in the repo |
+| QA-M1-04 stats after `close()` | backend-fleet | **verified** | `it.fails` flipped; `dropped` is final on return |
+| QA-M1-05 container samples under load | backend-fleet | **verified** | below |
+| QA-M1-06 failure cause | lead decision | **accepted** | converted to the rule test |
+| QA-M1-07 dedupe window cost | backend-ingest | **verified** | 100,000-id window, 300,000 more events: flat, under 1 s (was 30 s) |
+| QA-M1-08 false `crash` | backend-fleet | **verified** | real runs, below |
+| QA-M1-09 batch bigger than the buffer | backend-ingest | **verified** | 413, "larger than the ingest buffer", no `Retry-After`; a 400-event batch is accepted |
+| QA-M1-10 `IpcMode: host` | platform / backend-fleet | **verified** | `docker inspect`: `IpcMode private`, labels `fleetscope.run/session/engine` present |
+| QA-M1-11 actions of blocked sessions | lead | **verified** | smoke assert changed (read, not run in CI by me) |
+
+## QA-M1-01, in detail
+
+- **At the door.** A `ts` before midnight UTC of the day 29 days ago gets 400 with the cutoff in the message and `issues: [{path: [i, "ts"]}]`. Exactly at the cutoff it is accepted. The 120-day batch is refused and another client's session in the next request is stored. Old and future events in one batch are both listed, and none of the batch is stored or "remembered".
+- **The cutoff is right.** In ClickHouse itself (`OPTIMIZE ... FINAL` to force the TTL) the event at the cutoff survives and the one a millisecond earlier is deleted. A flush that spans every allowed day plus tomorrow (31 partitions) is stored. (A clock difference of a few seconds between API and ClickHouse around midnight UTC could still make a cutoff event vanish; negligible.)
+- **Dead-letter path** (the events are damaged after validation, on the way from the buffer to ClickHouse, so the buffer holds the valid originals): a flush that ClickHouse refuses with "too many partitions" and one with a lone surrogate (`CANNOT_PARSE_ESCAPE_SEQUENCE`) each go to one `.jsonl` file after 3 tries. The file has every event of the flush, whole and parseable, with distinct ids; the log line has the file name, the event count and `attempts: 3`; `/healthz.ingest.deadLettered` counts the events (122); `queued` is 0 and `retrying` false; the next client's session is stored.
+- **Transient errors never dead-letter.** With a database that does not exist and with a wrong password the flush was retried 8 or more times, `deadLettered` stayed 0, `retrying` true, the events stayed queued, no file written. If the dead-letter file cannot be written (the directory is under a regular file) the flush stays in memory and the log says so.
+- **Free text fuzz (new).** 1,500 events (12 requests) whose text fields are random mixes of quotes, backslashes, NUL and other control characters, noncharacters, BOM, bidi controls, line separators, emoji and lone surrogates, in every text field of every event type: all 202, every row stored, every stored value equal to the sent value with lone surrogates replaced by U+FFFD, `deadLettered` 0, no file. A lone surrogate in a `session_id` is refused with 400 (BE-ingest's tests; mine only fuzz text fields).
+- **Recorded, not a bug.** A dead-lettered flush takes the innocent events that shared it along: in the test a session whose `session.started` was written to ClickHouse (`sessions` is the first table of a flush) has its actions only in the file and stays `running`. The ids of dead-lettered events stay in the dedupe window, so a collector resend of them is answered as a duplicate. Both follow from "a flush is the unit", and with validation closing the known holes they should be rare; a split-in-halves retry would avoid them if it ever matters. The ADR says the file must be checked against the tables before replaying.
+
+## QA-M1-05, in detail
+
+- **Unit.** `stats.load.test.ts` is ported to `StatsSampler` with the default settings: the first Docker frame arriving at 2.0, 3.4, 4.5, 6.6 and 9.9 s (the worst reading measured) always gives the session a sample, the stream is closed afterwards and nothing is logged; a longer session samples about every 2 s; if no frame arrives within 10 s the session ends without a sample, bounded, and the log says "without a container sample" (it used to be silent). The file no longer imports `StatsPoller`; only a comment mentions it. `sampler.test.ts` (BE-fleet's) still uses the adapter.
+- **Real Docker.** `real-run.e2e.test.ts`: 24 short sessions at `--concurrency 12` (the case that lost 11 of 24): **0 sessions without a container sample.** The three Ctrl+C runs below also had none, and the 9-session run (concurrency 3) has container samples for all 9.
+- **Changed behaviour, not a bug.** The gap between two container samples can now be about one second (the last sample of a session comes from the newest frame), so the e2e check accepts 0.5 to 3.5 s instead of "about 2 s".
+
+## Ctrl+C
+
+Evidence is the handler driven inside the real CLI with real containers (`process.emit("SIGINT")`, as in round 0; opt-in tests in `real-run.e2e.test.ts`) plus **Eyal's real keypress in PowerShell** as reported by the lead: one interrupt, 3 successes stored, the in-flight session `failed`/`interrupted`, no containers left, no session left `running`; no summary on screen because pnpm's wrapper exits on Ctrl+C (documented in the runner README).
+
+| Case | Result |
+|---|---|
+| One Ctrl+C at 13 s (4 sessions running) | **verified.** Exit 130 in about 3 s, summary printed (`16 not started (interrupted)`), running sessions `failed` / `interrupted`, finished ones `success`, **no `crash` issue**, `browser_closed` on the cut-off action only, no container left, no session `running` |
+| One keypress arriving twice (two signals 150 ms apart) | **verified.** Debounced: no "second interrupt" in the output, the graceful cleanup runs to the end, same database state as above, exit 130 |
+| A deliberate second Ctrl+C 2.5 s after the first | **verified.** "second interrupt" logged, "stopped without waiting for running sessions", exit 130, no container left, no session `running` (BE-fleet's `session.ended` fix for finished sessions holds) |
+| A third Ctrl+C | **not re-tested** (it is `process.exit(130)` in the handler; covered by `interrupt.test.ts`) |
+| Real keypress through pnpm / PowerShell | **Eyal, not me.** Covered by his report above |
+
+## Other re-tests
+
+- **Runner timeout (QA-M1-08).** `--session-timeout 2`: both sessions `timeout`, reason "session exceeded 2s", action `browser_closed`, **0 `crash` issues** (was 2).
+- **QA-M1-06 rule.** In the 9-session real run every non-success session has a reason and a first failed action with an `error_code`; the two seeded causes come out as `failed:selector_not_found` and `blocked:captcha`.
+- **Seed repeatability, data quality, no leaked containers:** the real-run file passes again against the new code (9 sessions, then the same seed at concurrency 5).
+- **Demo site, R-M1-16.** `GET /admin/chaos` from the loopback address 200; from the machine's other address (172.18.240.1) 403; pages from that address 200.
+- **Migrations / schema.** The retention constant and the TTL agree (BE-ingest's `acef7e7`, plus my cutoff test against ClickHouse). My upgrade-path test from an M0 database still passes.
+
+## New findings in this pass
+
+Nothing new that blocks. Observations: the dead-letter caveats above; the real-run gap assertion changed with the streaming sampler; one stale test database (`fleetscope_test_8c1238b9a9cf`) was left by a test that timed out in my own work in progress, and removed.
+
+## Not re-tested
+
+- A real console Ctrl+C by me (Eyal did it); the third Ctrl+C.
+- `pnpm dev` (port 3000 is not ours).
+- CI on the new head: nothing is pushed, `gh pr checks 4` still shows the old head `e318b24` (all green, including **Fleet smoke (Chromium)** 2m9s). The updated smoke assert (`085eb53`) and the new tests have not run in CI yet. The CLI tests need `tsx` and, for two of them, Docker (they skip without it); the integration job will run the proxy, dead-letter and fuzz tests against the service container.
+- R-M1-* review items other than the ones that touch my tests.
+
+## Command output (re-test HEAD)
+
+```
+pnpm lint        Tasks: 8 successful, 8 total
+pnpm typecheck   Tasks: 7 successful, 7 total
+pnpm test        schema       5 files  135 passed
+                 demo-site    5 files  106 passed
+                 db           4 files   72 passed
+                 collector    8 files  129 passed | 2 expected fail (QA-M1-03, deferred)
+                 api         12 files  171 passed
+                 fleet-runner 15 files 190 passed | 19 skipped (opt-in e2e)
+                 Tasks: 7 successful, 7 total
+pnpm test:integration
+                 api   4 files   64 passed
+                 db    5 files  110 passed
+                 Tasks: 2 successful, 2 total
+FLEET_E2E=1 real-run.e2e.test.ts   18 tests: all pass except 1 expected fail (QA-M1-03)
+                 (15 in one full run, the 3 Ctrl+C tests re-run after I fixed a regex in them)
+                 (9-session run + same-seed rerun, 24 sessions at concurrency 12, runner timeout,
+                  3 Ctrl+C cases, collector against real Chromium)
+```
+
+`it.fails` left in the repository: the three QA-M1-03 tests (deferred) and nothing else.
+
+## Verdict (re-test, round 1): READY TO MERGE
+
+Open blocker: none. Open major: none. Open minor: none except the deferred **QA-M1-03** (M3).
+
+Conditions outside QA's reach: the branch is not pushed, so the pushed CI run (including the changed smoke assert and my new tests) must be green; and the reviewer must approve. The behaviours I would still watch after the merge are the two dead-letter caveats above (an innocent session half-stored, resends of dead-lettered ids answered as duplicates) and the pnpm wrapper hiding the Ctrl+C summary.
