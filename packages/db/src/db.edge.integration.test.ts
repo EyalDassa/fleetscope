@@ -12,7 +12,7 @@ import {
 } from "@fleetscope/schema";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createClickHouseClient } from "./client";
-import { insertEvents } from "./insert";
+import { dedupTokensFor, insertEvents } from "./insert";
 import { runMigrations } from "./migrate";
 import { seed } from "./seed";
 import { buildSeedEvents } from "./seed-events";
@@ -24,7 +24,7 @@ import { createTestDatabase, dropDatabase, type TestDatabase } from "./testing";
  * tables drop rows older than 30 days shortly after insert (TTL, in the background).
  *
  * Bugs from the first QA pass are tagged "QA-M0-NN" in test names (see qa/m0-report.md). All fixed
- * ones are ordinary tests now; deferred ones (QA-M0-03, -06, -09) are M1 items.
+ * ones are ordinary tests now; QA-M0-03 was resolved in M1 (its own describe below), -06 and -09 are handled by the API ingest buffer (apps/api).
  */
 
 let db: TestDatabase;
@@ -726,13 +726,101 @@ describe("everything the schema accepts, the database can store (QA-M0-02, QA-M0
     ).rejects.toThrow(RangeError);
     expect(await count("sessions", "range-guard")).toBe(0);
   });
+});
 
-  // QA-M0-03 (deferred to M1): insertEvents writes table by table, so a failing later INSERT leaves
-  // the earlier tables written. With validated events this is only reachable through a ClickHouse
-  // outage mid-flush, and M1's dedupe by event_id makes the retry safe.
-  it.todo(
-    "M1 (QA-M0-03): a retry after a partial write inserts no duplicates (needs event_id dedupe)",
+/**
+ * QA-M0-03, resolved in M1. insertEvents still writes table by table, so a failing later INSERT
+ * leaves the earlier tables written (ClickHouse has no multi-table transaction). The answer is not
+ * atomicity but a safe retry: the same events with the same insert_deduplication_tokens
+ * (ADR 0002). Two ways for an INSERT to "fail", because they are different for the retry:
+ *  - it throws BEFORE ClickHouse committed it (nothing written for that table), and
+ *  - it throws AFTER ClickHouse committed it (the answer was lost): the nasty one, since the caller
+ *    cannot know the rows are there.
+ */
+describe("QA-M0-03: a retry after a partial write inserts no duplicates", () => {
+  const TABLES = ["sessions", "actions", "resource_samples", "network_requests", "issues"] as const;
+
+  function batchFor(id: string): FleetEvent[] {
+    return [started(id), action(id), action(id, { seq: 1 }), sample(id), request(id), issue(id)];
+  }
+  function request(session_id: string): FleetEvent {
+    return {
+      ...envelope(session_id),
+      type: "network.request",
+      domain: "example.com",
+      status: 200,
+      bytes: 10,
+      duration_ms: 3,
+      resource_type: "document",
+    } as FleetEvent;
+  }
+
+  /** A client whose INSERT into `table` fails once: before the write, or after it (lost answer). */
+  function failingOnce(table: string, when: "before" | "after") {
+    let done = false;
+    return new Proxy(db.client, {
+      get(target, property, receiver) {
+        if (property !== "insert") return Reflect.get(target, property, receiver);
+        return async (params: { table: string }) => {
+          if (params.table !== table || done) return target.insert(params as never);
+          done = true;
+          if (when === "before") throw new Error(`outage before writing ${table}`);
+          await target.insert(params as never);
+          throw new Error(`answer lost after writing ${table}`);
+        };
+      },
+    });
+  }
+
+  async function expectOnce(id: string) {
+    expect(await count("sessions", id)).toBe(1);
+    expect(await count("actions", id)).toBe(2);
+    expect(await count("resource_samples", id)).toBe(1);
+    expect(await count("network_requests", id)).toBe(1);
+    expect(await count("issues", id)).toBe(1);
+  }
+
+  it.each(
+    TABLES.flatMap(
+      (table) =>
+        [
+          [table, "before"],
+          [table, "after"],
+        ] as const,
+    ),
+  )(
+    "an INSERT into %s that fails %s the write, then a retry with the same tokens: every row once",
+    async (table, when) => {
+      const id = `qa03-${table}-${when}`;
+      const batch = batchFor(id);
+      const tokens = dedupTokensFor(`qa03-flush-${table}-${when}`);
+
+      await expect(
+        insertEvents(failingOnce(table, when), batch, { dedupTokens: tokens }),
+      ).rejects.toThrow(/outage|lost/);
+      await insertEvents(db.client, batch, { dedupTokens: tokens });
+
+      await expectOnce(id);
+    },
   );
+
+  it("retrying a second time after a success changes nothing", async () => {
+    const id = "qa03-twice";
+    const batch = batchFor(id);
+    const tokens = dedupTokensFor("qa03-flush-twice");
+    await insertEvents(db.client, batch, { dedupTokens: tokens });
+    await insertEvents(db.client, batch, { dedupTokens: tokens });
+    await insertEvents(db.client, batch, { dedupTokens: tokens });
+    await expectOnce(id);
+  });
+
+  it("the sharp edge: a token identifies the block, not its content, so new rows under an old token are silently skipped", async () => {
+    const tokens = dedupTokensFor("qa03-flush-reused");
+    await insertEvents(db.client, [action("qa03-reused-a")], { dedupTokens: tokens });
+    await insertEvents(db.client, [action("qa03-reused-b")], { dedupTokens: tokens });
+    expect(await count("actions", "qa03-reused-a")).toBe(1);
+    expect(await count("actions", "qa03-reused-b")).toBe(0); // lost: never reuse a token for new rows
+  });
 });
 
 describe("migrations: concurrency and history", () => {
