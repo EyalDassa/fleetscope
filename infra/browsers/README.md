@@ -21,9 +21,10 @@ runs `playwright run-server --port 3000 --host 0.0.0.0` as the non-root user `pw
 pnpm browsers:build        # docker build -f infra/browsers/chromium/Dockerfile ... infra/browsers
 ```
 
-The first build pulls the Playwright base image: about 1.5 GB to download, about 3.6 GB on disk.
-Keep **at least 6 GB free** on the drive that holds Docker's disk image. When that drive fills up,
-Docker Desktop's engine goes read-only and stops answering until Docker Desktop is restarted.
+The first build pulls the Playwright base image: 0.98 GB to download (7 layers, summed from the
+registry manifest), several GB once unpacked. Keep **at least 10 GB free** on the drive that holds
+Docker's disk image. When that drive fills up, Docker Desktop's engine goes read-only and stops
+answering until Docker Desktop is restarted (this happened while this image was first built).
 
 ### The version rule
 
