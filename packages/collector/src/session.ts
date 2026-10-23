@@ -54,6 +54,7 @@ export class CollectedSession implements PageSink {
   private readonly seenOnce = new Set<string>();
   private seq = 0;
   private failedActionCount = 0;
+  private ending = false;
   private ended = false;
   private recordedDurationMs: number | null = null;
 
@@ -127,7 +128,10 @@ export class CollectedSession implements PageSink {
    * (browser startup is reported separately as `startup_ms`). Calling it twice does nothing.
    */
   async endSession(status: SessionStatus, reason: string | null = null): Promise<void> {
-    if (this.ended) return;
+    if (this.ending) return;
+    this.ending = true;
+    // One last heap reading before the clock stops, so even a short session has an end value.
+    await Promise.allSettled([...this.pages].map((page) => page.sampleHeapNow()));
     const endedAt = Date.now();
     const durationMs = wholeMs(endedAt - this.startedAt);
     this.emit(

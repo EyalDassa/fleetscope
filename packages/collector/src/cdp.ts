@@ -83,6 +83,24 @@ export class HeapSampler {
     }
   }
 
+  /**
+   * One more reading, taken just before the session ends, so even a short session shows where the
+   * heap ended up. Silent on failure: the page may already be going away, and the periodic samples
+   * told the story.
+   */
+  async sampleNow(timeoutMs = 500): Promise<void> {
+    if (this.busy || this.stopped || !this.session) return;
+    this.busy = true;
+    try {
+      const reply = await this.withTimeout(this.session.send("Performance.getMetrics"), timeoutMs);
+      if (!this.stopped) this.options.onSample(readHeapMb(reply));
+    } catch {
+      // Deliberately no null sample here.
+    } finally {
+      this.busy = false;
+    }
+  }
+
   private async detach(): Promise<void> {
     const session = this.session;
     this.session = null;
@@ -94,8 +112,7 @@ export class HeapSampler {
     }
   }
 
-  private withTimeout<T>(promise: Promise<T>): Promise<T> {
-    const ms = this.options.callTimeoutMs ?? 2000;
+  private withTimeout<T>(promise: Promise<T>, ms = this.options.callTimeoutMs ?? 2000): Promise<T> {
     let timer: NodeJS.Timeout | undefined;
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(() => reject(new Error(`CDP call timed out after ${ms}ms`)), ms);

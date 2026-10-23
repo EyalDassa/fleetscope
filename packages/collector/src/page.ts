@@ -98,6 +98,11 @@ export class CollectedPage {
     return collected;
   }
 
+  /** Takes a last JS heap reading. Called by `session.endSession()` just before it closes the session. */
+  async sampleHeapNow(): Promise<void> {
+    await this.heap?.sampleNow();
+  }
+
   /** Stops sampling and listening. Called by `session.endSession()`; safe to call twice. */
   async dispose(): Promise<void> {
     if (this.disposed) return;

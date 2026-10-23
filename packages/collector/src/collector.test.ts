@@ -480,6 +480,34 @@ describe("JS heap sampling through CDP", () => {
     expect(ofType(sink.events, "action")).toHaveLength(2);
   });
 
+  it("takes a last reading when the session ends, so a short session has an end value", async () => {
+    const { session, events } = await setup({ heapSampleIntervalMs: 60_000 });
+    await session.endSession("success");
+    const all = await events();
+    const samples = ofType(all, "resource.sample");
+    expect(samples).toHaveLength(2); // at start and at the end
+    expect(all.at(-1)?.type).toBe("session.ended");
+  });
+
+  it("no extra null sample at the end when the engine has no CDP", async () => {
+    const { collector, sink } = makeCollector({ heapSampleIntervalMs: 60_000 });
+    const session = collector.startSession(sessionOptions);
+    const fake = new FakePage();
+    fake.cdp = new Error("no CDP");
+    await session.collectPage(fake.asPage());
+    await session.endSession("success");
+    await collector.close();
+    expect(ofType(sink.events, "resource.sample")).toHaveLength(1);
+  });
+
+  it("endSession called twice at once still sends one session.ended", async () => {
+    const { collector, sink, session } = await setup();
+    await Promise.all([session.endSession("success"), session.endSession("failed", "x")]);
+    await collector.flush();
+    expect(ofType(sink.events, "session.ended")).toHaveLength(1);
+    await collector.close();
+  });
+
   it("heapSampleIntervalMs 0 turns heap sampling off", async () => {
     const { session, events } = await setup({ heapSampleIntervalMs: 0 });
     await session.endSession("success");

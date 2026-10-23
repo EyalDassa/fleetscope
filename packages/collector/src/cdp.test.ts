@@ -151,4 +151,44 @@ describe("HeapSampler", () => {
     expect(Date.now() - started).toBeLessThan(1000);
     expect(samples).toEqual([null]);
   });
+
+  it("sampleNow takes one extra reading", async () => {
+    const samples: (number | null)[] = [];
+    const s = sampler(
+      async () => ({ send: async () => heapReply(4 * MB), detach: async () => undefined }),
+      samples,
+      60_000,
+    );
+    await s.start();
+    await s.sampleNow();
+    await s.stop();
+    expect(samples).toEqual([4, 4]);
+  });
+
+  it("sampleNow is silent when the reading fails or the sampler never worked", async () => {
+    const failing: (number | null)[] = [];
+    let calls = 0;
+    const a = sampler(
+      async () => ({
+        send: async (method: string) => {
+          if (method === "Performance.getMetrics" && ++calls > 1) throw new Error("page closed");
+          return heapReply(MB);
+        },
+        detach: async () => undefined,
+      }),
+      failing,
+      60_000,
+    );
+    await a.start();
+    await a.sampleNow();
+    expect(failing).toEqual([1]); // no null added by the final reading
+
+    const unsupported: (number | null)[] = [];
+    const b = sampler(async () => {
+      throw new Error("no CDP");
+    }, unsupported);
+    await b.start();
+    await b.sampleNow();
+    expect(unsupported).toEqual([null]);
+  });
 });
