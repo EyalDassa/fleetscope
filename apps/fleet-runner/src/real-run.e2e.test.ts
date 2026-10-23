@@ -295,6 +295,45 @@ describe.skipIf(!ENABLED)("a real run of 9 sessions (seed 7)", () => {
   }, 300_000);
 });
 
+describe.skipIf(!ENABLED)("sessions the runner cuts off itself", () => {
+  // QA-M1-08: when the runner closes the browser because of --session-timeout (or Ctrl+C), the
+  // action in progress fails with browser_closed and the collector raises a `crash` issue. The
+  // session status (timeout) is right, but the issues table now says the browser crashed.
+  it.fails("QA-M1-08: a runner-initiated timeout does not raise a crash issue", async () => {
+    const agent = `qa-e2e-timeout-${stamp}`;
+    const run = await runFleet([
+      "--engines",
+      "chromium",
+      "--sessions",
+      "2",
+      "--concurrency",
+      "2",
+      "--scenario",
+      "heavy-page-crawl",
+      "--session-timeout",
+      "2",
+      "--seed",
+      "9",
+      "--agent",
+      agent,
+    ]);
+    expect(run.code, run.stderr).toBe(0);
+    const rows = await waitForSessions(agent, 2);
+    expect(rows.map((r) => r.status)).toEqual(["timeout", "timeout"]);
+    for (const r of rows) expect(r.reason).toBe("session exceeded 2s");
+    const actions = await sql<{ error_code: string }>(
+      `SELECT error_code FROM actions WHERE agent_id = '${agent}' AND ok = 0`,
+    );
+    expect(actions.map((a) => a.error_code)).toEqual(["browser_closed", "browser_closed"]);
+
+    const issues = await sql<{ kind: string }>(
+      `SELECT kind FROM issues WHERE agent_id = '${agent}'`,
+    );
+    // A crash issue would be a false statement: nothing crashed, the runner closed the browser.
+    expect(issues.filter((i) => i.kind === "crash").length).toBe(0);
+  }, 120_000);
+});
+
 describe.skipIf(!ENABLED)("the collector with a real Chromium", () => {
   const logger = pino({ level: "silent" });
   const fleet = new DockerFleet(IMAGE, "chromium", logger);
