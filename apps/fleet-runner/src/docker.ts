@@ -29,6 +29,34 @@ export interface StartOptions {
   readyTimeoutMs?: number;
 }
 
+/**
+ * Docker sends the logs of a container without a terminal as a multiplexed stream: every frame is an
+ * 8-byte header (stream type 0/1/2, three zero bytes, payload length as a big-endian uint32)
+ * followed by the payload. Read raw, the text starts with header bytes that print as odd control characters.
+ * This returns just the text. Logs of a container with a terminal have no headers and pass through.
+ */
+export function demuxLogs(raw: Buffer): string {
+  const looksFramed = (at: number) =>
+    at + 8 <= raw.length &&
+    raw[at] !== undefined &&
+    raw[at] <= 2 &&
+    raw[at + 1] === 0 &&
+    raw[at + 2] === 0 &&
+    raw[at + 3] === 0;
+  if (!looksFramed(0)) return raw.toString("utf8").trim();
+
+  const parts: string[] = [];
+  let offset = 0;
+  while (looksFramed(offset)) {
+    const size = raw.readUInt32BE(offset + 4);
+    // A cut-off last frame still yields the part that arrived.
+    parts.push(raw.subarray(offset + 8, offset + 8 + size).toString("utf8"));
+    offset += 8 + size;
+  }
+  if (offset < raw.length) parts.push(raw.subarray(offset).toString("utf8"));
+  return parts.join("").trim();
+}
+
 /** True for Docker's "no such container / already being removed" answers. */
 function isGone(error: unknown): boolean {
   const status = (error as { statusCode?: number } | null)?.statusCode;
@@ -178,7 +206,7 @@ export class DockerFleet {
     if (state.Running) return;
     const logs = await container
       .logs({ stdout: true, stderr: true, tail: 20 })
-      .then((buffer) => buffer.toString("utf8").trim())
+      .then((buffer) => demuxLogs(buffer))
       .catch(() => "");
     throw new Error(
       `browser container exited with code ${state.ExitCode} while starting${logs ? `: ${logs}` : ""}`,

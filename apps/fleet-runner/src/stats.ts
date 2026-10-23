@@ -81,61 +81,106 @@ export function networkTotals(stats: DockerStats): { rx: number; tx: number } | 
 export interface StatsPollerOptions {
   /** Reads one stats response for the container (`container.stats({ stream: false })`). */
   readStats: () => Promise<DockerStats>;
-  onSample: (sample: ContainerSample) => void;
+  /** Where samples go. Can be given later with `attach()`; samples taken before that are held. */
+  onSample?: (sample: ContainerSample) => void;
   logger: Logger;
   /** Time between readings. Default 2000. */
   intervalMs?: number;
+  /** Longest `stop()` waits for a reading. Default 2500. */
+  stopTimeoutMs?: number;
+}
+
+export interface StopOptions {
+  /**
+   * Make sure the session gets a last reading (default true): wait for the one in progress, or take
+   * a fresh one if none is. Pass false to just cancel, e.g. when the browser never came up.
+   */
+  finalSample?: boolean;
 }
 
 /**
  * Reads a container's stats every `intervalMs` and reports CPU %, memory, and network bytes since
  * the previous reading. The container is new for every session, so its network counters start at
  * zero and the first sample covers everything since startup.
+ *
+ * Every session gets at least one sample, however short:
+ *  - polling can start as soon as the container is serving, before the session exists; samples wait
+ *    until `attach()` gives them somewhere to go;
+ *  - `stop()` is awaited before the session ends, and finishes with a last reading. If a reading is
+ *    already in progress it waits for that one instead of starting a second, overlapping one.
+ * After `stop()` returns nothing is ever emitted, and no timer is left running.
  */
 export class StatsPoller {
   private timer: NodeJS.Timeout | null = null;
   private inFlight: Promise<void> | null = null;
-  private stopped = false;
+  private state: "idle" | "running" | "stopping" | "closed" = "idle";
+  private stopping: Promise<void> | null = null;
+  private sink: ((sample: ContainerSample) => void) | null;
+  private held: ContainerSample[] = [];
   private previousNet = { rx: 0, tx: 0 };
   private warnedNoNetwork = false;
   private peakMem = 0;
   private count = 0;
 
-  constructor(private readonly options: StatsPollerOptions) {}
+  constructor(private readonly options: StatsPollerOptions) {
+    this.sink = options.onSample ?? null;
+  }
 
   /** Highest memory reading so far, in MB (0 before the first sample). */
   get peakMemMb(): number {
     return this.peakMem;
   }
 
+  /** Samples taken so far (including ones still held for `attach()`). */
   get sampleCount(): number {
     return this.count;
   }
 
+  /** Sends samples to `sink`, starting with any taken while nobody was listening. */
+  attach(sink: (sample: ContainerSample) => void): void {
+    this.sink = sink;
+    for (const sample of this.held.splice(0)) sink(sample);
+  }
+
   /** Takes the first reading right away and then one every interval. */
   start(): void {
+    if (this.state !== "idle") return;
+    this.state = "running";
     this.schedule(0);
   }
 
-  /** Stops polling. Waits (briefly) for a reading in progress so nothing arrives after this. */
-  async stop(): Promise<void> {
-    this.stopped = true;
+  /** Stops polling; see the class comment for what is guaranteed. Safe to call twice. */
+  stop(options: StopOptions = {}): Promise<void> {
+    this.stopping ??= this.shutDown(options.finalSample ?? true);
+    return this.stopping;
+  }
+
+  private async shutDown(finalSample: boolean): Promise<void> {
+    const wasRunning = this.state === "running";
+    this.state = "stopping";
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
-    if (!this.inFlight) return;
-    let giveUp: NodeJS.Timeout | undefined;
-    await Promise.race([
-      this.inFlight,
-      new Promise<void>((resolve) => {
-        giveUp = setTimeout(resolve, 2500);
-      }),
-    ]);
-    clearTimeout(giveUp);
+    if (finalSample && wasRunning) {
+      // The reading in progress counts as the last one; only if there is none do we take another.
+      const reading = this.inFlight ?? this.poll();
+      let giveUp: NodeJS.Timeout | undefined;
+      await Promise.race([
+        reading,
+        new Promise<void>((resolve) => {
+          giveUp = setTimeout(resolve, this.options.stopTimeoutMs ?? 2500);
+        }),
+      ]);
+      clearTimeout(giveUp);
+    }
+    // A reading that is still running now (we gave up on it) will find the door closed.
+    this.state = "closed";
   }
 
   private schedule(delayMs: number): void {
-    if (this.stopped) return;
+    if (this.state !== "running") return;
     this.timer = setTimeout(() => {
+      this.timer = null;
+      if (this.state !== "running") return;
       const startedAt = Date.now();
       this.inFlight = this.poll().finally(() => {
         this.inFlight = null;
@@ -152,10 +197,12 @@ export class StatsPoller {
       stats = await this.options.readStats();
     } catch (error) {
       // The container is gone (session ended, browser killed) or Docker is busy. Not fatal.
-      if (!this.stopped) this.options.logger.debug({ err: error }, "container stats unavailable");
+      if (this.state !== "closed") {
+        this.options.logger.debug({ err: error }, "container stats unavailable");
+      }
       return;
     }
-    if (this.stopped) return;
+    if (this.state === "closed") return;
 
     const mem = memoryMb(stats);
     const net = networkTotals(stats);
@@ -179,6 +226,7 @@ export class StatsPoller {
     this.previousNet = net;
     this.peakMem = Math.max(this.peakMem, mem);
     this.count++;
-    this.options.onSample(sample);
+    if (this.sink) this.sink(sample);
+    else this.held.push(sample);
   }
 }

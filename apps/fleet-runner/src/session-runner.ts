@@ -103,9 +103,15 @@ export async function runSession(deps: SessionDeps, spec: SessionSpec): Promise<
 
   // Phase 1: infrastructure. A failure here leaves nothing to report.
   let connectMs = 0;
+  let poller: StatsPoller | undefined;
   try {
     container = await deps.fleet.startBrowser({ sessionId, signal: deps.signal });
     result.startupMs = Math.round(container.startupMs);
+    // The container is serving: start measuring it now, while Chromium launches. The first reading
+    // takes about a second, so this way it is ready when the session starts. Samples wait in the
+    // poller until the session exists.
+    poller = new StatsPoller({ readStats: container.readStats, logger: log });
+    poller.start();
     const connectStart = performance.now();
     browser = await chromium.connect(container.wsEndpoint, { timeout: CONNECT_TIMEOUT_MS });
     connectMs = performance.now() - connectStart;
@@ -113,6 +119,7 @@ export async function runSession(deps: SessionDeps, spec: SessionSpec): Promise<
   } catch (error) {
     result.reason = error instanceof Error ? error.message : String(error);
     log.error({ err: error }, "could not get a browser, session not reported");
+    await bounded(poller?.stop({ finalSample: false }), CLOSE_TIMEOUT_MS);
     await bounded(closeBrowser(), CLOSE_TIMEOUT_MS);
     await bounded(container?.remove(), CLOSE_TIMEOUT_MS * 3);
     return result;
@@ -132,11 +139,9 @@ export async function runSession(deps: SessionDeps, spec: SessionSpec): Promise<
     startupMs: container.startupMs,
     connectMs,
   });
-  const poller = new StatsPoller({
-    readStats: container.readStats,
-    onSample: (sample) => session.recordContainerSample(sample),
-    logger: log,
-  });
+  // Hand over the readings taken while the browser was launching, then every later one.
+  const stats = poller;
+  stats.attach((sample) => session.recordContainerSample(sample));
   const onAbort = () => void bounded(closeBrowser(), CLOSE_TIMEOUT_MS); // unblocks a running action
   deps.signal.addEventListener("abort", onAbort, { once: true });
   const deadline = setTimeout(() => {
@@ -146,7 +151,6 @@ export async function runSession(deps: SessionDeps, spec: SessionSpec): Promise<
 
   let error: unknown;
   try {
-    poller.start();
     const context = await browser.newContext({ viewport: VIEWPORT });
     const page = await session.collectPage(await context.newPage());
     await SCENARIOS[spec.scenario](page, {
@@ -168,8 +172,7 @@ export async function runSession(deps: SessionDeps, spec: SessionSpec): Promise<
 
   clearTimeout(deadline);
   deps.signal.removeEventListener("abort", onAbort);
-  await poller.stop();
-  await session.endSession(outcome.status, outcome.reason);
+  await finishSession(session, stats, outcome);
   await bounded(closeBrowser(), CLOSE_TIMEOUT_MS);
   await bounded(container.remove(), CLOSE_TIMEOUT_MS * 3);
 
@@ -184,8 +187,22 @@ export async function runSession(deps: SessionDeps, spec: SessionSpec): Promise<
     durationMs: sessionDurationMs(session),
     actions: session.actionCount,
     failedActions: session.failedActions,
-    peakMemMb: poller.sampleCount > 0 ? poller.peakMemMb : null,
+    peakMemMb: stats.sampleCount > 0 ? stats.peakMemMb : null,
   };
+}
+
+/**
+ * Ends a session in the order that keeps its data whole: the last container reading first (awaited,
+ * so a session of half a second still has a measurement), then `session.ended`, which is therefore
+ * always the final event of the session.
+ */
+export async function finishSession(
+  session: Pick<CollectedSession, "endSession">,
+  poller: Pick<StatsPoller, "stop">,
+  outcome: { status: SessionStatus; reason: string | null },
+): Promise<void> {
+  await poller.stop();
+  await session.endSession(outcome.status, outcome.reason);
 }
 
 function sessionDurationMs(session: CollectedSession): number {

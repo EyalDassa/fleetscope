@@ -3,7 +3,7 @@ import type { AddressInfo } from "node:net";
 import type Docker from "dockerode";
 import pino from "pino";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DockerFleet, LABEL_ENGINE, LABEL_SESSION } from "./docker";
+import { DockerFleet, demuxLogs, LABEL_ENGINE, LABEL_SESSION } from "./docker";
 
 const logger = pino({ level: "silent" });
 
@@ -200,6 +200,65 @@ describe("DockerFleet.startBrowser", () => {
     });
     await browser.readStats();
     expect(container.stats).toHaveBeenCalledWith({ stream: false });
+  });
+});
+
+/** One Docker log frame: stream type (1 = stdout, 2 = stderr), 3 zero bytes, big-endian length. */
+function frame(type: 1 | 2, text: string): Buffer {
+  const payload = Buffer.from(text, "utf8");
+  const header = Buffer.alloc(8);
+  header[0] = type;
+  header.writeUInt32BE(payload.length, 4);
+  return Buffer.concat([header, payload]);
+}
+
+describe("demuxLogs", () => {
+  it("strips the 8-byte frame headers and joins stdout and stderr", () => {
+    const raw = Buffer.concat([frame(1, "starting\n"), frame(2, "Error: boom\n")]);
+    const text = demuxLogs(raw);
+    expect(text).toBe("starting\nError: boom");
+    expect([...text].some((c) => c.charCodeAt(0) < 9)).toBe(false);
+  });
+
+  it("handles multi-byte text", () => {
+    expect(demuxLogs(frame(1, "café ✓\n"))).toBe("café ✓");
+  });
+
+  it("only the real header counts, even if the payload starts with header-like bytes", () => {
+    const payload = Buffer.concat([Buffer.from([1, 0, 0, 0, 0, 0, 0, 3]), Buffer.from("abc")]);
+    const header = Buffer.alloc(8);
+    header[0] = 1;
+    header.writeUInt32BE(payload.length, 4);
+    const text = demuxLogs(Buffer.concat([header, payload]));
+    expect(text.endsWith("abc")).toBe(true);
+    expect(text.length).toBe(payload.length); // the payload came through whole, trimmed or not
+  });
+
+  it("keeps what arrived of a cut-off last frame", () => {
+    const whole = frame(2, "something went wrong");
+    expect(demuxLogs(whole.subarray(0, whole.length - 6))).toBe("something went");
+  });
+
+  it("passes plain text (a container with a terminal) through", () => {
+    expect(demuxLogs(Buffer.from("plain text\n"))).toBe("plain text");
+    expect(demuxLogs(Buffer.alloc(0))).toBe("");
+  });
+
+  it("DockerFleet shows clean log text when the container dies while starting", async () => {
+    const container = fakeContainer(1, {
+      inspect: vi.fn(async () => ({
+        NetworkSettings: { Ports: { "3000/tcp": [{ HostPort: "1" }] } },
+        State: { Running: false, ExitCode: 126 },
+      })),
+      logs: vi.fn(async () => frame(2, "exec /entrypoint.sh: Permission denied\n")),
+    });
+    const { docker } = fakeDocker(container);
+    const error = await new DockerFleet("img", "chromium", logger, { docker })
+      .startBrowser({ sessionId: "s", readyTimeoutMs: 5000 })
+      .catch((e: Error) => e);
+    expect((error as Error).message).toBe(
+      "browser container exited with code 126 while starting: exec /entrypoint.sh: Permission denied",
+    );
   });
 });
 
