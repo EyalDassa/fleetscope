@@ -494,8 +494,17 @@ describe("over a real socket: clock skew", () => {
     expect(res.status).toBe(202);
     expect(res.body).toEqual({ accepted: 2, duplicates: 0 });
     await sleep(800);
-    // 202 was returned, the insert succeeded, and the data is gone (dropped by the TTL).
-    await expect.poll(() => count("actions", id), { timeout: 4000, interval: 200 }).toBe(0);
+    // 202 was returned, the insert succeeded, and the data is gone (dropped by the TTL, which is a
+    // background merge: ask for it, then poll, as the M0 TTL tests do).
+    await expect
+      .poll(
+        async () => {
+          await db.client.command({ query: "OPTIMIZE TABLE actions FINAL" }).catch(() => {});
+          return count("actions", id);
+        },
+        { timeout: 20_000, interval: 200 },
+      )
+      .toBe(0);
   });
 });
 

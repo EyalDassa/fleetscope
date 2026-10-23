@@ -44,6 +44,18 @@ const dockerUp = await new Docker()
   .then(() => true)
   .catch(() => false);
 
+// Does Node on this machine fail a refused `localhost` connection with an empty message? (QA-M1-02)
+const emptyMessageHere = await (async () => {
+  const probe = createServer();
+  await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
+  const { port } = probe.address() as AddressInfo;
+  await new Promise((resolve) => probe.close(resolve));
+  return fetch(`http://localhost:${port}`).then(
+    () => false,
+    (error: { cause?: { message?: string } }) => error.cause?.message === "",
+  );
+})();
+
 const servers: Server[] = [];
 afterAll(async () => {
   await Promise.all(servers.map((s) => new Promise((resolve) => s.close(resolve))));
@@ -146,17 +158,20 @@ describe("pnpm fleet run: preflight", () => {
 
   // QA-M1-02, end to end: API, demo site and Docker all down, addressed the way the defaults
   // are (localhost). All three must be listed; today only Docker is (see preflight.test.ts).
-  it.fails("QA-M1-02: lists the API, the demo site and Docker when all three are down", async () => {
-    const out = await runCli(["run", "--sessions", "2"], {
-      FLEETSCOPE_API_URL: `http://localhost:${await closedPort()}`,
-      DEMO_SITE_URL: `http://localhost:${await closedPort()}`,
-      DOCKER_HOST: `tcp://127.0.0.1:${await closedPort()}`,
-    });
-    expect(out.code).toBe(1);
-    expect(out.stderr.match(/^ {2}- /gm)).toHaveLength(3);
-    expect(out.stderr).toMatch(/API not healthy at http:\/\/localhost:\d+\/healthz/);
-    expect(out.stderr).toMatch(/demo site not answering at http:\/\/localhost:\d+/);
-  });
+  (emptyMessageHere ? it.fails : it.skip)(
+    "QA-M1-02: lists the API, the demo site and Docker when all three are down",
+    async () => {
+      const out = await runCli(["run", "--sessions", "2"], {
+        FLEETSCOPE_API_URL: `http://localhost:${await closedPort()}`,
+        DEMO_SITE_URL: `http://localhost:${await closedPort()}`,
+        DOCKER_HOST: `tcp://127.0.0.1:${await closedPort()}`,
+      });
+      expect(out.code).toBe(1);
+      expect(out.stderr.match(/^ {2}- /gm)).toHaveLength(3);
+      expect(out.stderr).toMatch(/API not healthy at http:\/\/localhost:\d+\/healthz/);
+      expect(out.stderr).toMatch(/demo site not answering at http:\/\/localhost:\d+/);
+    },
+  );
 });
 
 describe("pnpm fleet cleanup", () => {

@@ -1,6 +1,6 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { preflight } from "./preflight";
 
 /**
@@ -50,6 +50,12 @@ async function closedPort(): Promise<number> {
   await new Promise((resolve) => server.close(resolve));
   return port;
 }
+
+// Does Node on this machine fail a refused `localhost` connection with an empty message? (QA-M1-02)
+const emptyMessageHere = await fetch(`http://localhost:${await closedPort()}`).then(
+  () => false,
+  (error: { cause?: { message?: string } }) => error.cause?.message === "",
+);
 
 const checks = (problems: Array<{ check: string }>) => problems.map((p) => p.check).sort();
 
@@ -112,21 +118,49 @@ describe("preflight", () => {
   });
 
   // QA-M1-02. `localhost` (the default of FLEETSCOPE_API_URL and DEMO_SITE_URL) resolves to ::1
-  // and 127.0.0.1; when both refuse, Node's fetch fails with an AggregateError whose cause has an
-  // EMPTY message. fetchOk() returns that empty string, and `if (problem)` treats "" as "no
-  // problem". So a stopped API or demo site is not reported at all.
-  it.fails("QA-M1-02: reports an API and a demo site that are down when they are addressed as localhost", async () => {
-    const apiPort = await closedPort();
-    const sitePort = await closedPort();
-    const problems = await preflight({
-      apiUrl: `http://localhost:${apiPort}`,
-      demoSiteUrl: `http://localhost:${sitePort}`,
-      browserImage: "img:1",
-      docker: docker(),
+  // and 127.0.0.1; when both refuse, Node's fetch fails with a TypeError("fetch failed") whose
+  // cause is an AggregateError with an EMPTY message (code ECONNREFUSED). fetchOk() returns that
+  // empty string, and `if (problem)` treats "" as "no problem". So a stopped API or demo site is
+  // not reported at all, and the run starts.
+  //
+  // The first test fakes exactly that error, so it behaves the same on every machine. The second
+  // uses real sockets; it only means something where Node really produces the empty message (this
+  // Windows machine, dual-stack localhost), so it is skipped elsewhere.
+  const nodeError = () =>
+    Object.assign(new TypeError("fetch failed"), {
+      cause: Object.assign(new AggregateError([new Error(), new Error()]), {
+        code: "ECONNREFUSED",
+      }),
     });
-    expect(checks(problems)).toEqual(["api", "demo-site"]);
-    for (const problem of problems) expect(problem.message).toMatch(/\(\S.*\)/); // says why
+
+  it.fails("QA-M1-02: reports an API and a demo site whose connection fails with Node's empty AggregateError", async () => {
+    vi.stubGlobal("fetch", () => Promise.reject(nodeError()));
+    try {
+      const problems = await preflight({
+        apiUrl: "http://localhost:4000",
+        demoSiteUrl: "http://localhost:3100",
+        browserImage: "img:1",
+        docker: docker(),
+      });
+      expect(checks(problems)).toEqual(["api", "demo-site"]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
+
+  (emptyMessageHere ? it.fails : it.skip)(
+    "QA-M1-02: (real sockets) reports an API and a demo site that are down when they are addressed as localhost",
+    async () => {
+      const problems = await preflight({
+        apiUrl: `http://localhost:${await closedPort()}`,
+        demoSiteUrl: `http://localhost:${await closedPort()}`,
+        browserImage: "img:1",
+        docker: docker(),
+      });
+      expect(checks(problems)).toEqual(["api", "demo-site"]);
+      for (const problem of problems) expect(problem.message).toMatch(/(S.*)/); // says why
+    },
+  );
 
   it("reports an unreachable Docker, and does not look for the image then", async () => {
     const ok = await serve(200);
