@@ -27,6 +27,10 @@ jobs:
       - run: pnpm build # next build (web) and the esbuild bundle (api)
       - name: ClickHouse image tag in CI matches docker-compose
         run: bash .github/scripts/check-clickhouse-tag.sh
+      - name: Playwright client and browser image versions match
+        run: bash .github/scripts/check-playwright-version.sh --strict
+      - name: Shell scripts are executable in git (a Windows commit drops the bit)
+        run: bash .github/scripts/check-executable-bits.sh
 
   integration:
     name: Integration tests (ClickHouse)
@@ -62,6 +66,104 @@ jobs:
       - uses: ./.github/actions/setup
       - run: pnpm db:migrate
       - run: pnpm test:integration
+
+  # End-to-end check of the M1 pipeline: real Chromium containers -> collector -> API -> ClickHouse.
+  # No LLM calls and nothing from outside the repo except the Playwright base image from MCR.
+  fleet-smoke:
+    name: Fleet smoke (Chromium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      clickhouse:
+        # Keep the tag and env in sync with infra/docker-compose.yml.
+        image: clickhouse/clickhouse-server:26.8.34.13
+        env:
+          CLICKHOUSE_USER: fleetscope
+          CLICKHOUSE_PASSWORD: fleetscope_dev_password
+          CLICKHOUSE_DB: fleetscope
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+        ports:
+          - 8123:8123
+        options: >-
+          --ulimit nofile=262144:262144
+          --health-cmd "wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+          --health-start-period 10s
+    env:
+      # Same values as .env.example. These are throwaway credentials for the CI container only.
+      CLICKHOUSE_URL: http://localhost:8123
+      CLICKHOUSE_USER: fleetscope
+      CLICKHOUSE_PASSWORD: fleetscope_dev_password
+      CLICKHOUSE_DATABASE: fleetscope
+      LOG_LEVEL: info
+      API_PORT: "4000"
+      API_HOST: 127.0.0.1
+      FLEETSCOPE_API_URL: http://localhost:4000
+      DEMO_SITE_URL: http://localhost:3100
+      DEMO_SITE_PORT: "3100"
+      # The browser containers reach the demo site through host.docker.internal, which on Linux is
+      # the Docker bridge address, so it must listen on all interfaces, not just loopback.
+      DEMO_SITE_HOST: 0.0.0.0
+      # Must equal the image tag built below and the Playwright version pinned in the runner
+      # and collector (checked by .github/scripts/check-playwright-version.sh in the check job).
+      FLEET_BROWSER_IMAGE: fleetscope/playwright-chromium:1.64.1
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+
+      # The GitHub Actions layer cache needs the docker-container driver, which buildx sets up.
+      # Both Docker actions are pinned to a commit SHA because they get the Actions cache token.
+      # Dependabot's github-actions ecosystem keeps the pins updated.
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build the Chromium browser image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: infra/browsers
+          file: infra/browsers/chromium/Dockerfile
+          load: true # put the image into the local Docker daemon, where the fleet runner finds it
+          push: false
+          tags: fleetscope/playwright-chromium:1.64.1
+          # A cache problem (rate limit, outage) must never fail the build, so ignore-error.
+          cache-from: type=gha,scope=browser-chromium
+          cache-to: type=gha,mode=max,scope=browser-chromium,ignore-error=true
+          provenance: false # attestations cannot be loaded into the local daemon
+          sbom: false
+
+      - run: pnpm db:migrate
+      - name: Build the api and the demo site
+        run: pnpm --filter @fleetscope/api --filter @fleetscope/demo-site build
+      - name: Start the api and the demo site
+        run: |
+          mkdir -p smoke-logs
+          nohup pnpm --filter @fleetscope/api start > smoke-logs/api.log 2>&1 &
+          nohup pnpm --filter @fleetscope/demo-site start > smoke-logs/demo-site.log 2>&1 &
+          bash .github/scripts/wait-for-url.sh "$FLEETSCOPE_API_URL/healthz" 60 smoke-logs/api.log
+          bash .github/scripts/wait-for-url.sh "$DEMO_SITE_URL/healthz" 60 smoke-logs/demo-site.log
+
+      - name: Run 3 sessions in Chromium containers
+        timeout-minutes: 8
+        run: pnpm fleet run --engines chromium --sessions 3 --concurrency 2 --seed 1
+      - name: Check ClickHouse and Docker
+        run: bash .github/scripts/assert-fleet-smoke.sh
+
+      - name: Collect diagnostics
+        if: failure()
+        run: |
+          mkdir -p smoke-logs
+          docker ps --all > smoke-logs/docker-ps.txt 2>&1 || true
+          for id in $(docker ps --all --quiet --filter label=fleetscope.session); do
+            docker logs "$id" > "smoke-logs/container-$id.log" 2>&1 || true
+          done
+      - name: Upload api and demo site logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fleet-smoke-logs
+          path: smoke-logs/
+          retention-days: 7
+          if-no-files-found: ignore
 
   gitleaks:
     name: Secret scan (gitleaks)

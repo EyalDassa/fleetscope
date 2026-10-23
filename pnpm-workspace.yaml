@@ -7,3 +7,10 @@ packages:
 # Add a package here only after checking why it needs a build script.
 allowBuilds:
   esbuild: true
+  # dockerode -> docker-modem -> ssh2 -> cpu-features: optional native speedups for SSH-based Docker
+  # hosts, which we don't use (we talk to the local socket / named pipe). Pure-JS fallback is fine.
+  cpu-features: false
+  ssh2: false
+  # protobufjs (via @grpc/proto-loader, a dockerode dependency): its postinstall only does a
+  # version-scheme lookup for the CLI, not needed at runtime.
+  protobufjs: false

@@ -1,0 +1,23 @@
+{
+  "name": "@fleetscope/collector",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Collector SDK: wraps a Playwright page, measures every action and ships events to the Fleetscope API",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "lint": "biome check .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@fleetscope/schema": "workspace:*",
+    "pino": "^10.4.0",
+    "playwright-core": "1.64.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0"
+  }
+}

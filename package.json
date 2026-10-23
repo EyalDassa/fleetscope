@@ -9,7 +9,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "dev": "turbo run dev --filter=@fleetscope/web --filter=@fleetscope/api",
+    "dev": "turbo run dev --filter=@fleetscope/web --filter=@fleetscope/api --filter=@fleetscope/demo-site",
     "build": "turbo run build",
     "lint": "turbo run lint //#lint:root",
     "lint:root": "biome check --config-path=biome.root.json .",
@@ -20,7 +20,9 @@
     "infra:up": "docker compose --project-directory . -f infra/docker-compose.yml up -d --wait",
     "infra:down": "docker compose --project-directory . -f infra/docker-compose.yml down",
     "db:migrate": "pnpm --filter @fleetscope/db migrate",
-    "db:seed": "pnpm --filter @fleetscope/db seed"
+    "db:seed": "pnpm --filter @fleetscope/db seed",
+    "fleet": "pnpm --filter @fleetscope/fleet-runner fleet",
+    "browsers:build": "docker build -f infra/browsers/chromium/Dockerfile -t fleetscope/playwright-chromium:1.64.1 infra/browsers"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.6.2",

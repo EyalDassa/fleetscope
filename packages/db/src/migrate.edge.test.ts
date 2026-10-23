@@ -28,6 +28,7 @@ describe("loadMigrationFiles", () => {
       "0003_resource_samples.sql",
       "0004_network_requests.sql",
       "0005_issues.sql",
+      "0006_insert_dedup_window.sql",
     ]);
     for (const file of files) expect(file.checksum).toMatch(/^[0-9a-f]{64}$/);
     expect(new Set(files.map((f) => f.checksum)).size).toBe(files.length);
@@ -94,9 +95,15 @@ describe("splitStatements", () => {
     expect(splitStatements("SELECT 1")).toEqual(["SELECT 1"]);
   });
 
-  it("splits every real migration into exactly one statement", async () => {
+  // The README rule: a file that fails halfway re-runs from its first statement, so a file has one
+  // statement or only statements that are safe to run twice. 0006 sets the same setting on five
+  // tables (MODIFY SETTING just sets the value again).
+  it("gives every real migration one statement, or only statements that are safe to repeat", async () => {
+    const repeatable = /^(CREATE TABLE IF NOT EXISTS|ALTER TABLE \w+\s+MODIFY SETTING)\b/i;
     for (const file of await loadMigrationFiles()) {
-      expect(splitStatements(file.sql), file.name).toHaveLength(1);
+      const statements = splitStatements(file.sql);
+      if (statements.length === 1) continue;
+      for (const statement of statements) expect(statement, file.name).toMatch(repeatable);
     }
   });
 

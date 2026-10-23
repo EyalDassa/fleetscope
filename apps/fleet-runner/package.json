@@ -1,0 +1,25 @@
+{
+  "name": "@fleetscope/fleet-runner",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Fleet runner: runs scenarios in one Docker browser container per session and reports to the Fleetscope API",
+  "type": "module",
+  "scripts": {
+    "fleet": "node --env-file-if-exists=../../.env --import tsx src/cli.ts",
+    "lint": "biome check .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@fleetscope/collector": "workspace:*",
+    "@fleetscope/schema": "workspace:*",
+    "dockerode": "^5.0.1",
+    "pino": "^10.4.0",
+    "playwright-core": "1.64.1"
+  },
+  "devDependencies": {
+    "@types/dockerode": "^4.0.2",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.23.15"
+  }
+}

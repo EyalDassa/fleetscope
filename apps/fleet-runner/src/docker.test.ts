@@ -1,0 +1,394 @@
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { Readable } from "node:stream";
+import type Docker from "dockerode";
+import pino from "pino";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { DockerFleet, demuxLogs, LABEL_ENGINE, LABEL_RUN, LABEL_SESSION } from "./docker";
+
+const logger = pino({ level: "silent" });
+
+let server: Server | undefined;
+
+afterEach(async () => {
+  const closing = server;
+  server = undefined;
+  if (!closing) return;
+  closing.closeAllConnections();
+  await new Promise<void>((resolve) => closing.close(() => resolve()));
+});
+
+/** Stands in for Playwright's run-server: answers 200 "Running" after `failFirst` bad answers. */
+async function fakeBrowserServer(failFirst = 0): Promise<number> {
+  let calls = 0;
+  const created = createServer((_req, res) => {
+    if (calls++ < failFirst) {
+      res.writeHead(502);
+      res.end("not yet");
+    } else {
+      res.end("Running");
+    }
+  });
+  server = created;
+  await new Promise<void>((resolve) => created.listen(0, "127.0.0.1", resolve));
+  return (created.address() as AddressInfo).port;
+}
+
+function fakeContainer(hostPort: number | null, overrides: Record<string, unknown> = {}) {
+  return {
+    id: "container-1",
+    start: vi.fn(async () => undefined),
+    inspect: vi.fn(async () => ({
+      NetworkSettings: {
+        Ports: {
+          "3000/tcp":
+            hostPort === null ? null : [{ HostIp: "127.0.0.1", HostPort: String(hostPort) }],
+        },
+      },
+      State: { Running: true, ExitCode: 0, StartedAt: "2026-10-23T12:00:00.250000000Z" },
+    })),
+    remove: vi.fn(async () => undefined),
+    stats: vi.fn(async () => Readable.from(['{"read":"a"}\n', '{"read":"b"}\n'])),
+    logs: vi.fn(async () => Buffer.from("")),
+    ...overrides,
+  };
+}
+
+function fakeDocker(container: ReturnType<typeof fakeContainer>) {
+  const createContainer = vi.fn(async (_options: unknown) => container);
+  const docker = { createContainer } as unknown as Docker;
+  return { docker, createContainer };
+}
+
+describe("DockerFleet.startBrowser", () => {
+  it("creates the container the contract describes", async () => {
+    const port = await fakeBrowserServer();
+    const container = fakeContainer(port);
+    const { docker, createContainer } = fakeDocker(container);
+    const fleet = new DockerFleet("fleetscope/playwright-chromium:1.64.1", "chromium", logger, {
+      docker,
+      env: ["DEMO_SITE_UPSTREAM=host.docker.internal:3100"],
+    });
+
+    const browser = await fleet.startBrowser({ sessionId: "sess-1" });
+
+    expect(createContainer).toHaveBeenCalledTimes(1);
+    expect(createContainer.mock.calls[0]?.[0]).toMatchObject({
+      Image: "fleetscope/playwright-chromium:1.64.1",
+      Env: ["DEMO_SITE_UPSTREAM=host.docker.internal:3100"],
+      Labels: { [LABEL_ENGINE]: "chromium", [LABEL_SESSION]: "sess-1" },
+      ExposedPorts: { "3000/tcp": {} },
+      HostConfig: {
+        Init: true,
+        // random host port (empty HostPort), bound to loopback only
+        PortBindings: { "3000/tcp": [{ HostIp: "127.0.0.1", HostPort: "" }] },
+        ExtraHosts: ["host.docker.internal:host-gateway"],
+      },
+    });
+    // R-M1-02: the browser must not share the host's IPC namespace (and /dev/shm) with other sessions.
+    const created = createContainer.mock.calls[0]?.[0] as { HostConfig: Record<string, unknown> };
+    const hostConfig = created.HostConfig;
+    expect(hostConfig.IpcMode).not.toBe("host");
+    expect(hostConfig.IpcMode).toBeUndefined();
+    expect(container.start).toHaveBeenCalled();
+    expect(browser.wsEndpoint).toBe(`ws://127.0.0.1:${port}/`);
+    expect(browser.id).toBe("container-1");
+    expect(browser.startupMs).toBeGreaterThanOrEqual(0);
+    expect(container.remove).not.toHaveBeenCalled();
+  });
+
+  it("passes no Env when none is configured", async () => {
+    const port = await fakeBrowserServer();
+    const { docker, createContainer } = fakeDocker(fakeContainer(port));
+    await new DockerFleet("img", "chromium", logger, { docker }).startBrowser({ sessionId: "s" });
+    expect(createContainer.mock.calls[0]?.[0]).toMatchObject({ Env: [] });
+  });
+
+  it("waits until the server answers, however early the port accepts connections", async () => {
+    const port = await fakeBrowserServer(3);
+    const { docker } = fakeDocker(fakeContainer(port));
+    const browser = await new DockerFleet("img", "chromium", logger, { docker }).startBrowser({
+      sessionId: "s",
+    });
+    expect(browser.startupMs).toBeGreaterThanOrEqual(250); // three 100 ms polls
+  });
+
+  it("removes the container and throws if the server never answers", async () => {
+    const container = fakeContainer(1); // nothing listens on port 1
+    const { docker } = fakeDocker(container);
+    await expect(
+      new DockerFleet("img", "chromium", logger, { docker }).startBrowser({
+        sessionId: "s",
+        readyTimeoutMs: 400,
+      }),
+    ).rejects.toThrow(/did not answer within 400 ms/);
+    expect(container.remove).toHaveBeenCalledWith({ force: true, v: true });
+  });
+
+  it("removes the container if Docker published no port", async () => {
+    const container = fakeContainer(null);
+    const { docker } = fakeDocker(container);
+    await expect(
+      new DockerFleet("img", "chromium", logger, { docker }).startBrowser({ sessionId: "s" }),
+    ).rejects.toThrow(/did not publish/);
+    expect(container.remove).toHaveBeenCalled();
+  });
+
+  it("removes the container if it was interrupted while starting", async () => {
+    const container = fakeContainer(1);
+    const { docker } = fakeDocker(container);
+    const abort = new AbortController();
+    abort.abort();
+    await expect(
+      new DockerFleet("img", "chromium", logger, { docker }).startBrowser({
+        sessionId: "s",
+        signal: abort.signal,
+      }),
+    ).rejects.toThrow(/interrupted/);
+    expect(container.remove).toHaveBeenCalled();
+  });
+
+  it("reports the exit code and last log lines if the container dies while starting", async () => {
+    const container = fakeContainer(1, {
+      inspect: vi.fn(async () => ({
+        NetworkSettings: { Ports: { "3000/tcp": [{ HostPort: "1" }] } },
+        State: { Running: false, ExitCode: 137 },
+      })),
+      logs: vi.fn(async () => Buffer.from("Error: out of memory\n")),
+    });
+    const { docker } = fakeDocker(container);
+    await expect(
+      new DockerFleet("img", "chromium", logger, { docker }).startBrowser({
+        sessionId: "s",
+        readyTimeoutMs: 5000,
+      }),
+    ).rejects.toThrow(/exited with code 137.*out of memory/);
+    expect(container.remove).toHaveBeenCalled();
+  });
+
+  it("counts containers that are being started, so the exit-now path can wait for them", async () => {
+    const port = await fakeBrowserServer();
+    const { docker } = fakeDocker(fakeContainer(port));
+    const fleet = new DockerFleet("img", "chromium", logger, { docker });
+    expect(fleet.starting).toBe(0);
+    const starting = fleet.startBrowser({ sessionId: "s" });
+    expect(fleet.starting).toBe(1);
+    await starting;
+    expect(fleet.starting).toBe(0);
+
+    const failing = new DockerFleet("img", "chromium", logger, {
+      docker: {
+        createContainer: async () => Promise.reject(new Error("no space")),
+      } as unknown as Docker,
+    });
+    await expect(failing.startBrowser({ sessionId: "s" })).rejects.toThrow("no space");
+    expect(failing.starting).toBe(0);
+  });
+
+  it("an interrupt while Docker was creating the container: it is removed without being started", async () => {
+    const container = fakeContainer(1);
+    const abort = new AbortController();
+    abort.abort();
+    const { docker } = fakeDocker(container);
+    await expect(
+      new DockerFleet("img", "chromium", logger, { docker }).startBrowser({
+        sessionId: "s",
+        signal: abort.signal,
+      }),
+    ).rejects.toThrow(/interrupted/);
+    expect(container.start).not.toHaveBeenCalled();
+    expect(container.remove).toHaveBeenCalled();
+  });
+
+  it("remove() treats 'no such container' and 'already being removed' as done", async () => {
+    const port = await fakeBrowserServer();
+    for (const statusCode of [404, 409]) {
+      const container = fakeContainer(port, {
+        remove: vi.fn(async () => {
+          throw Object.assign(new Error("gone"), { statusCode });
+        }),
+      });
+      const { docker } = fakeDocker(container);
+      const browser = await new DockerFleet("img", "chromium", logger, { docker }).startBrowser({
+        sessionId: "s",
+      });
+      await expect(browser.remove()).resolves.toBeUndefined();
+    }
+  });
+
+  it("remove() reports a real failure", async () => {
+    const port = await fakeBrowserServer();
+    const container = fakeContainer(port, {
+      remove: vi.fn(async () => {
+        throw Object.assign(new Error("daemon error"), { statusCode: 500 });
+      }),
+    });
+    const { docker } = fakeDocker(container);
+    const browser = await new DockerFleet("img", "chromium", logger, { docker }).startBrowser({
+      sessionId: "s",
+    });
+    await expect(browser.remove()).rejects.toThrow("daemon error");
+  });
+
+  it("the stats stream is Docker's streaming call, parsed into frames, and closes cleanly", async () => {
+    const port = await fakeBrowserServer();
+    const container = fakeContainer(port);
+    const { docker } = fakeDocker(container);
+    const browser = await new DockerFleet("img", "chromium", logger, { docker }).startBrowser({
+      sessionId: "s",
+    });
+    const stream = await browser.openStatsStream();
+    expect(container.stats).toHaveBeenCalledWith({ stream: true });
+    const frames: unknown[] = [];
+    for await (const frame of stream.frames) frames.push(frame);
+    expect(frames).toEqual([{ read: "a" }, { read: "b" }]);
+    expect(() => stream.close()).not.toThrow();
+  });
+
+  it("tells when the container started, from Docker's clock", async () => {
+    const port = await fakeBrowserServer();
+    const { docker } = fakeDocker(fakeContainer(port));
+    const browser = await new DockerFleet("img", "chromium", logger, { docker }).startBrowser({
+      sessionId: "s",
+    });
+    expect(browser.startedAtMs).toBe(Date.parse("2026-10-23T12:00:00.250Z"));
+  });
+
+  it("every container carries the run label, when the fleet has a run id", async () => {
+    const port = await fakeBrowserServer();
+    const { docker, createContainer } = fakeDocker(fakeContainer(port));
+    await new DockerFleet("img", "chromium", logger, { docker, runId: "r1" }).startBrowser({
+      sessionId: "s",
+    });
+    expect(createContainer.mock.calls[0]?.[0]).toMatchObject({
+      Labels: { [LABEL_SESSION]: "s", [LABEL_RUN]: "r1" },
+    });
+  });
+
+  it("without a run id there is no run label", async () => {
+    const port = await fakeBrowserServer();
+    const { docker, createContainer } = fakeDocker(fakeContainer(port));
+    await new DockerFleet("img", "chromium", logger, { docker }).startBrowser({ sessionId: "s" });
+    const created = createContainer.mock.calls[0]?.[0] as { Labels: Record<string, string> };
+    const labels = created.Labels;
+    expect(LABEL_RUN in labels).toBe(false);
+  });
+});
+
+/** One Docker log frame: stream type (1 = stdout, 2 = stderr), 3 zero bytes, big-endian length. */
+function frame(type: 1 | 2, text: string): Buffer {
+  const payload = Buffer.from(text, "utf8");
+  const header = Buffer.alloc(8);
+  header[0] = type;
+  header.writeUInt32BE(payload.length, 4);
+  return Buffer.concat([header, payload]);
+}
+
+describe("demuxLogs", () => {
+  it("strips the 8-byte frame headers and joins stdout and stderr", () => {
+    const raw = Buffer.concat([frame(1, "starting\n"), frame(2, "Error: boom\n")]);
+    const text = demuxLogs(raw);
+    expect(text).toBe("starting\nError: boom");
+    expect([...text].some((c) => c.charCodeAt(0) < 9)).toBe(false);
+  });
+
+  it("handles multi-byte text", () => {
+    expect(demuxLogs(frame(1, "café ✓\n"))).toBe("café ✓");
+  });
+
+  it("only the real header counts, even if the payload starts with header-like bytes", () => {
+    const payload = Buffer.concat([Buffer.from([1, 0, 0, 0, 0, 0, 0, 3]), Buffer.from("abc")]);
+    const header = Buffer.alloc(8);
+    header[0] = 1;
+    header.writeUInt32BE(payload.length, 4);
+    const text = demuxLogs(Buffer.concat([header, payload]));
+    expect(text.endsWith("abc")).toBe(true);
+    expect(text.length).toBe(payload.length); // the payload came through whole, trimmed or not
+  });
+
+  it("keeps what arrived of a cut-off last frame", () => {
+    const whole = frame(2, "something went wrong");
+    expect(demuxLogs(whole.subarray(0, whole.length - 6))).toBe("something went");
+  });
+
+  it("passes plain text (a container with a terminal) through", () => {
+    expect(demuxLogs(Buffer.from("plain text\n"))).toBe("plain text");
+    expect(demuxLogs(Buffer.alloc(0))).toBe("");
+  });
+
+  it("DockerFleet shows clean log text when the container dies while starting", async () => {
+    const container = fakeContainer(1, {
+      inspect: vi.fn(async () => ({
+        NetworkSettings: { Ports: { "3000/tcp": [{ HostPort: "1" }] } },
+        State: { Running: false, ExitCode: 126 },
+      })),
+      logs: vi.fn(async () => frame(2, "exec /entrypoint.sh: Permission denied\n")),
+    });
+    const { docker } = fakeDocker(container);
+    const error = await new DockerFleet("img", "chromium", logger, { docker })
+      .startBrowser({ sessionId: "s", readyTimeoutMs: 5000 })
+      .catch((e: Error) => e);
+    expect((error as Error).message).toBe(
+      "browser container exited with code 126 while starting: exec /entrypoint.sh: Permission denied",
+    );
+  });
+});
+
+describe("DockerFleet cleanup and checks", () => {
+  it("removeAllOwned finds containers by the session label, in any state, and removes them", async () => {
+    const remove = vi.fn(async () => undefined);
+    const listContainers = vi.fn(async () => [{ Id: "a" }, { Id: "b" }]);
+    const getContainer = vi.fn(() => ({ remove }));
+    const fleet = new DockerFleet("img", "chromium", logger, {
+      docker: { listContainers, getContainer } as unknown as Docker,
+    });
+
+    expect(await fleet.removeAllOwned()).toBe(2);
+    expect(listContainers).toHaveBeenCalledWith({ all: true, filters: { label: [LABEL_SESSION] } });
+    expect(remove).toHaveBeenCalledTimes(2);
+    expect(remove).toHaveBeenCalledWith({ force: true, v: true });
+  });
+
+  it("removeAllOwned({ runId }) only touches that run's containers", async () => {
+    const remove = vi.fn(async () => undefined);
+    const listContainers = vi.fn(async () => [{ Id: "mine" }]);
+    const getContainer = vi.fn(() => ({ remove }));
+    const fleet = new DockerFleet("img", "chromium", logger, {
+      docker: { listContainers, getContainer } as unknown as Docker,
+    });
+
+    expect(await fleet.removeAllOwned({ runId: "r1" })).toBe(1);
+    expect(listContainers).toHaveBeenCalledWith({
+      all: true,
+      filters: { label: [LABEL_SESSION, "fleetscope.run=r1"] },
+    });
+    expect(getContainer).toHaveBeenCalledWith("mine");
+  });
+
+  it("removeAllOwned keeps going when one container is already gone or fails", async () => {
+    const listContainers = vi.fn(async () => [{ Id: "gone" }, { Id: "broken" }, { Id: "ok" }]);
+    const getContainer = vi.fn((id: string) => ({
+      remove: vi.fn(async () => {
+        if (id === "gone") throw Object.assign(new Error("no such container"), { statusCode: 404 });
+        if (id === "broken") throw Object.assign(new Error("boom"), { statusCode: 500 });
+      }),
+    }));
+    const fleet = new DockerFleet("img", "chromium", logger, {
+      docker: { listContainers, getContainer } as unknown as Docker,
+    });
+    expect(await fleet.removeAllOwned()).toBe(1);
+  });
+
+  it("hasImage is false for a missing image and rethrows other errors", async () => {
+    const inspect = vi.fn();
+    const fleet = new DockerFleet("img:1", "chromium", logger, {
+      docker: { getImage: () => ({ inspect }) } as unknown as Docker,
+    });
+    inspect.mockResolvedValueOnce({});
+    expect(await fleet.hasImage()).toBe(true);
+    inspect.mockRejectedValueOnce(Object.assign(new Error("no such image"), { statusCode: 404 }));
+    expect(await fleet.hasImage()).toBe(false);
+    inspect.mockRejectedValueOnce(Object.assign(new Error("daemon down"), { statusCode: 500 }));
+    await expect(fleet.hasImage()).rejects.toThrow("daemon down");
+  });
+});

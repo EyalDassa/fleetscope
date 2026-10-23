@@ -1,4 +1,9 @@
-import { type FleetEvent, SESSION_RUNNING, type SessionState } from "@fleetscope/schema";
+import {
+  type FleetEvent,
+  SESSION_RUNNING,
+  type SessionEndedEvent,
+  type SessionState,
+} from "@fleetscope/schema";
 import type { ClickHouseClient } from "./client";
 
 /**
@@ -156,6 +161,49 @@ export interface InsertCounts {
   orphanedEnds: number;
 }
 
+/** What `insertEvents` reports: the counts, plus the end events it could not store (see below). */
+export interface InsertResult extends InsertCounts {
+  /**
+   * The `session.ended` events whose session is neither in the batch nor stored yet. Nothing was
+   * written for them. The ingest buffer holds them and offers them again in later flushes, because
+   * their `session.started` may simply be in a later batch. `orphanedEnds === orphans.length`.
+   */
+  orphans: SessionEndedEvent[];
+}
+
+/** The tables `insertEvents` writes to, in the order it writes them. */
+export const INSERT_TABLES = [
+  "sessions",
+  "actions",
+  "resource_samples",
+  "network_requests",
+  "issues",
+] as const;
+export type InsertTable = (typeof INSERT_TABLES)[number];
+
+/** One `insert_deduplication_token` per table. A table without a token is not deduplicated. */
+export type DedupTokens = Partial<Record<InsertTable, string>>;
+
+/**
+ * The tokens for one flush: `<flushId>:<table>`. Reuse the same flush id (and the same events) when
+ * a failed flush is retried, and ClickHouse skips every table insert that already succeeded.
+ * Use a new flush id for every new batch: the token alone identifies a block, not its content.
+ */
+export function dedupTokensFor(flushId: string): Record<InsertTable, string> {
+  return Object.fromEntries(INSERT_TABLES.map((table) => [table, `${flushId}:${table}`])) as Record<
+    InsertTable,
+    string
+  >;
+}
+
+export interface InsertOptions {
+  /**
+   * Makes the call safe to repeat. With a token, ClickHouse skips an insert whose token it has
+   * already seen (see migration 0006 for the window); without one, nothing is deduplicated.
+   */
+  dedupTokens?: DedupTokens;
+}
+
 /**
  * The client sends query parameters in the URL, and ClickHouse rejects a single parameter of about
  * 64 KB or more ("HTML Form Exception: Field value too long"). 5,000 ids of 128 characters are
@@ -209,17 +257,37 @@ async function findStoredSessions(
   return found;
 }
 
+/** Settings for one table INSERT: deduplicate by token if given, otherwise not at all. */
+function insertSettings(token: string | undefined) {
+  // Once a table has a dedup window (migration 0006), ClickHouse also skips an insert whose
+  // CONTENT it has seen before. That would silently swallow legitimate repeats (the seed, tests),
+  // so deduplication is on only when the caller says so, with a token.
+  //
+  // ClickHouse 26.x: `deduplicate_insert` replaced `insert_deduplicate`, which is now ignored
+  // unless `deduplicate_insert` is 'backward_compatible_choice'. Older servers do not know it.
+  return token === undefined
+    ? ({ deduplicate_insert: "disable" } as const)
+    : ({ deduplicate_insert: "enable", insert_deduplication_token: token } as const);
+}
+
 /**
  * Write events to ClickHouse: one batch INSERT per table. Events must already be validated.
  *
  * `sessions` holds full snapshots, so a `session.ended` is merged with its `session.started`
- * (from the same batch, else from the table). TODO(M1): the ingest buffer may also want to keep
- * open sessions in memory instead of querying.
+ * (from the same batch, else from the table). An end that finds no start is not written; it is
+ * returned in `orphans` so the caller can try again later.
+ *
+ * ClickHouse has no transaction across tables, so a failure leaves the earlier tables written.
+ * Pass `dedupTokens` and call again with the same events and tokens to finish the job without
+ * duplicating what was already written.
  */
 export async function insertEvents(
   client: ClickHouseClient,
   events: readonly FleetEvent[],
-): Promise<InsertCounts> {
+  options: InsertOptions = {},
+): Promise<InsertResult> {
+  const tokens = options.dedupTokens ?? {};
+  const orphans: SessionEndedEvent[] = [];
   const counts: InsertCounts = {
     sessions: 0,
     actions: 0,
@@ -262,18 +330,29 @@ export async function insertEvents(
     const base = stored.get(id);
     const ended = ends.get(id);
     if (base && ended) sessionRows.push(endedSessionRow(base, ended));
-    else counts.orphanedEnds++;
+    else if (ended) orphans.push(ended);
   }
+  counts.orphanedEnds = orphans.length;
 
   if (sessionRows.length > 0) {
-    await client.insert({ table: "sessions", values: sessionRows, format: "JSONEachRow" });
+    await client.insert({
+      table: "sessions",
+      values: sessionRows,
+      format: "JSONEachRow",
+      clickhouse_settings: insertSettings(tokens.sessions),
+    });
     counts.sessions = sessionRows.length;
   }
   for (const table of Object.keys(raw) as RawTable[]) {
     const values = raw[table];
     if (values.length === 0) continue;
-    await client.insert({ table, values, format: "JSONEachRow" });
+    await client.insert({
+      table,
+      values,
+      format: "JSONEachRow",
+      clickhouse_settings: insertSettings(tokens[table]),
+    });
     counts[table] = values.length;
   }
-  return counts;
+  return { ...counts, orphans };
 }
