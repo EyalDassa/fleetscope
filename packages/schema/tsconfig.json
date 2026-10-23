@@ -1,4 +1,8 @@
 {
   "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // DOM only for the global `crypto.randomUUID()` in newEvent. This package runs in Node and browsers.
+    "lib": ["ES2023", "DOM"]
+  },
   "include": ["src"]
 }
