@@ -151,3 +151,28 @@ describe("RETENTION_DAYS", () => {
     }
   });
 });
+
+describe("the retention window works on whole days (why the API's cutoff is midnight, 29 days back)", () => {
+  it("keeps an event from the start of day today-29 and drops one from the last moment of day today-30", async () => {
+    const id = sid("whole-days");
+    const startOfToday = Date.now() - (Date.now() % DAY);
+    const keep = startOfToday - (RETENTION_DAYS - 1) * DAY; // 00:00 UTC, 29 days ago
+    const drop = keep - 1; // 23:59:59.999 UTC, 30 days ago
+    await insertEvents(db.client, [action(id, 0, keep), action(id, 1, drop)]);
+
+    await db.client.command({ query: "OPTIMIZE TABLE actions FINAL" }).catch(() => {});
+    const count = async () => {
+      const result = await db.client.query({
+        query: "SELECT seq FROM actions WHERE session_id = {id:String} ORDER BY seq",
+        query_params: { id },
+        format: "JSONEachRow",
+      });
+      return (await result.json<{ seq: number }>()).map((row) => row.seq);
+    };
+    await expect.poll(count, { timeout: 20_000, interval: 100 }).not.toContain(1);
+    // If the test crossed midnight UTC, the day-29 event is legitimately gone too.
+    if (Date.now() - (Date.now() % DAY) === startOfToday) {
+      expect(await count()).toEqual([0]);
+    }
+  });
+});
