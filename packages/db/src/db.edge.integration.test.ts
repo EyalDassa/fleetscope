@@ -754,7 +754,7 @@ describe("migrations: concurrency and history", () => {
     const config = { ...db.config, database: `${db.config.database}_empty` };
     try {
       const result = await runMigrations(config);
-      expect(result.applied).toHaveLength(5);
+      expect(result.applied).toHaveLength(6);
       const client = createClickHouseClient(config);
       const tables = await (
         await client.query({
@@ -806,7 +806,7 @@ describe("migrations: concurrency and history", () => {
         runMigrations(config),
       ]);
       const counts = await ledgerCounts(config.database);
-      expect(Object.keys(counts)).toHaveLength(5);
+      expect(Object.keys(counts)).toHaveLength(6);
       for (const n of Object.values(counts)) {
         expect(n).toBeGreaterThanOrEqual(1);
         expect(n).toBeLessThanOrEqual(3);

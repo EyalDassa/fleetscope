@@ -55,6 +55,11 @@ export function createClickHouseClient(
     password: config.password,
     ...(database === null ? {} : { database }),
     request_timeout: options.requestTimeoutMs ?? 30_000,
+    // ClickHouse 26.x turns async inserts on by default (the server then batches our batches and
+    // makes each INSERT wait for its own flush). We already batch in the API's ingest buffer, so a
+    // plain synchronous INSERT behaves the same locally, in CI and on ClickHouse Cloud, and makes
+    // insert_deduplication_token reliable (ADR 0002).
+    clickhouse_settings: { async_insert: 0 },
     log: { LoggerClass: pinoAdapter(logger), level: ClickHouseLogLevel.ERROR },
   });
 }
