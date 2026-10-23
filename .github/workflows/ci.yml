@@ -29,6 +29,8 @@ jobs:
         run: bash .github/scripts/check-clickhouse-tag.sh
       - name: Playwright client and browser image versions match
         run: bash .github/scripts/check-playwright-version.sh --strict
+      - name: Shell scripts are executable in git (a Windows commit drops the bit)
+        run: bash .github/scripts/check-executable-bits.sh
 
   integration:
     name: Integration tests (ClickHouse)

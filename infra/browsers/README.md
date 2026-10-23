@@ -97,6 +97,21 @@ Details worth knowing:
   `DEMO_SITE_HOST`). On Linux and in CI `host.docker.internal` is the Docker bridge address, which a
   loopback-only listener does not accept.
 
+### File permissions in the image (a bug we hit)
+
+The first CI run failed with `[FATAL tini] exec /opt/fleetscope/entrypoint.sh failed: Permission
+denied`, exit code 126, for every container. Cause: `COPY --chmod=0644 forward-port.mjs
+/opt/fleetscope/...` made BuildKit create `/opt/fleetscope` itself with mode `0644` (it applies
+`--chmod` to directories it creates, moby/buildkit#5943), and `pwuser` cannot enter such a
+directory, although the entrypoint file inside was `0755`.
+
+So the Dockerfile now creates the directory and sets every mode with `chmod`, with no `COPY --chmod`,
+and a last `RUN` as `pwuser` (`test -x`, `test -r`, `bash -n`, `node --check`) makes the **build**
+fail if the user cannot use the files. A second cause gives the same message: a script committed
+from Windows is stored as `100644`. The chmod covers that for the image, and CI (`check-executable-bits.sh`)
+fails if a `.sh` file under `.github/` or `infra/` is not `100755` in git. To fix one:
+`git update-index --chmod=+x <file>` (tracked file) or `git add --chmod=+x <file>` (new file).
+
 ### Health check
 
 `HEALTHCHECK` opens a TCP connection to port 3000 with bash's built-in `/dev/tcp` every 30 s.

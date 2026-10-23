@@ -40,12 +40,30 @@ ENV PATH="/opt/playwright-server/node_modules/.bin:${PATH}"
 # host, so pages run in a secure context in every engine. See forward-port.mjs for the reasoning.
 # Where it forwards to; the listening port inside the container is the same as the upstream port.
 ENV DEMO_SITE_UPSTREAM=host.docker.internal:3100
-COPY --chmod=0644 forward-port.mjs /opt/fleetscope/forward-port.mjs
-COPY --chmod=0755 chromium/entrypoint.sh /opt/fleetscope/entrypoint.sh
+
+# PERMISSIONS ARE SET EXPLICITLY, not with `COPY --chmod`, for two reasons that both give the same
+# error at container start ("exec /opt/fleetscope/entrypoint.sh failed: Permission denied"):
+#  1. BuildKit applies `COPY --chmod` to a directory it has to create too (moby/buildkit#5943).
+#     `COPY --chmod=0644 x /opt/fleetscope/x` made /opt/fleetscope a 0644 directory that pwuser
+#     cannot enter. So the directory is created here, with a mode we choose.
+#  2. The file mode in git is not reliable: a commit from a Windows checkout stores 100644.
+#     The chmod below makes the image independent of it (git also stores 100755, see CI).
+RUN mkdir -p /opt/fleetscope && chmod 0755 /opt/fleetscope
+COPY forward-port.mjs chromium/entrypoint.sh /opt/fleetscope/
+RUN chmod 0755 /opt/fleetscope /opt/fleetscope/entrypoint.sh \
+ && chmod 0644 /opt/fleetscope/forward-port.mjs \
+ && ls -ld /opt/fleetscope /opt/fleetscope/*
 
 USER pwuser
 WORKDIR /home/pwuser
 EXPOSE 3000
+
+# Fail the BUILD, not the container start, if the user the container runs as cannot use these files.
+# `test -x` as pwuser also fails when a parent directory cannot be entered, which is the case above.
+RUN test -x /opt/fleetscope/entrypoint.sh \
+ && test -r /opt/fleetscope/forward-port.mjs \
+ && bash -n /opt/fleetscope/entrypoint.sh \
+ && node --check /opt/fleetscope/forward-port.mjs
 
 # Cheap on purpose: bash's built-in /dev/tcp, no extra process such as node. The 30 s interval keeps
 # it from adding noise to the per-container CPU samples we collect. The runner does its own, faster
