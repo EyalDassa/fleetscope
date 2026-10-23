@@ -261,11 +261,10 @@ describe("the collector on the wire", () => {
       });
   });
 
-  // QA-M1-04: close() resolves at its deadline, but the batch that was in flight is only counted
-  // as dropped a moment later (when the aborted request settles). The runner reads stats() right
-  // after close(), so its summary says "0 dropped" and the exit code stays 0 although events were
-  // lost. (With the API refusing connections the abort settles first, so that case looks fine.)
-  it.fails("QA-M1-04: stats() right after close() already counts the in-flight batch as dropped", async () => {
+  // QA-M1-04 (verified in the re-test): close() used to resolve at its deadline while the batch in
+  // flight was only counted as dropped a moment later, so the runner's summary said "0 dropped" and
+  // the exit code stayed 0 although events were lost. stats() is final when close() returns.
+  it("QA-M1-04: stats() right after close() already counts the in-flight batch as dropped", async () => {
     const api = await fakeApi(() => {
       // never respond
     });
@@ -334,7 +333,7 @@ describe("what counts as a missing browser API", () => {
     expect(isMissingApiError({ name: "Error", message: "Network request failed" })).toBe(false);
   });
 
-  // QA-M1-03 (forward-looking, M3): the same page, on an engine without crypto.subtle, throws
+  // QA-M1-03 (forward-looking, DEFERRED to M3 by the lead): the same page, on an engine without crypto.subtle, throws
   // "TypeError: Cannot read properties of undefined (reading 'digest')" (the README of the demo
   // site shows exactly this message). The collector ignores it, so the WebCrypto gap would not
   // show up in the compatibility matrix. The same goes for "X is not a constructor".

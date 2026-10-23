@@ -1,4 +1,7 @@
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { connect, createServer, type Server, type Socket } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   type ClickHouseClient,
   createClickHouseClient,
@@ -14,8 +17,10 @@ import {
   MAX_BATCH_SIZE,
   newEvent,
 } from "@fleetscope/schema";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type AppDeps, buildApp } from "./app";
+import type { WriteBatch } from "./ingest/buffer";
+import { fileDeadLetter } from "./ingest/dead-letter";
 
 /**
  * QA, M1: POST /v1/events under abuse, over a REAL socket (fetch -> Fastify -> buffer ->
@@ -145,6 +150,7 @@ interface HealthBody {
     lastFlushError: { at: number; error: string } | null;
     orphansHeld: number;
     orphansDropped: number;
+    deadLettered: number;
   };
 }
 
@@ -485,17 +491,40 @@ describe("over a real socket: clock skew", () => {
     await app.close();
     expect(await count("actions", id)).toBe(2); // seq 0 and seq 2
   });
+});
 
-  it("accepts events from the past: a skewed client clock is not detected on that side (202, then the TTL decides)", async () => {
-    const id = sid("past");
-    const { post } = await listen();
-    const longAgo = Date.now() - 40 * DAY; // older than the 30 day TTL of the tables
-    const res = await post([started(id, longAgo), action(id, 0, longAgo)]);
-    expect(res.status).toBe(202);
-    expect(res.body).toEqual({ accepted: 2, duplicates: 0 });
-    await sleep(800);
-    // 202 was returned, the insert succeeded, and the data is gone (dropped by the TTL, which is a
-    // background merge: ask for it, then poll, as the M0 TTL tests do).
+describe("over a real socket: events from the past (QA-M1-01, the retention window)", () => {
+  // The raw tables delete a row when its DAY is 30 days old (TTL toDate(ts) + 30 DAY). The API
+  // refuses a ts before midnight UTC of the day 29 days ago, so a 202 is never followed by an
+  // immediate deletion, and one flush can touch at most 31 daily partitions.
+  const cutoffOf = (now: number) => now - (now % DAY) - 29 * DAY;
+
+  it("refuses a ts one millisecond before the cutoff (400, names it), accepts the cutoff itself, and the TTL keeps that event", async () => {
+    const id = sid("cutoff");
+    const now = Date.now();
+    const cutoff = cutoffOf(now);
+    const { post, health } = await listen({ now: () => now });
+
+    const tooOld = await post([action(id, 0, cutoff - 1)]);
+    expect(tooOld.status).toBe(400);
+    expect(tooOld.body.error).toContain("retention window");
+    expect(tooOld.body.error).toContain(new Date(cutoff).toISOString());
+    expect(tooOld.body.issues).toEqual([
+      expect.objectContaining({ path: [0, "ts"], message: expect.stringContaining("older than") }),
+    ]);
+
+    expect((await post([action(id, 1, cutoff)])).body).toEqual({ accepted: 1, duplicates: 0 });
+    await expect.poll(async () => (await health()).body.ingest.queued, { timeout: 5000 }).toBe(0);
+
+    // Force the TTL to run now. The event at the cutoff survives; nothing of the refused one exists.
+    await db.client.command({ query: "OPTIMIZE TABLE actions FINAL" });
+    expect(await count("actions", id)).toBe(1);
+  });
+
+  it("is the right cutoff: ClickHouse itself drops an event one millisecond earlier (why 202 for it would be a lie)", async () => {
+    const id = sid("cutoff-ttl");
+    const cutoff = cutoffOf(Date.now());
+    await insertEvents(db.client, [action(id, 0, cutoff - 1), action(id, 1, cutoff)]);
     await expect
       .poll(
         async () => {
@@ -504,7 +533,41 @@ describe("over a real socket: clock skew", () => {
         },
         { timeout: 20_000, interval: 200 },
       )
-      .toBe(0);
+      .toBe(1);
+    const [row] = await rows<{ seq: number }>(
+      "SELECT seq FROM actions WHERE session_id = {id:String}",
+      { id },
+    );
+    expect(row?.seq).toBe(1);
+  });
+
+  it("reports old and future events of one batch together, and stores and remembers none of them", async () => {
+    const id = sid("old-and-new");
+    const now = Date.now();
+    const cutoff = cutoffOf(now);
+    const { post } = await listen({ now: () => now });
+    const good = action(id, 2, now);
+    const bad = [action(id, 0, cutoff - DAY), good, action(id, 1, now + 10 * 60_000)];
+    const res = await post(bad);
+    expect(res.status).toBe(400);
+    expect(res.body.issues.map((i: { path: unknown[] }) => i.path)).toEqual([
+      [2, "ts"],
+      [0, "ts"],
+    ]);
+    expect((await post([good])).body).toEqual({ accepted: 1, duplicates: 0 }); // not "seen" before
+  });
+
+  it("a flush that spans every day the API allows (30 days plus tomorrow) is stored: the partition cap is never reached", async () => {
+    const id = sid("all-days");
+    const now = Date.now();
+    const cutoff = cutoffOf(now);
+    const { post, health } = await listen({ now: () => now });
+    const events = Array.from({ length: 30 }, (_, d) => action(id, d, cutoff + d * DAY + 1000));
+    events.push(action(id, 30, now + 4 * 60_000)); // the newest the skew check allows
+    expect((await post(events)).status).toBe(202);
+    await expect.poll(async () => (await health()).body.ingest.queued, { timeout: 5000 }).toBe(0);
+    expect((await health()).body.ingest.deadLettered).toBe(0);
+    expect(await count("actions", id)).toBe(31);
   });
 });
 
@@ -644,43 +707,184 @@ describe("ClickHouse fails at the TCP level", () => {
 
 describe("a batch that ClickHouse always refuses", () => {
   /**
-   * 120 events on 120 different days, all in the past and all valid for the schema. One INSERT
-   * with more than 100 daily partitions is refused by ClickHouse ("Too many partitions for single
-   * INSERT block", max_partitions_per_insert_block = 100), every time. ADR 0002 says "validated
-   * events should never be refused"; this is a counterexample. The flush holds ALL clients' events
-   * (up to 5000), so one request can stall everybody.
+   * QA-M1-01, VERIFIED in the re-test. 120 events on 120 different days used to be accepted (202),
+   * refused by ClickHouse on every retry ("Too many partitions for single INSERT block", more than
+   * 100), and stall every client. Now (1) the API refuses a ts outside the retention window, so a
+   * flush spans at most 31 days, and (2) a flush that ClickHouse refuses three times in a row with a
+   * DATA error goes to a dead-letter file and ingest continues. Transient errors still retry.
    */
   const poison = (id: string) =>
     Array.from({ length: 120 }, (_, i) => action(id, i, Date.now() - i * DAY));
 
-  it("is accepted with 202, then the buffer retries it forever and /healthz says so (the ADR 0002 trade-off, recorded)", async () => {
-    const id = sid("poison-doc");
-    const { post, health } = await listen({ ingest: { capacity: 300 } });
-    expect((await post(poison(id))).status).toBe(202);
-    await expect
-      .poll(async () => (await health()).body.ingest.retrying, { timeout: 4000 })
-      .toBe(true);
-    const ingest = (await health()).body.ingest;
-    expect(ingest.queued).toBe(120);
-    expect(ingest.lastFlushError?.error).toMatch(/\S/);
-
-    // innocent clients are still told 202 until the buffer is full, then 503
-    const good = sid("poison-innocent");
-    expect((await post([started(good), action(good, 0)])).status).toBe(202);
-    const flood = await post(Array.from({ length: 200 }, (_, i) => action(good, i + 1)));
-    expect(flood.status).toBe(503);
-    expect(flood.headers.get("retry-after")).toBeTruthy();
-    expect(await count("actions", good)).toBe(0); // and nothing of theirs is stored
-  });
-
-  it.fails("QA-M1-01: one poison request must not stop other clients' events from being stored", async () => {
+  it("QA-M1-01: the 120-day batch is refused at the door (400) and other clients' events are stored", async () => {
     const bad = sid("poison");
     const good = sid("poison-good");
-    const { post } = await listen();
-    await post(poison(bad)); // 202 today; a 400 would be fine too
+    const { post, health } = await listen();
+    const refused = await post(poison(bad));
+    expect(refused.status).toBe(400);
+    expect(refused.body.error).toContain("retention window");
     await post([started(good), action(good, 0), action(good, 1), ended(good)]);
     await expect.poll(() => count("actions", good), { timeout: 4000, interval: 100 }).toBe(2);
     expect(await sessionStatus(good)).toBe("success");
+    const ingest = (await health()).body.ingest;
+    expect(ingest.retrying).toBe(false);
+    expect(ingest.deadLettered).toBe(0);
+    expect(await count("actions", bad)).toBe(0);
+  });
+
+  describe("past the door: a flush that ClickHouse refuses anyway", () => {
+    // Validation now keeps the known poison out, so to test the safety net the events are damaged
+    // AFTER validation, on their way from the buffer to ClickHouse (like a future bug could). The
+    // buffer still holds the original, valid events: those are what the dead-letter file keeps.
+    let deadDir: string;
+    beforeEach(async () => {
+      deadDir = await mkdtemp(join(tmpdir(), "qa-deadletter-"));
+      closers.push(() => rm(deadDir, { recursive: true, force: true }));
+    });
+
+    function withCorruption(
+      corrupt: (event: FleetEvent) => FleetEvent,
+      extra: Partial<AppDeps> = {},
+    ) {
+      const insert: WriteBatch = (events, dedupTokens) =>
+        insertEvents(db.client, events.map(corrupt), { dedupTokens });
+      return listen({
+        deadLetter: fileDeadLetter(deadDir),
+        insert,
+        ...extra,
+        ingest: { capacity: 5000, ...extra.ingest },
+      });
+    }
+
+    /** Spreads one session's actions over 120 days: more partitions than one INSERT may touch. */
+    const spreadOver120Days = (bad: string) => (event: FleetEvent) =>
+      event.type === "action" && event.session_id === bad
+        ? { ...event, ts: Date.now() - event.seq * DAY }
+        : event;
+
+    it("moves a 'too many partitions' flush to a dead-letter file after 3 tries, keeps ingesting, and counts it", async () => {
+      const bad = sid("dl-partitions");
+      const good = sid("dl-good");
+      const { post, health, logs } = await withCorruption(spreadOver120Days(bad));
+
+      // one request, so the innocent events ride in the same flush as the damaged ones
+      const batch = [
+        started(good),
+        action(good, 0),
+        ...Array.from({ length: 120 }, (_, i) => action(bad, i)),
+      ];
+      expect((await post(batch)).status).toBe(202);
+      await expect
+        .poll(async () => (await health()).body.ingest.deadLettered, { timeout: 8000 })
+        .toBe(122); // 120 damaged + the 2 innocent events that shared the flush
+      const ingest = (await health()).body.ingest;
+      expect(ingest.queued).toBe(0);
+      expect(ingest.retrying).toBe(false);
+
+      // the file: one JSONL file, 122 lines, each a whole, valid event
+      const files = await readdir(deadDir);
+      expect(files).toHaveLength(1);
+      expect(files[0]).toMatch(/\.jsonl$/);
+      const lines = (await readFile(join(deadDir, files[0] ?? ""), "utf8")).trim().split("\n");
+      expect(lines).toHaveLength(122);
+      const parsed = lines.map((line) => JSON.parse(line) as FleetEvent);
+      expect(parsed.filter((e) => e.session_id === bad)).toHaveLength(120);
+      expect(parsed.filter((e) => e.session_id === good)).toHaveLength(2);
+      expect(new Set(parsed.map((e) => e.event_id)).size).toBe(122);
+
+      // the log says why and where; it was a data error, tried 3 times
+      const entry = logs.find((l) => String(l.msg).includes("dead-letter file"));
+      expect(entry).toMatchObject({ events: 122, attempts: 3 });
+      expect(String(entry?.file)).toContain(files[0] ?? "?");
+
+      // ingest is alive again
+      const next = sid("dl-after");
+      await post([started(next), action(next, 0), ended(next)]);
+      await expect
+        .poll(() => sessionStatus(next), { timeout: 4000, interval: 100 })
+        .toBe("success");
+      expect((await health()).body.ingest.deadLettered).toBe(122);
+      expect(await count("actions", bad)).toBe(0);
+      expect(await count("actions", good)).toBe(0); // the innocent actions are in the file only
+      // Recorded, not praised: the innocent session's start DID reach ClickHouse (sessions is the
+      // first table of a flush), so that session is half stored; the rest of it is in the file.
+      expect(await sessionStatus(good)).toBe("running");
+    });
+
+    it("moves a flush with a lone surrogate (CANNOT_PARSE_ESCAPE_SEQUENCE) to the file too", async () => {
+      const id = sid("dl-surrogate");
+      const damage = (event: FleetEvent) =>
+        event.type === "issue" && event.session_id === id
+          ? { ...event, message: "half an emoji: \ud83d" }
+          : event;
+      const { post, health } = await withCorruption(damage);
+      await post([started(id), issue(id)]);
+      await expect
+        .poll(async () => (await health()).body.ingest.deadLettered, { timeout: 8000 })
+        .toBe(2);
+      const files = await readdir(deadDir);
+      expect(files).toHaveLength(1);
+      expect(await readFile(join(deadDir, files[0] ?? ""), "utf8")).toContain('"kind":"blocked"');
+    });
+
+    it("never dead-letters on a transient error: a missing database and a wrong password retry for ever", async () => {
+      const silent = { logger: createLogger("qa", "silent") };
+      const cases: Array<[string, ClickHouseClient]> = [
+        [
+          "database that does not exist",
+          createClickHouseClient(
+            { ...db.config, database: ["qa_missing", Date.now()].join("_") },
+            silent,
+          ),
+        ],
+        [
+          "wrong password",
+          createClickHouseClient({ ...db.config, password: "definitely-not-the-password" }, silent),
+        ],
+      ];
+      for (const [name, client] of cases) {
+        closers.push(() => client.close());
+        const id = sid("dl-transient");
+        const { post, health, logs } = await listen(
+          { deadLetter: fileDeadLetter(deadDir), ingest: { retryBaseMs: 10, retryMaxMs: 20 } },
+          client,
+        );
+        await post([started(id), action(id, 0)]);
+        // far more than the 3 attempts a data error would be given
+        await expect
+          .poll(
+            () => logs.filter((l) => String(l.msg).includes("flush to ClickHouse failed")).length,
+            { timeout: 8000 },
+          )
+          .toBeGreaterThanOrEqual(8);
+        const ingest = (await health()).body.ingest;
+        expect(ingest.deadLettered, name).toBe(0);
+        expect(ingest.retrying, name).toBe(true);
+        expect(ingest.queued, name).toBe(2);
+        expect(await readdir(deadDir), name).toEqual([]);
+      }
+    });
+
+    it("keeps the flush in memory when the dead-letter file cannot be written, and says so", async () => {
+      const notADir = join(deadDir, "a-file");
+      await writeFile(notADir, "x");
+      const bad = sid("dl-nowrite");
+      const { post, health, logs } = await withCorruption(spreadOver120Days(bad), {
+        deadLetter: fileDeadLetter(join(notADir, "sub")), // mkdir under a regular file fails
+        ingest: { retryBaseMs: 10, retryMaxMs: 20 },
+      });
+      await post(Array.from({ length: 120 }, (_, i) => action(bad, i)));
+      await expect
+        .poll(
+          () =>
+            logs.filter((l) => String(l.msg).includes("could not write the dead-letter")).length,
+          { timeout: 8000 },
+        )
+        .toBeGreaterThanOrEqual(1);
+      const ingest = (await health()).body.ingest;
+      expect(ingest.deadLettered).toBe(0);
+      expect(ingest.queued).toBe(120); // nothing was thrown away
+    });
   });
 });
 
@@ -820,15 +1024,17 @@ describe("10,000 sessions through the API", () => {
 });
 
 describe("a batch bigger than the whole buffer", () => {
-  // INGEST_BUFFER_CAPACITY accepts any value from 1 (env.ts), but a request can carry up to 1000
-  // events. With a capacity below the batch size the batch can never fit, so every try gets 503
-  // "buffer is full, retry later" with Retry-After. The collector believes it and retries 8 times
-  // (about a minute), then drops the batch. Nothing is wrong with the buffer: it is empty.
-  it.fails("QA-M1-09: a batch that can never fit is not answered with a retryable 503", async () => {
+  // QA-M1-09, VERIFIED in the re-test. INGEST_BUFFER_CAPACITY accepts any value from 1, but a request
+  // can carry 1000 events. A batch that can never fit used to get "503, retry later" for ever (the
+  // collector retried, then dropped it) while the buffer was empty. Now it gets 413 with a message.
+  it("QA-M1-09: a batch that can never fit is refused with 413, not told to retry; a batch that fits is accepted", async () => {
     const id = sid("never-fits");
     const { post, health } = await listen({ ingest: { capacity: 500 } });
     const reply = await post(Array.from({ length: 600 }, (_, seq) => action(id, seq)));
-    expect((await health()).body.ingest.queued).toBe(0); // the buffer is empty...
-    expect(reply.status).not.toBe(503); // ...so "retry later" is a lie (413 or 400 would be honest)
+    expect(reply.status).toBe(413);
+    expect(reply.headers.get("retry-after")).toBeNull();
+    expect(reply.body.error).toContain("larger than the ingest buffer");
+    expect((await health()).body.ingest.queued).toBe(0);
+    expect((await post(Array.from({ length: 400 }, (_, seq) => action(id, seq)))).status).toBe(202);
   });
 });

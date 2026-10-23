@@ -201,8 +201,11 @@ describe.skipIf(!ENABLED)("a real run of 9 sessions (seed 7)", () => {
          FROM resource_samples WHERE agent_id = '${agentA}' AND origin = 'container'
        ) WHERE prev > toDateTime64('2000-01-01 00:00:00', 3)`,
     );
+    // Docker's stream sends a frame every second; a sample is taken from every second frame, and the
+    // last one of a session from the newest frame, so that gap can be as short as one frame.
+    expect(gaps.length).toBeGreaterThan(0);
     for (const { gap } of gaps) {
-      expect(Number(gap)).toBeGreaterThan(1500);
+      expect(Number(gap)).toBeGreaterThan(500);
       expect(Number(gap)).toBeLessThan(3500);
     }
   });
@@ -234,26 +237,24 @@ describe.skipIf(!ENABLED)("a real run of 9 sessions (seed 7)", () => {
     }
   });
 
-  it("a session that did not succeed says why: a reason, and a failed action with an error code", async () => {
+  // QA-M1-06, decided by the lead: "why did session X fail" is answered by `sessions.reason` plus
+  // the `error_code` of the session's FIRST failed action (PLAN section 5), not by the issues table:
+  // `selector_not_found` is deliberately not an issue kind. This is that rule, as a test.
+  it("QA-M1-06: every session that did not succeed has a reason, and its first failed action has an error code", async () => {
     const notOk = sessions.filter((s) => s.status !== "success");
     expect(notOk.length).toBeGreaterThan(0); // seed 7 has a flaky failure and a captcha
+    const causes = new Set<string>();
     for (const s of notOk) {
-      expect(s.reason, s.session_id).toBeTruthy();
-      const failed = await sql<{ error_code: string }>(
-        `SELECT error_code FROM actions WHERE session_id = '${s.session_id}' AND ok = 0`,
+      expect(s.reason?.trim(), s.session_id).toBeTruthy();
+      const failed = await sql<{ error_code: string | null; seq: number }>(
+        `SELECT error_code, seq FROM actions WHERE session_id = '${s.session_id}' AND ok = 0 ORDER BY ts, seq`,
       );
-      expect(failed.length, s.session_id).toBeGreaterThan(0);
-      for (const f of failed) expect(f.error_code).toBeTruthy();
+      expect(failed.length, `${s.session_id}: ${s.reason}`).toBeGreaterThan(0);
+      expect(failed[0]?.error_code, s.session_id).toBeTruthy();
+      causes.add(`${s.status}:${failed[0]?.error_code}`);
     }
-  });
-
-  // QA-M1-06 (decision needed, see the report): the seeded flaky failure (`selector_not_found`)
-  // is not an issue kind, so a failed session can have no `issues` row at all.
-  it.fails("QA-M1-06: every failed session has at least one issue row (for the Issues panel)", async () => {
-    for (const s of sessions.filter((x) => x.status === "failed")) {
-      const issues = await sql(`SELECT kind FROM issues WHERE session_id = '${s.session_id}'`);
-      expect(issues.length, `${s.session_id}: ${s.reason}`).toBeGreaterThan(0);
-    }
+    // the two seeded failures of seed 7 name their cause
+    expect([...causes].sort()).toEqual(["blocked:captcha", "failed:selector_not_found"]);
   });
 
   it("blocked sessions have a blocked or captcha issue, and no event id appears twice", async () => {
@@ -295,11 +296,45 @@ describe.skipIf(!ENABLED)("a real run of 9 sessions (seed 7)", () => {
   }, 300_000);
 });
 
+describe.skipIf(!ENABLED)("QA-M1-05: container samples at high concurrency", () => {
+  // Before the streaming sampler, 11 of 24 sessions had no container sample at --concurrency 12
+  // (Docker's pull API took 3 to 10 s per reading with 12 containers running).
+  it("24 short sessions at --concurrency 12: every one has a container sample", async () => {
+    const agent = `qa-e2e-c12-${stamp}`;
+    const run = await runFleet([
+      "--engines",
+      "chromium",
+      "--sessions",
+      "24",
+      "--concurrency",
+      "12",
+      "--scenario",
+      "login-and-search",
+      "--seed",
+      "3",
+      "--agent",
+      agent,
+    ]);
+    expect(run.code, run.stderr).toBe(0);
+    const rows = await waitForSessions(agent, 24);
+    expect(rows).toHaveLength(24);
+    const counts = await sql<{ session_id: string; n: string }>(
+      `SELECT session_id, countIf(origin = 'container') n FROM resource_samples
+       WHERE agent_id = '${agent}' GROUP BY session_id`,
+    );
+    const without = rows.filter(
+      (r) => Number(counts.find((c) => c.session_id === r.session_id)?.n ?? 0) === 0,
+    );
+    expect(without.map((r) => r.session_id)).toEqual([]);
+  }, 280_000);
+});
+
 describe.skipIf(!ENABLED)("sessions the runner cuts off itself", () => {
-  // QA-M1-08: when the runner closes the browser because of --session-timeout (or Ctrl+C), the
-  // action in progress fails with browser_closed and the collector raises a `crash` issue. The
-  // session status (timeout) is right, but the issues table now says the browser crashed.
-  it.fails("QA-M1-08: a runner-initiated timeout does not raise a crash issue", async () => {
+  // QA-M1-08 (verified in the re-test): when the runner closed the browser because of
+  // --session-timeout (or Ctrl+C), the action in progress failed with browser_closed and the
+  // collector raised a `crash` issue, so a `timeout` session also said "the browser crashed".
+  // The cut-off action keeps its code; the false crash issue is gone.
+  it("QA-M1-08: a runner-initiated timeout does not raise a crash issue", async () => {
     const agent = `qa-e2e-timeout-${stamp}`;
     const run = await runFleet([
       "--engines",
