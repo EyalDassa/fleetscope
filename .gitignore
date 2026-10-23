@@ -25,6 +25,9 @@ playwright/.cache/
 *.log
 .vercel/
 infra/.data/
+# Runtime data the apps write next to their working directory, e.g. the API's dead-letter folder
+# apps/api/.data/deadletter (INGEST_DEADLETTER_DIR). The pattern matches at any depth.
+.data/
 
 # Node falls back to a folder literally named "undefined" (undefined/temp) as its temp dir when
 # TEMP/TMP/SystemRoot are unset (stripped env on Windows). tsx then writes its cache there.
