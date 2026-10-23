@@ -149,9 +149,10 @@ else
     found=$(docker ps --all --filter "label=${label}" --format '{{.ID}}  {{.Names}}  {{.Status}}  {{.Image}}')
     [ -z "$found" ] || leaked+="${found}"$'\n'
   done
+  leaked=$(printf '%s' "$leaked" | sort -u) # a container usually carries several of the labels
   if [ -n "$leaked" ]; then
     echo "FAIL: containers with a fleetscope label are still there (running or stopped):" >&2
-    printf '%s' "$leaked" >&2
+    printf '%s\n' "$leaked" >&2
     failed=1
   else
     echo "OK: no containers with label(s) [${labels}] left"
