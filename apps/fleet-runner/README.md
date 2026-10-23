@@ -85,7 +85,10 @@ flaky button (and fails the session if it is missing twice).
 - **Windows shells.** Use PowerShell or Git Bash. In **cmd.exe**, `pnpm` is a `.cmd` file, so every
   Ctrl+C asks "Terminate batch job (Y/N)?"; answer **N**, or the wrapper dies before the runner has
   cleaned up. Through pnpm the exit code is the wrapper's (for example `-1073741510`, Ctrl+C), not
-  130. Run `pnpm fleet cleanup` afterwards if anything was left; a run only ever removes its own
+  130. In PowerShell the pnpm wrapper also exits at once, so the prompt comes back while the runner
+  finishes its cleanup in the background and its summary may not be shown; the data is still
+  complete (checked on Windows: finished sessions stored, the running one `failed`/`interrupted`,
+  no containers left). Run `pnpm fleet cleanup` afterwards if anything was left; a run only ever removes its own
   containers (label `fleetscope.run`), `cleanup` removes all.
 - The runner prints `fleet run: starting...` the moment it starts and a `preflight` line before the
   checks, so a quiet start is a slow Docker or API, not a hung runner.
