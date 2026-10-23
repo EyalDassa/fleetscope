@@ -180,8 +180,11 @@ Not covered, and accepted:
   refusal can have written the tables that come first (`sessions`, `actions`, ...). There is no
   automatic replay. To replay, first check the `event_id`s against the tables (or the rows are
   counted twice), fix or drop the bad events, then `POST` the lines to `/v1/events` in batches of up
-  to 1,000. The directory needs an owner who looks at it: `deadLettered` in `/healthz` is the
-  signal, and the files are never deleted by the API.
+  to 1,000. Replay only after the API has restarted or 15 minutes after the dead-letter: until then
+  the API's in-memory id window still remembers these `event_id`s and answers 202 with every event
+  counted as a duplicate, storing nothing. Check that `duplicates` is 0 in every answer. The
+  directory needs an owner who looks at it: `deadLettered` in `/healthz` is the signal, and the
+  files are never deleted by the API.
 - **Only known data errors are dead-lettered.** An unknown ClickHouse error counts as transient and
   stalls the buffer visibly (`retrying: true`, the error name in `lastFlushError`, the full error in
   the log) instead of dropping data. Teach `classifyInsertError` about it when it happens.

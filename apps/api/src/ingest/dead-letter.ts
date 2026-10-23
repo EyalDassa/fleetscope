@@ -12,7 +12,8 @@ import type { DeadLetter } from "./buffer";
  *
  * The file may hold events that did reach some tables before the flush failed, because ClickHouse
  * has no transaction across tables. Before replaying a file, check the `event_id`s against the
- * tables.
+ * tables. Replay after an API restart or 15 minutes later: until then the in-memory id window
+ * answers 202 with every event counted as a duplicate and stores nothing (see ADR 0002).
  */
 export function fileDeadLetter(dir: string, now: () => number = Date.now): DeadLetter {
   return async (flushId, events) => {
