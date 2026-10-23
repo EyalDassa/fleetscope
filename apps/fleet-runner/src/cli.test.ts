@@ -83,29 +83,37 @@ describe("pnpm fleet: usage errors exit with 2 and print the usage", () => {
     [["run", "stray"], "positional"],
     [["nonsense"], 'unknown command "nonsense"'],
     [[], "Usage:"],
-  ])("%j", async (args, message) => {
-    const out = await runCli(args);
-    expect(out.code).toBe(2);
-    expect(out.stderr + out.stdout).toContain(message);
-    expect(out.stderr + out.stdout).toContain("pnpm fleet run");
-  }, CLI_TEST_TIMEOUT_MS);
+  ])(
+    "%j",
+    async (args, message) => {
+      const out = await runCli(args);
+      expect(out.code).toBe(2);
+      expect(out.stderr + out.stdout).toContain(message);
+      expect(out.stderr + out.stdout).toContain("pnpm fleet run");
+    },
+    CLI_TEST_TIMEOUT_MS,
+  );
 
-  it("help exits 0 and documents every flag", async () => {
-    const out = await runCli(["--help"]);
-    expect(out.code).toBe(0);
-    for (const flag of [
-      "--engines",
-      "--sessions",
-      "--concurrency",
-      "--scenario",
-      "--seed",
-      "--agent",
-      "--session-timeout",
-      "cleanup",
-    ]) {
-      expect(out.stdout).toContain(flag);
-    }
-  }, CLI_TEST_TIMEOUT_MS);
+  it(
+    "help exits 0 and documents every flag",
+    async () => {
+      const out = await runCli(["--help"]);
+      expect(out.code).toBe(0);
+      for (const flag of [
+        "--engines",
+        "--sessions",
+        "--concurrency",
+        "--scenario",
+        "--seed",
+        "--agent",
+        "--session-timeout",
+        "cleanup",
+      ]) {
+        expect(out.stdout).toContain(flag);
+      }
+    },
+    CLI_TEST_TIMEOUT_MS,
+  );
 });
 
 describe("pnpm fleet run: preflight", () => {
