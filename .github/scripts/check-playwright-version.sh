@@ -2,7 +2,9 @@
 # Fails unless every place that names the Playwright version agrees:
 #   1. the browser image Dockerfile (ARG PLAYWRIGHT_VERSION, and the FROM line that uses it),
 #   2. the image tag `fleetscope/playwright-chromium:<version>` in package.json (browsers:build),
-#      .env.example (FLEET_BROWSER_IMAGE) and .github/workflows/ci.yml (fleet smoke job),
+#      .env.example (FLEET_BROWSER_IMAGE), .github/workflows/ci.yml (fleet smoke job) and the
+#      runner's built-in default in apps/fleet-runner/src/config.ts (DEFAULT_BROWSER_IMAGE: it
+#      is what runs when nobody sets FLEET_BROWSER_IMAGE, so a stale one breaks connect() mid-run),
 #   3. the `playwright` / `playwright-core` version pinned in the client packages
 #      (apps/fleet-runner and packages/collector).
 #
@@ -27,7 +29,7 @@ cd "$root"
 
 dockerfile="infra/browsers/chromium/Dockerfile"
 image_repo="fleetscope/playwright-chromium"
-tag_files=(package.json .env.example .github/workflows/ci.yml)
+tag_files=(package.json .env.example .github/workflows/ci.yml apps/fleet-runner/src/config.ts)
 client_manifests=(apps/fleet-runner/package.json packages/collector/package.json)
 
 errors=0
