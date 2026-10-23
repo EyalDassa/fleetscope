@@ -5,6 +5,8 @@
  * A route opts in with `config: { chaos: {...} }` (see `page()`). Health checks, images and the
  * admin routes do not, so they always answer promptly. Only GET requests are affected: form
  * posts (login, add to cart, checkout) behave the same whatever the chaos settings are.
+ *
+ * The admin routes only accept callers on loopback (see loopback.ts).
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import {
@@ -19,6 +21,7 @@ import {
 } from "./chaos";
 import { html } from "./html";
 import { layout } from "./layout";
+import { requireLoopback } from "./loopback";
 
 /** What the hook decided for this request, for the route handler to use. */
 export interface ChaosOutcome {
@@ -112,19 +115,26 @@ export async function registerChaosGate(app: FastifyInstance, deps: ChaosGateDep
     request.chaos = { settings, flaky: decision.flaky };
   });
 
-  // The global settings: POST merges the given fields, GET reads, DELETE resets to all zeros.
-  app.get("/admin/chaos", async () => deps.store.get());
+  // The admin routes live in their own plugin so that the loopback check is a hook of the plugin
+  // itself: every route registered inside it is protected, whatever URL form reaches it. Add new
+  // admin routes here, not on `app`.
+  await app.register(async (admin) => {
+    admin.addHook("onRequest", requireLoopback);
 
-  app.post("/admin/chaos", async (request, reply) => {
-    const parsed = chaosPatchSchema.safeParse(request.body ?? {});
-    if (!parsed.success) {
-      return reply.code(400).send({
-        error: "invalid chaos settings",
-        issues: parsed.error.issues.map((i) => ({ path: i.path.join("."), message: i.message })),
-      });
-    }
-    return deps.store.patch(parsed.data);
+    // The global settings: POST merges the given fields, GET reads, DELETE resets to all zeros.
+    admin.get("/admin/chaos", async () => deps.store.get());
+
+    admin.post("/admin/chaos", async (request, reply) => {
+      const parsed = chaosPatchSchema.safeParse(request.body ?? {});
+      if (!parsed.success) {
+        return reply.code(400).send({
+          error: "invalid chaos settings",
+          issues: parsed.error.issues.map((i) => ({ path: i.path.join("."), message: i.message })),
+        });
+      }
+      return deps.store.patch(parsed.data);
+    });
+
+    admin.delete("/admin/chaos", async () => deps.store.reset());
   });
-
-  app.delete("/admin/chaos", async () => deps.store.reset());
 }

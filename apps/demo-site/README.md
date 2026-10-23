@@ -18,7 +18,7 @@ pnpm --filter @fleetscope/demo-site test     # vitest (fastify.inject, no networ
 | Variable | Default | Meaning |
 |---|---|---|
 | `DEMO_SITE_PORT` | `3100` | Listen port |
-| `DEMO_SITE_HOST` | `0.0.0.0` | Listen address. All interfaces on purpose: browser containers reach the site through `host.docker.internal`, which on Linux CI resolves to the Docker bridge address, so a loopback-only listener would be unreachable |
+| `DEMO_SITE_HOST` | `0.0.0.0` | Listen address. All interfaces on purpose: browser containers reach the site through `host.docker.internal`, which on Linux CI resolves to the Docker bridge address, so a loopback-only listener would be unreachable. `/admin/*` stays loopback-only whatever this is set to |
 | `LOG_LEVEL` | `info` | pino level (`/healthz` is never logged) |
 
 From a browser container, the base URL is `http://host.docker.internal:3100`.
@@ -41,7 +41,8 @@ The only account is `agent` / `fleetscope`. A successful login sets an HttpOnly 
 (302) when the cookie is missing or unknown. Nothing else is redirected.
 
 Behind login: `/dashboard`, `/search`, `/item/:id`, `/cart/add`, `/checkout`, `/checkout/done`.
-Public: `/`, `/login`, `/healthz`, `/img/:n.svg`, `/admin/chaos`, and every chaos page below.
+Public: `/`, `/login`, `/healthz`, `/img/:n.svg`, and every chaos page below. `/admin/*` is not
+public: it only answers callers on the same machine (see [Admin API](#admin-api)).
 
 Form posts answer with 303 redirects. A form with bad input is shown again with **status 200**
 (like a typical server-rendered form), not 4xx, so deliberate bad input does not look like a
@@ -128,14 +129,36 @@ The checks run in this order: latency, then error, then bot wall, then flaky.
 
 ### Admin API
 
+**Loopback only.** The site listens on all interfaces, so anyone on the same network could
+otherwise switch chaos on in the middle of a demo. Every `/admin/*` route therefore answers
+**403** to any caller whose connection does not come from `127.0.0.1`, `::1` or
+`::ffff:127.0.0.1`:
+
+```json
+{"error":"forbidden","message":"The admin API only accepts requests from the machine the demo site runs on."}
+```
+
+- The check uses the address of the TCP connection. `X-Forwarded-For` and similar headers are
+  ignored, so they cannot be used to get in.
+- It runs before the body is read: a remote caller gets 403 even for an invalid body, and nothing
+  is changed.
+- Browser containers never need the admin API and are refused, but they still get every page, image
+  and the health check. Chaos set from the host applies to their requests.
+- **Call it as `localhost` or `127.0.0.1`, not through `host.docker.internal` or the LAN address of
+  the machine.** A request from the host to its own LAN or Docker-bridge address arrives from that
+  address, not from loopback, and gets the 403. Per-request chaos (`?errorRate=`, `?seed=`, ...)
+  is not restricted and works from anywhere.
+- Add new admin routes inside the plugin in `src/chaos-gate.ts`: the loopback check is a hook of
+  that plugin, so it covers every route registered there.
+
 | Request | Effect |
 |---|---|
 | `GET /admin/chaos` | Returns the current settings, e.g. `{"latencyMs":0,"flakyRate":0,"botwallRate":0,"errorRate":0}` |
 | `POST /admin/chaos` | JSON body with any of the four fields. Fields you leave out keep their value. Returns the new settings. Unknown fields or out-of-range values: **400** and nothing changes |
 | `DELETE /admin/chaos` | Resets all four to 0 |
 
-The settings are in memory: a restart resets them. There is no authentication; the site holds no
-real data, but do not expose it to the internet.
+The settings are in memory: a restart resets them. Apart from the loopback check there is no
+authentication; the site holds no real data, but do not expose it to the internet.
 
 ```bash
 curl -X POST localhost:3100/admin/chaos -H 'content-type: application/json' \
@@ -166,6 +189,7 @@ settings at 0, `/flaky` is flaky and `/login` is not, and `/flaky?rate=0` is nev
 |---|---|
 | `src/chaos.ts` | Pure chaos logic: settings, query resolution, seeded random, the dice (`decide`) |
 | `src/chaos-gate.ts` | Fastify hook that applies it to pages, plus `/admin/chaos` |
+| `src/loopback.ts` | The loopback-only check for `/admin/*` |
 | `src/routes/shop.ts` | Login, dashboard, search, item, cart, checkout |
 | `src/routes/chaos-pages.ts` | `/`, `/heavy`, `/img`, `/slow`, `/flaky`, `/botwall`, `/js-heavy` |
 | `src/js-probe.ts` | The inline script of `/js-heavy` |
