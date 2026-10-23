@@ -29,8 +29,16 @@ export interface SessionDeps {
   signal: AbortSignal;
 }
 
-/** `infra_error`: the container or browser never came up, so there is no session to report. */
-export type ResultStatus = SessionStatus | "infra_error";
+/**
+ * What the runner knows about a session. Besides the reported statuses: `infra_error` means the
+ * container or browser never came up, `interrupted` means Ctrl+C came before it did. Neither has a
+ * session to report.
+ */
+export type ResultStatus = SessionStatus | "infra_error" | "interrupted";
+
+/** True if the session ran and was reported to the API (so it has a duration and actions). */
+export const wasReported = (status: ResultStatus): boolean =>
+  status !== "infra_error" && status !== "interrupted";
 
 export interface SessionResult {
   index: number;
@@ -39,7 +47,7 @@ export interface SessionResult {
   scenario: ScenarioName;
   status: ResultStatus;
   reason: string | null;
-  /** The session's own duration (what `session.ended` carries). 0 for `infra_error`. */
+  /** The session's own duration (what `session.ended` carries). 0 if it was never reported. */
   durationMs: number;
   startupMs: number | null;
   actions: number;
@@ -118,7 +126,12 @@ export async function runSession(deps: SessionDeps, spec: SessionSpec): Promise<
     if (deps.signal.aborted) throw new Error("interrupted before the session started");
   } catch (error) {
     result.reason = error instanceof Error ? error.message : String(error);
-    log.error({ err: error }, "could not get a browser, session not reported");
+    if (deps.signal.aborted) {
+      result.status = "interrupted";
+      log.warn({ reason: result.reason }, "interrupted before the session started");
+    } else {
+      log.error({ err: error }, "could not get a browser, session not reported");
+    }
     await bounded(poller?.stop({ finalSample: false }), CLOSE_TIMEOUT_MS);
     await bounded(closeBrowser(), CLOSE_TIMEOUT_MS);
     await bounded(container?.remove(), CLOSE_TIMEOUT_MS * 3);

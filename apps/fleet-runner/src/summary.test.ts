@@ -73,6 +73,26 @@ describe("formatSummary", () => {
     expect(text).toContain("infra_error: browser server did not answer");
   });
 
+  it("shows a session cut off by Ctrl+C before its browser was up as interrupted, with dashes", () => {
+    const text = formatSummary(
+      [
+        result({
+          status: "interrupted",
+          reason: "interrupted while the browser container was starting",
+          durationMs: 0,
+          startupMs: null,
+          actions: 0,
+          failedActions: 0,
+          peakMemMb: null,
+        }),
+      ],
+      delivery,
+      1000,
+    );
+    expect(text).toMatch(/interrupted\s+-\s+-\s+-\s+-/);
+    expect(text).toContain("1 sessions in 1.0s: interrupted 1");
+  });
+
   it("mentions sessions skipped by an interrupt", () => {
     expect(formatSummary([result({})], delivery, 1000, 4)).toContain("4 not started (interrupted)");
   });

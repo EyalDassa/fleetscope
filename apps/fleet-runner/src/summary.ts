@@ -1,5 +1,5 @@
 import type { QueueStats } from "@fleetscope/collector";
-import type { ResultStatus, SessionResult } from "./session-runner";
+import { type ResultStatus, type SessionResult, wasReported } from "./session-runner";
 
 const seconds = (ms: number): string => `${(ms / 1000).toFixed(1)}s`;
 
@@ -20,9 +20,9 @@ export function formatSummary(
     r.sessionId.slice(0, 8),
     r.scenario,
     r.status,
-    r.status === "infra_error" ? "-" : seconds(r.durationMs),
+    wasReported(r.status) ? seconds(r.durationMs) : "-",
     r.startupMs === null ? "-" : seconds(r.startupMs),
-    r.status === "infra_error" ? "-" : `${r.actions - r.failedActions}/${r.actions}`,
+    wasReported(r.status) ? `${r.actions - r.failedActions}/${r.actions}` : "-",
     r.peakMemMb === null ? "-" : `${Math.round(r.peakMemMb)} MB`,
   ]);
   const header = [
