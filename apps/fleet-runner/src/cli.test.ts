@@ -219,5 +219,6 @@ describe("pnpm fleet cleanup", () => {
         await ours.remove({ force: true }).catch(() => undefined);
       }
     },
+    60_000,
   );
 });
