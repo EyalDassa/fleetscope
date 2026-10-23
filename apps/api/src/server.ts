@@ -1,4 +1,10 @@
-import { ConfigError, createClickHouseClient, ping, toDbConfig } from "@fleetscope/db";
+import {
+  ConfigError,
+  createClickHouseClient,
+  insertEvents,
+  ping,
+  toDbConfig,
+} from "@fleetscope/db";
 import { buildApp } from "./app";
 import { loadApiEnv } from "./env";
 
@@ -17,6 +23,8 @@ try {
 const client = createClickHouseClient(toDbConfig(env));
 const app = buildApp({
   ping: () => ping(client, 1000),
+  insert: (events, dedupTokens) => insertEvents(client, events, { dedupTokens }),
+  ingest: { capacity: env.INGEST_BUFFER_CAPACITY },
   logLevel: env.LOG_LEVEL,
 });
 
@@ -26,6 +34,8 @@ async function shutdown(signal: string): Promise<void> {
   closing = true;
   app.log.info({ signal }, "shutting down");
   try {
+    // In this order: stop taking requests and flush the ingest buffer (app.close does both, up to
+    // 10 s), and only then close the ClickHouse client the flush needs.
     await app.close();
     await client.close();
   } catch (error) {
