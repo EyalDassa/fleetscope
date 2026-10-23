@@ -89,6 +89,8 @@ The fleet uses exactly these three engines. Don't add others.
 
 Verify current image names, ports and Playwright compatibility in each project's README before wiring them in. Docker Desktop with WSL2 is required on Windows.
 
+**How the browser reaches the demo site.** Inside every browser container the demo site is `http://localhost:3100`, because `localhost` is a secure context in every engine (APIs like `crypto.subtle` need one). A small forwarder passes that port to the host. In M1 the forwarder runs inside the browser container and adds about 10 MB idle and 11–17 MB with a page loaded to every container sample (measured, `infra/browsers/README.md`). In M3, before the engines are compared, it moves to a sidecar container that shares the browser container's network namespace (`--network container:<browser>`), so it is no longer counted in the browser's memory.
+
 ### Where the metrics come from (measured inside and outside)
 - **Outside (works for every engine):** Docker Engine API stats per container: CPU %, memory, network rx/tx, sampled every 2s.
 - **Inside (when supported):** CDP `Performance.getMetrics` (JS heap, layout and script time) and network events. Engines that don't support a domain report `null` and never crash the collector.
