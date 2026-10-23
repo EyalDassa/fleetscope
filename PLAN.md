@@ -77,7 +77,7 @@ docs/
 
 ## 3. Browser fleet
 
-Each browser instance runs in **its own Docker container** and exposes a CDP or Playwright endpoint. The runner keeps a pool per engine and gives each container one active session at a time, so container CPU and memory can be attributed to that session.
+Each browser instance runs in **its own Docker container** and exposes a CDP or Playwright endpoint. The runner runs up to `--concurrency` containers at once and gives each session a fresh container that is removed afterwards, so container CPU and memory belong to exactly one session and `startup_ms` (container create → server ready) is a real per-engine number.
 
 | Engine | How it runs | Why include it |
 |---|---|---|
@@ -102,9 +102,9 @@ Verify current image names, ports and Playwright compatibility in each project's
 - A "bot wall" page that returns 403 or a fake CAPTCHA at an adjustable rate
 - A JS-heavy page that uses Web APIs some engines lack (this is how Lightpanda's compatibility gaps show up)
 
-**Scenarios:** `login-and-search`, `checkout-form`, `heavy-page-crawl`, `long-idle-session` (a zombie browser that wastes money), `memory-hog` (a page that leaks memory). Each scenario is a typed function that uses the collector-wrapped page.
+**Scenarios:** `login-and-search`, `checkout-form`, `heavy-page-crawl`, `long-idle-session` (a zombie browser that wastes money), `memory-hog` (a page that leaks memory). Each scenario is a typed function that uses the collector-wrapped page. M1 builds the first three; `long-idle-session` and `memory-hog` come with Insights (M3/M4).
 
-**Runner CLI:** `pnpm fleet run --engines chrome,lightpanda --sessions 40 --concurrency 8 --scenario mix`
+**Runner CLI:** `pnpm fleet run --engines chromium,lightpanda --sessions 40 --concurrency 8 --scenario mix` (engine slugs as in `packages/schema`)
 
 ## 5. Event schema (`packages/schema`, version 1)
 
@@ -187,7 +187,7 @@ Every feedback loop has **up to 2 feedback rounds, only if needed**. After that 
 | Designer (Taste skill) | `designer-taste` | Competing proposal, critiques, revisions |
 | Design lead | `design-lead` | Decides after each round, writes `design/DESIGN.md` |
 | Backend engineer | `backend-engineer` | schema, db, collector, api, runner, simulator, mcp |
-| Frontend engineer | `frontend-engineer` | apps/web, following DESIGN.md |
+| Frontend engineer | `frontend-engineer` | apps/web following DESIGN.md, and apps/demo-site |
 | Platform engineer | `platform-engineer` | CI/CD, Docker, deploy, Sentry, PostHog, root config |
 | QA engineer | `qa-engineer` | Tests, fixtures, `qa/` reports, merge verdict |
 | Code reviewer | `code-reviewer` | `reviews/` files, approve or request changes |
