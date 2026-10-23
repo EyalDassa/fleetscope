@@ -13,6 +13,11 @@ import { afterAll, describe, expect, it } from "vitest";
 
 const packageDir = fileURLToPath(new URL("..", import.meta.url));
 
+// Each test starts a fresh Node + tsx process, and the usage tests start 14 of them at once.
+// On a 2-4 core CI runner that cold start alone can pass vitest's 5 s default, so give each
+// test the same budget as the process itself (runCli's 60 s).
+const CLI_TEST_TIMEOUT_MS = 60_000;
+
 interface Outcome {
   code: number | null;
   stdout: string;
@@ -83,7 +88,7 @@ describe("pnpm fleet: usage errors exit with 2 and print the usage", () => {
     expect(out.code).toBe(2);
     expect(out.stderr + out.stdout).toContain(message);
     expect(out.stderr + out.stdout).toContain("pnpm fleet run");
-  });
+  }, CLI_TEST_TIMEOUT_MS);
 
   it("help exits 0 and documents every flag", async () => {
     const out = await runCli(["--help"]);
@@ -100,7 +105,7 @@ describe("pnpm fleet: usage errors exit with 2 and print the usage", () => {
     ]) {
       expect(out.stdout).toContain(flag);
     }
-  });
+  }, CLI_TEST_TIMEOUT_MS);
 });
 
 describe("pnpm fleet run: preflight", () => {
