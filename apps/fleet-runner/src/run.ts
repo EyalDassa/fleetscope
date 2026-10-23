@@ -1,4 +1,4 @@
-import { type Collector, createCollector } from "@fleetscope/collector";
+import { type CollectedSession, type Collector, createCollector } from "@fleetscope/collector";
 import type { Engine } from "@fleetscope/schema";
 import type { Logger } from "pino";
 import type { RunnerConfig } from "./config";
@@ -22,11 +22,35 @@ export interface FleetRunDeps {
   options: RunOptions;
   /** One DockerFleet per engine (it knows the image). */
   fleets: ReadonlyMap<Engine, DockerFleet>;
+  /** One collector per engine, from `createCollectors`. `runFleet` closes them when it is done. */
+  collectors: ReadonlyMap<Engine, Collector>;
   logger: Logger;
   signal: AbortSignal;
-  /** Test hooks. */
-  collectorFor?: (engine: Engine) => Collector;
+  /** Sessions that have started and not ended (see `SessionDeps.live`). */
+  live?: Set<CollectedSession>;
+  /** Test hook. */
   runSession?: typeof runSession;
+}
+
+/** One collector per engine: they own the in-order queues that ship events to the API. */
+export function createCollectors(
+  config: RunnerConfig,
+  options: RunOptions,
+  logger: Logger,
+): Map<Engine, Collector> {
+  return new Map(
+    options.engines.map((engine) => [
+      engine,
+      createCollector({
+        apiUrl: config.apiUrl,
+        source: "real",
+        agentId: options.agentId,
+        provider: "local-docker",
+        engine,
+        logger: logger.child({ component: "collector", engine }),
+      }),
+    ]),
+  );
 }
 
 /**
@@ -35,23 +59,8 @@ export interface FleetRunDeps {
  * `mix`). Returns when every started session has ended and the collectors have flushed.
  */
 export async function runFleet(deps: FleetRunDeps): Promise<FleetRunResult> {
-  const { config, options, logger, signal } = deps;
+  const { config, options, logger, signal, collectors } = deps;
   const startedAt = Date.now();
-
-  const collectors = new Map<Engine, Collector>(
-    options.engines.map((engine) => [
-      engine,
-      deps.collectorFor?.(engine) ??
-        createCollector({
-          apiUrl: config.apiUrl,
-          source: "real",
-          agentId: options.agentId,
-          provider: "local-docker",
-          engine,
-          logger: logger.child({ component: "collector", engine }),
-        }),
-    ]),
-  );
 
   const results: SessionResult[] = [];
   let next = 0;
@@ -73,6 +82,7 @@ export async function runFleet(deps: FleetRunDeps): Promise<FleetRunResult> {
             sessionTimeoutMs: options.sessionTimeoutMs,
             logger,
             signal,
+            live: deps.live,
           },
           {
             index,

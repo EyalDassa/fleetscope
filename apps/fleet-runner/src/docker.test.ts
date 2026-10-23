@@ -1,9 +1,10 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { Readable } from "node:stream";
 import type Docker from "dockerode";
 import pino from "pino";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DockerFleet, demuxLogs, LABEL_ENGINE, LABEL_SESSION } from "./docker";
+import { DockerFleet, demuxLogs, LABEL_ENGINE, LABEL_RUN, LABEL_SESSION } from "./docker";
 
 const logger = pino({ level: "silent" });
 
@@ -44,10 +45,10 @@ function fakeContainer(hostPort: number | null, overrides: Record<string, unknow
             hostPort === null ? null : [{ HostIp: "127.0.0.1", HostPort: String(hostPort) }],
         },
       },
-      State: { Running: true, ExitCode: 0 },
+      State: { Running: true, ExitCode: 0, StartedAt: "2026-10-23T12:00:00.250000000Z" },
     })),
     remove: vi.fn(async () => undefined),
-    stats: vi.fn(async () => ({ memory_stats: { usage: 1 } })),
+    stats: vi.fn(async () => Readable.from(['{"read":"a"}\n', '{"read":"b"}\n'])),
     logs: vi.fn(async () => Buffer.from("")),
     ...overrides,
   };
@@ -79,12 +80,16 @@ describe("DockerFleet.startBrowser", () => {
       ExposedPorts: { "3000/tcp": {} },
       HostConfig: {
         Init: true,
-        IpcMode: "host",
         // random host port (empty HostPort), bound to loopback only
         PortBindings: { "3000/tcp": [{ HostIp: "127.0.0.1", HostPort: "" }] },
         ExtraHosts: ["host.docker.internal:host-gateway"],
       },
     });
+    // R-M1-02: the browser must not share the host's IPC namespace (and /dev/shm) with other sessions.
+    const created = createContainer.mock.calls[0]?.[0] as { HostConfig: Record<string, unknown> };
+    const hostConfig = created.HostConfig;
+    expect(hostConfig.IpcMode).not.toBe("host");
+    expect(hostConfig.IpcMode).toBeUndefined();
     expect(container.start).toHaveBeenCalled();
     expect(browser.wsEndpoint).toBe(`ws://127.0.0.1:${port}/`);
     expect(browser.id).toBe("container-1");
@@ -191,15 +196,48 @@ describe("DockerFleet.startBrowser", () => {
     await expect(browser.remove()).rejects.toThrow("daemon error");
   });
 
-  it("readStats asks Docker for a non-streaming reading", async () => {
+  it("the stats stream is Docker's streaming call, parsed into frames, and closes cleanly", async () => {
     const port = await fakeBrowserServer();
     const container = fakeContainer(port);
     const { docker } = fakeDocker(container);
     const browser = await new DockerFleet("img", "chromium", logger, { docker }).startBrowser({
       sessionId: "s",
     });
-    await browser.readStats();
-    expect(container.stats).toHaveBeenCalledWith({ stream: false });
+    const stream = await browser.openStatsStream();
+    expect(container.stats).toHaveBeenCalledWith({ stream: true });
+    const frames: unknown[] = [];
+    for await (const frame of stream.frames) frames.push(frame);
+    expect(frames).toEqual([{ read: "a" }, { read: "b" }]);
+    expect(() => stream.close()).not.toThrow();
+  });
+
+  it("tells when the container started, from Docker's clock", async () => {
+    const port = await fakeBrowserServer();
+    const { docker } = fakeDocker(fakeContainer(port));
+    const browser = await new DockerFleet("img", "chromium", logger, { docker }).startBrowser({
+      sessionId: "s",
+    });
+    expect(browser.startedAtMs).toBe(Date.parse("2026-10-23T12:00:00.250Z"));
+  });
+
+  it("every container carries the run label, when the fleet has a run id", async () => {
+    const port = await fakeBrowserServer();
+    const { docker, createContainer } = fakeDocker(fakeContainer(port));
+    await new DockerFleet("img", "chromium", logger, { docker, runId: "r1" }).startBrowser({
+      sessionId: "s",
+    });
+    expect(createContainer.mock.calls[0]?.[0]).toMatchObject({
+      Labels: { [LABEL_SESSION]: "s", [LABEL_RUN]: "r1" },
+    });
+  });
+
+  it("without a run id there is no run label", async () => {
+    const port = await fakeBrowserServer();
+    const { docker, createContainer } = fakeDocker(fakeContainer(port));
+    await new DockerFleet("img", "chromium", logger, { docker }).startBrowser({ sessionId: "s" });
+    const created = createContainer.mock.calls[0]?.[0] as { Labels: Record<string, string> };
+    const labels = created.Labels;
+    expect(LABEL_RUN in labels).toBe(false);
   });
 });
 
@@ -275,6 +313,22 @@ describe("DockerFleet cleanup and checks", () => {
     expect(listContainers).toHaveBeenCalledWith({ all: true, filters: { label: [LABEL_SESSION] } });
     expect(remove).toHaveBeenCalledTimes(2);
     expect(remove).toHaveBeenCalledWith({ force: true, v: true });
+  });
+
+  it("removeAllOwned({ runId }) only touches that run's containers", async () => {
+    const remove = vi.fn(async () => undefined);
+    const listContainers = vi.fn(async () => [{ Id: "mine" }]);
+    const getContainer = vi.fn(() => ({ remove }));
+    const fleet = new DockerFleet("img", "chromium", logger, {
+      docker: { listContainers, getContainer } as unknown as Docker,
+    });
+
+    expect(await fleet.removeAllOwned({ runId: "r1" })).toBe(1);
+    expect(listContainers).toHaveBeenCalledWith({
+      all: true,
+      filters: { label: [LABEL_SESSION, "fleetscope.run=r1"] },
+    });
+    expect(getContainer).toHaveBeenCalledWith("mine");
   });
 
   it("removeAllOwned keeps going when one container is already gone or fails", async () => {

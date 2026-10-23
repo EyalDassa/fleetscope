@@ -59,7 +59,7 @@ describe("runFleet", () => {
       fleets,
       logger,
       signal: new AbortController().signal,
-      collectorFor: () => collector,
+      collectors: new Map([["chromium", collector]]),
       runSession: async (_deps, spec) => {
         active++;
         maxActive = Math.max(maxActive, active);
@@ -83,7 +83,7 @@ describe("runFleet", () => {
       fleets,
       logger,
       signal: new AbortController().signal,
-      collectorFor: () => fakeCollector().collector,
+      collectors: new Map([["chromium", fakeCollector().collector]]),
       runSession: async (_deps, spec) => {
         specs.push(spec);
         return result(spec);
@@ -105,7 +105,7 @@ describe("runFleet", () => {
       fleets,
       logger,
       signal: new AbortController().signal,
-      collectorFor: () => fakeCollector().collector,
+      collectors: new Map([["chromium", fakeCollector().collector]]),
       runSession: async (_deps, spec) => {
         seen.add(spec.scenario);
         return result(spec);
@@ -123,7 +123,7 @@ describe("runFleet", () => {
       fleets,
       logger,
       signal: abort.signal,
-      collectorFor: () => fakeCollector().collector,
+      collectors: new Map([["chromium", fakeCollector().collector]]),
       runSession: async (_deps, spec) => {
         started++;
         if (started === 2) abort.abort();
@@ -151,7 +151,7 @@ describe("runFleet", () => {
       fleets,
       logger,
       signal: new AbortController().signal,
-      collectorFor: () => collector,
+      collectors: new Map([["chromium", collector]]),
       runSession: async (_deps, spec) => result(spec),
     });
     expect(close).toHaveBeenCalledTimes(1);
@@ -167,7 +167,7 @@ describe("runFleet", () => {
         fleets,
         logger,
         signal: new AbortController().signal,
-        collectorFor: () => collector,
+        collectors: new Map([["chromium", collector]]),
         runSession: async () => {
           throw new Error("docker exploded");
         },

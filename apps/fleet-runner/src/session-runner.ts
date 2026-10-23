@@ -8,7 +8,7 @@ import type { BrowserContainer, DockerFleet } from "./docker";
 import { classifyOutcome } from "./outcome";
 import { createRng } from "./rng";
 import { SCENARIOS, type ScenarioName } from "./scenarios";
-import { StatsPoller } from "./stats";
+import { StatsSampler } from "./stats";
 
 export interface SessionSpec {
   index: number;
@@ -27,6 +27,12 @@ export interface SessionDeps {
   logger: Logger;
   /** Aborted by Ctrl+C. */
   signal: AbortSignal;
+  /**
+   * Sessions that have started and not yet ended. The runner adds and removes them; the "exit now"
+   * path of the CLI ends whatever is still in it before it flushes, so no finished or running
+   * session stays `running` in the database.
+   */
+  live?: Set<CollectedSession>;
 }
 
 /**
@@ -77,8 +83,8 @@ async function bounded(promise: Promise<unknown> | undefined, ms: number): Promi
  * One session, start to finish:
  *  1. start a fresh container and wait for the Playwright server (`startup_ms`)
  *  2. connect to it (`connect_ms`) and tell the collector the session started
- *  3. poll Docker stats every 2 s while the scenario runs
- *  4. report the session's status, stop the poller, close the browser, remove the container
+ *  3. sample Docker's stats stream every 2 s while the scenario runs
+ *  4. take the last sample, report the session's status, close the browser, remove the container
  *
  * The container is removed whatever happens. If the browser never came up, nothing is reported
  * (there is no `startup_ms`/`connect_ms` to put in `session.started`) and the result is `infra_error`.
@@ -102,24 +108,20 @@ export async function runSession(deps: SessionDeps, spec: SessionSpec): Promise<
 
   let container: BrowserContainer | undefined;
   let browser: Browser | undefined;
+  let session: CollectedSession | undefined;
   // True once we close the browser ourselves, so its "disconnected" event is not a crash.
   let closingByUs = false;
   const closeBrowser = (): Promise<void> | undefined => {
     closingByUs = true;
+    session?.beginShutdown(); // the action this cuts off is not a crash either
     return browser?.close();
   };
 
   // Phase 1: infrastructure. A failure here leaves nothing to report.
   let connectMs = 0;
-  let poller: StatsPoller | undefined;
   try {
     container = await deps.fleet.startBrowser({ sessionId, signal: deps.signal });
     result.startupMs = Math.round(container.startupMs);
-    // The container is serving: start measuring it now, while Chromium launches. The first reading
-    // takes about a second, so this way it is ready when the session starts. Samples wait in the
-    // poller until the session exists.
-    poller = new StatsPoller({ readStats: container.readStats, logger: log });
-    poller.start();
     const connectStart = performance.now();
     browser = await chromium.connect(container.wsEndpoint, { timeout: CONNECT_TIMEOUT_MS });
     connectMs = performance.now() - connectStart;
@@ -132,7 +134,6 @@ export async function runSession(deps: SessionDeps, spec: SessionSpec): Promise<
     } else {
       log.error({ err: error }, "could not get a browser, session not reported");
     }
-    await bounded(poller?.stop({ finalSample: false }), CLOSE_TIMEOUT_MS);
     await bounded(closeBrowser(), CLOSE_TIMEOUT_MS);
     await bounded(container?.remove(), CLOSE_TIMEOUT_MS * 3);
     return result;
@@ -144,7 +145,7 @@ export async function runSession(deps: SessionDeps, spec: SessionSpec): Promise<
   browser.on("disconnected", () => {
     if (!closingByUs) disconnected = true;
   });
-  const session: CollectedSession = deps.collector.startSession({
+  const started = deps.collector.startSession({
     sessionId,
     scenario: spec.scenario,
     region: "local",
@@ -152,9 +153,17 @@ export async function runSession(deps: SessionDeps, spec: SessionSpec): Promise<
     startupMs: container.startupMs,
     connectMs,
   });
-  // Hand over the readings taken while the browser was launching, then every later one.
-  const stats = poller;
-  stats.attach((sample) => session.recordContainerSample(sample));
+  session = started;
+  deps.live?.add(started);
+  // Docker's stats stream: the first frame arrives at once, so even a short session is measured.
+  // The first sample's CPU is the container's average since it started, which includes the launch.
+  const stats = new StatsSampler({
+    openStream: container.openStatsStream,
+    containerStartedAtMs: container.startedAtMs,
+    onSample: (sample) => started.recordContainerSample(sample),
+    logger: log,
+  });
+  stats.start();
   const onAbort = () => void bounded(closeBrowser(), CLOSE_TIMEOUT_MS); // unblocks a running action
   deps.signal.addEventListener("abort", onAbort, { once: true });
   const deadline = setTimeout(() => {
@@ -165,7 +174,7 @@ export async function runSession(deps: SessionDeps, spec: SessionSpec): Promise<
   let error: unknown;
   try {
     const context = await browser.newContext({ viewport: VIEWPORT });
-    const page = await session.collectPage(await context.newPage());
+    const page = await started.collectPage(await context.newPage());
     await SCENARIOS[spec.scenario](page, {
       baseUrl: deps.config.demoSiteBrowserUrl,
       rng: createRng(spec.seed),
@@ -185,21 +194,22 @@ export async function runSession(deps: SessionDeps, spec: SessionSpec): Promise<
 
   clearTimeout(deadline);
   deps.signal.removeEventListener("abort", onAbort);
-  await finishSession(session, stats, outcome);
+  await finishSession(started, stats, outcome);
+  deps.live?.delete(started);
   await bounded(closeBrowser(), CLOSE_TIMEOUT_MS);
   await bounded(container.remove(), CLOSE_TIMEOUT_MS * 3);
 
   log.info(
-    { status: outcome.status, reason: outcome.reason, actions: session.actionCount },
+    { status: outcome.status, reason: outcome.reason, actions: started.actionCount },
     "session finished",
   );
   return {
     ...result,
     status: outcome.status,
     reason: outcome.reason,
-    durationMs: sessionDurationMs(session),
-    actions: session.actionCount,
-    failedActions: session.failedActions,
+    durationMs: sessionDurationMs(started),
+    actions: started.actionCount,
+    failedActions: started.failedActions,
     peakMemMb: stats.sampleCount > 0 ? stats.peakMemMb : null,
   };
 }
@@ -211,10 +221,10 @@ export async function runSession(deps: SessionDeps, spec: SessionSpec): Promise<
  */
 export async function finishSession(
   session: Pick<CollectedSession, "endSession">,
-  poller: Pick<StatsPoller, "stop">,
+  sampler: Pick<StatsSampler, "stop">,
   outcome: { status: SessionStatus; reason: string | null },
 ): Promise<void> {
-  await poller.stop();
+  await sampler.stop();
   await session.endSession(outcome.status, outcome.reason);
 }
 

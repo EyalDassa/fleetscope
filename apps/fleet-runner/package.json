@@ -5,7 +5,7 @@
   "description": "Fleet runner: runs scenarios in one Docker browser container per session and reports to the Fleetscope API",
   "type": "module",
   "scripts": {
-    "fleet": "tsx --env-file-if-exists=../../.env src/cli.ts",
+    "fleet": "node --env-file-if-exists=../../.env --import tsx src/cli.ts",
     "lint": "biome check .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests"

@@ -45,7 +45,9 @@ export function classifyOutcome(input: OutcomeInput): Outcome {
   if (input.disconnected || (error instanceof CollectedError && error.code === "browser_closed")) {
     return { status: "crashed", reason: "browser disconnected" };
   }
-  const message = error instanceof Error ? error.message : String(error);
+  const raw = error instanceof Error ? error.message : String(error);
+  // A reason is never empty: "why did it fail" must always have an answer.
+  const message = raw.trim() || (error instanceof Error ? error.name : "unknown error");
   if (error instanceof BlockedError) return { status: "blocked", reason: message };
   if (error instanceof CollectedError && error.code === "timeout") {
     return { status: "timeout", reason: message };

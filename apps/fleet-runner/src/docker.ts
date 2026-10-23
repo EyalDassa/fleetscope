@@ -1,10 +1,15 @@
 import Docker from "dockerode";
 import type { Logger } from "pino";
-import type { DockerStats } from "./stats";
+import { parseStatsFrames, type StatsStream } from "./stats";
 
-/** Labels on every browser container. `cleanup` and the Ctrl+C handler find containers by them. */
+/**
+ * Labels on every browser container. `pnpm fleet cleanup` finds containers by `fleetscope.session`
+ * (all runs), the end of a run by `fleetscope.run` (only its own, so a second run in another
+ * terminal is left alone).
+ */
 export const LABEL_ENGINE = "fleetscope.engine";
 export const LABEL_SESSION = "fleetscope.session";
+export const LABEL_RUN = "fleetscope.run";
 
 /** Where Playwright's `run-server` listens inside the container. */
 const SERVER_PORT = "3000/tcp";
@@ -15,8 +20,10 @@ export interface BrowserContainer {
   wsEndpoint: string;
   /** Milliseconds from asking Docker for the container until the server answered. */
   startupMs: number;
-  /** Fresh stats reading (Docker averages CPU over about one second, so this takes a moment). */
-  readStats(): Promise<DockerStats>;
+  /** When Docker started the container (epoch ms, Docker's clock), if it said. */
+  startedAtMs: number | undefined;
+  /** Opens Docker's stats stream: one frame about every second, over a single connection. */
+  openStatsStream(): Promise<StatsStream>;
   /** Force-removes the container (and its anonymous volumes). Safe to call twice. */
   remove(): Promise<void>;
 }
@@ -67,6 +74,7 @@ function isGone(error: unknown): boolean {
 export class DockerFleet {
   readonly docker: Docker;
   private readonly env: string[];
+  private readonly runId: string | undefined;
 
   constructor(
     private readonly image: string,
@@ -75,10 +83,13 @@ export class DockerFleet {
     options: {
       /** Extra environment for every container, as "NAME=value" (e.g. DEMO_SITE_UPSTREAM). */
       env?: string[];
+      /** Marks this fleet's containers as belonging to one run (label `fleetscope.run`). */
+      runId?: string;
       docker?: Docker;
     } = {},
   ) {
     this.env = options.env ?? [];
+    this.runId = options.runId;
     // With no options dockerode follows DOCKER_HOST, else uses the Linux socket or the Windows pipe.
     this.docker = options.docker ?? new Docker();
   }
@@ -108,11 +119,16 @@ export class DockerFleet {
     const container = await this.docker.createContainer({
       Image: this.image,
       Env: this.env,
-      Labels: { [LABEL_ENGINE]: this.engine, [LABEL_SESSION]: options.sessionId },
+      Labels: {
+        [LABEL_ENGINE]: this.engine,
+        [LABEL_SESSION]: options.sessionId,
+        ...(this.runId && { [LABEL_RUN]: this.runId }),
+      },
       ExposedPorts: { [SERVER_PORT]: {} },
       HostConfig: {
         Init: true, // reap Chromium's child processes
-        IpcMode: "host", // Chromium needs a big /dev/shm
+        // No IpcMode: "host". Playwright starts Chromium with --disable-dev-shm-usage, so it does not
+        // need the host's /dev/shm, and a private IPC namespace keeps sessions apart.
         // Random free host port, reachable from this machine only.
         PortBindings: { [SERVER_PORT]: [{ HostIp: "127.0.0.1", HostPort: "" }] },
         // Lets the browser reach the demo site running on the host (Docker Desktop and Linux).
@@ -135,11 +151,20 @@ export class DockerFleet {
       if (!binding?.HostPort) throw new Error("Docker did not publish the browser server port");
       const base = `127.0.0.1:${binding.HostPort}`;
       await this.waitForServer(container, `http://${base}/`, options);
+      const containerStartedAt = Date.parse(info.State?.StartedAt ?? "");
       return {
         id: container.id,
         wsEndpoint: `ws://${base}/`,
         startupMs: performance.now() - startedAt,
-        readStats: () => container.stats({ stream: false }) as unknown as Promise<DockerStats>,
+        startedAtMs: Number.isFinite(containerStartedAt) ? containerStartedAt : undefined,
+        openStatsStream: async () => {
+          const stream = (await container.stats({
+            stream: true,
+          })) as unknown as NodeJS.ReadableStream & {
+            destroy(): void;
+          };
+          return { frames: parseStatsFrames(stream), close: () => stream.destroy() };
+        },
         remove,
       };
     } catch (error) {
@@ -153,19 +178,27 @@ export class DockerFleet {
     }
   }
 
-  /** Ids of every container this tool started (any state), found by label. */
-  async listOwned(): Promise<string[]> {
+  /**
+   * Ids of the containers this tool started (any state), found by label: every run's, or only
+   * those of one run.
+   */
+  async listOwned(scope: { runId?: string } = {}): Promise<string[]> {
     const containers = await this.docker.listContainers({
       all: true,
-      filters: { label: [LABEL_SESSION] },
+      filters: {
+        label: [LABEL_SESSION, ...(scope.runId ? [`${LABEL_RUN}=${scope.runId}`] : [])],
+      },
     });
     return containers.map((c) => c.Id);
   }
 
-  /** Force-removes every labelled container. Returns how many were removed. */
-  async removeAllOwned(): Promise<number> {
+  /**
+   * Force-removes labelled containers: all of them, or only those of `scope.runId`. Returns how
+   * many were removed.
+   */
+  async removeAllOwned(scope: { runId?: string } = {}): Promise<number> {
     let removed = 0;
-    for (const id of await this.listOwned()) {
+    for (const id of await this.listOwned(scope)) {
       try {
         await this.docker.getContainer(id).remove({ force: true, v: true });
         removed++;
