@@ -5,8 +5,9 @@
 # BUILD CONTEXT is infra/browsers (not this folder) because the port forwarder is shared:
 #   pnpm browsers:build
 #   = docker build -f infra/browsers/chromium/Dockerfile -t fleetscope/playwright-chromium:1.64.1 infra/browsers
-# Run by hand:
-#   docker run --rm --init --ipc=host -p 127.0.0.1:3999:3000 \
+# Run by hand (no --ipc=host: every session keeps its own private IPC namespace and 64 MB /dev/shm,
+# which is enough because Playwright starts Chromium with --disable-dev-shm-usage):
+#   docker run --rm --init -p 127.0.0.1:3999:3000 \
 #     --add-host host.docker.internal:host-gateway fleetscope/playwright-chromium:1.64.1
 # More in infra/browsers/README.md.
 #
