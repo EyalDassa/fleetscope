@@ -888,6 +888,230 @@ describe("a batch that ClickHouse always refuses", () => {
   });
 });
 
+describe("free text of any shape (QA-M1-01 re-test: no other poison left behind validation)", () => {
+  // The lone-surrogate bug was found by hand. This looks for the next one: random text built from the
+  // code points most likely to upset a parser or a column (quotes, backslashes, NUL and other control
+  // characters, noncharacters, BOM, bidi controls, line separators, emoji, lone surrogates), in every
+  // free-text field of every event type. Whatever the API accepts must be stored, and must come back as
+  // the repaired text; nothing may reach the dead-letter file.
+  const PIECES = [
+    "a",
+    "Z",
+    " ",
+    "0",
+    "'",
+    '"',
+    "\\",
+    "/",
+    "%",
+    ";",
+    "--",
+    "{x:String}",
+    "$" + "{x}",
+    "\n",
+    "\r\n",
+    "\t",
+    "\u0000",
+    "\u0001",
+    "\u001f",
+    "\u007f",
+    "\u0085",
+    "\u200b",
+    "\u2028",
+    "\u2029",
+    "\u202e",
+    "\ufeff",
+    "\ufffe",
+    "\uffff",
+    "\ufffd",
+    "\u{1F600}",
+    "\u{10FFFF}",
+    "\u{1F1EE}\u{1F1F1}",
+    "e\u0301",
+    "日本語",
+    "עברית",
+    "\ud83d",
+    "\ude00",
+    "\ud800",
+    "\udfff",
+  ];
+  /** String.prototype.toWellFormed (Node 20+), which the tsconfig lib does not know yet. */
+  const fixed = (value: string): string =>
+    (value as unknown as { toWellFormed(): string }).toWellFormed();
+  function rng(seed: number) {
+    let state = seed >>> 0;
+    return () => {
+      state = (state + 0x6d2b79f5) >>> 0;
+      let t = state;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  const random = rng(20261023);
+  /** Random text of at most `max` UTF-16 units, at least 1. */
+  function text(max: number, wellFormedOnly = false): string {
+    let out = "";
+    const pieces = 1 + Math.floor(random() * 12);
+    for (let i = 0; i < pieces; i++) {
+      const piece = PIECES[Math.floor(random() * PIECES.length)] ?? "a";
+      if (out.length + piece.length > max) break;
+      out += piece;
+    }
+    if (out === "") out = "x";
+    return wellFormedOnly ? fixed(out) : out;
+  }
+
+  it("stores every accepted event exactly as repaired, with nothing dead-lettered and nothing left in the buffer", async () => {
+    const run = sid("fuzz");
+    const deadDir = await mkdtemp(join(tmpdir(), "qa-fuzz-deadletter-"));
+    closers.push(() => rm(deadDir, { recursive: true, force: true }));
+    const { post, health } = await listen({ deadLetter: fileDeadLetter(deadDir) });
+
+    const expectedIssue = new Map<string, string>();
+    const expectedAction = new Map<string, { target: string; error_code: string }>();
+    const expectedNet = new Map<string, { domain: string; resource_type: string }>();
+    const expectedSession = new Map<
+      string,
+      { scenario: string; region: string; engine_version: string; reason: string }
+    >();
+    let accepted = 0;
+    let refused = 0;
+
+    for (let batchNo = 0; batchNo < 12; batchNo++) {
+      const events: FleetEvent[] = [];
+      for (let i = 0; i < 25; i++) {
+        const id = `${run}-${text(40, true)}`.slice(0, 128);
+        const ctxWeird = {
+          session_id: id,
+          source: "real" as const,
+          agent_id: text(60, true),
+          engine: "chromium" as const,
+          provider: text(60, true),
+        };
+        const scenario = text(100);
+        const region = text(100);
+        const engineVersion = text(100);
+        const reason = text(500);
+        const ev = newEvent("session.started", ctxWeird, {
+          engine_version: engineVersion,
+          scenario,
+          region,
+          startup_ms: 1,
+          connect_ms: 1,
+        });
+        events.push(ev);
+        const target = text(300);
+        const errorCode = text(100);
+        const act = newEvent("action", ctxWeird, {
+          seq: 0,
+          action_type: "click",
+          target,
+          duration_ms: 1,
+          ok: false,
+          error_code: errorCode,
+        });
+        events.push(act);
+        const message = text(1500);
+        const iss = newEvent("issue", ctxWeird, { kind: "nav_error", message });
+        events.push(iss);
+        const domain = text(100);
+        const resourceType = text(100);
+        const net = newEvent("network.request", ctxWeird, {
+          domain,
+          status: 200,
+          bytes: 1,
+          duration_ms: 1,
+          resource_type: resourceType,
+        });
+        events.push(net);
+        events.push(
+          newEvent("session.ended", ctxWeird, { status: "failed", reason, duration_ms: 1 }),
+        );
+
+        expectedIssue.set(iss.event_id, fixed(message));
+        expectedAction.set(act.event_id, {
+          target: fixed(target),
+          error_code: fixed(errorCode),
+        });
+        expectedNet.set(net.event_id, {
+          domain: fixed(domain),
+          resource_type: fixed(resourceType),
+        });
+        expectedSession.set(id, {
+          scenario: fixed(scenario),
+          region: fixed(region),
+          engine_version: fixed(engineVersion),
+          reason: fixed(reason),
+        });
+      }
+      const res = await post(events);
+      if (res.status === 202) accepted += events.length;
+      else refused += events.length;
+      expect(res.status, JSON.stringify(res.body).slice(0, 300)).toBe(202);
+    }
+    expect(refused).toBe(0);
+    expect(accepted).toBe(12 * 25 * 5);
+
+    await expect.poll(async () => (await health()).body.ingest.queued, { timeout: 15_000 }).toBe(0);
+    const ingest = (await health()).body.ingest;
+    expect(ingest.deadLettered).toBe(0);
+    expect(ingest.retrying).toBe(false);
+    expect(await readdir(deadDir)).toEqual([]);
+
+    const issues = await rows<{ event_id: string; message: string }>(
+      "SELECT toString(event_id) AS event_id, message FROM issues WHERE startsWith(session_id, {p:String})",
+      { p: run },
+    );
+    expect(issues).toHaveLength(expectedIssue.size);
+    for (const row of issues) expect(row.message).toBe(expectedIssue.get(row.event_id));
+
+    const actions = await rows<{ event_id: string; target: string; error_code: string }>(
+      "SELECT toString(event_id) AS event_id, target, error_code FROM actions WHERE startsWith(session_id, {p:String})",
+      { p: run },
+    );
+    expect(actions).toHaveLength(expectedAction.size);
+    for (const row of actions) {
+      expect({ target: row.target, error_code: row.error_code }).toEqual(
+        expectedAction.get(row.event_id),
+      );
+    }
+
+    const nets = await rows<{ event_id: string; domain: string; resource_type: string }>(
+      "SELECT toString(event_id) AS event_id, domain, resource_type FROM network_requests WHERE startsWith(session_id, {p:String})",
+      { p: run },
+    );
+    expect(nets).toHaveLength(expectedNet.size);
+    for (const row of nets) {
+      expect({ domain: row.domain, resource_type: row.resource_type }).toEqual(
+        expectedNet.get(row.event_id),
+      );
+    }
+
+    const sessions = await rows<{
+      session_id: string;
+      scenario: string;
+      region: string;
+      engine_version: string;
+      reason: string;
+      status: string;
+    }>(
+      "SELECT session_id, scenario, region, engine_version, reason, status FROM sessions FINAL WHERE startsWith(session_id, {p:String})",
+      { p: run },
+    );
+    expect(sessions).toHaveLength(expectedSession.size);
+    for (const row of sessions) {
+      expect(row.status).toBe("failed");
+      expect({
+        scenario: row.scenario,
+        region: row.region,
+        engine_version: row.engine_version,
+        reason: row.reason,
+      }).toEqual(expectedSession.get(row.session_id));
+    }
+  }, 60_000);
+});
+
 describe("session.ended before its session.started, over HTTP", () => {
   it("is stored once the start arrives in a later request, within the grace period", async () => {
     const id = sid("orphan-ok");
