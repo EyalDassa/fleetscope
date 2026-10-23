@@ -818,3 +818,17 @@ describe("10,000 sessions through the API", () => {
     expect(refused).toBeGreaterThanOrEqual(0);
   }, 120_000);
 });
+
+describe("a batch bigger than the whole buffer", () => {
+  // INGEST_BUFFER_CAPACITY accepts any value from 1 (env.ts), but a request can carry up to 1000
+  // events. With a capacity below the batch size the batch can never fit, so every try gets 503
+  // "buffer is full, retry later" with Retry-After. The collector believes it and retries 8 times
+  // (about a minute), then drops the batch. Nothing is wrong with the buffer: it is empty.
+  it.fails("QA-M1-09: a batch that can never fit is not answered with a retryable 503", async () => {
+    const id = sid("never-fits");
+    const { post, health } = await listen({ ingest: { capacity: 500 } });
+    const reply = await post(Array.from({ length: 600 }, (_, seq) => action(id, seq)));
+    expect((await health()).body.ingest.queued).toBe(0); // the buffer is empty...
+    expect(reply.status).not.toBe(503); // ...so "retry later" is a lie (413 or 400 would be honest)
+  });
+});
