@@ -1,8 +1,13 @@
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { type ClickHouseClient, insertEvents, ping } from "@fleetscope/db";
 import { createTestDatabase, type TestDatabase } from "@fleetscope/db/testing";
 import { type EventEnvelope, INGEST_PATH, MAX_BATCH_SIZE, newEvent } from "@fleetscope/schema";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { type AppDeps, buildApp } from "./app";
+import { fileDeadLetter } from "./ingest/dead-letter";
+import { oldestAcceptedTs } from "./ingest/validate";
 
 /**
  * POST /v1/events end to end: HTTP -> validation -> buffer -> insertEvents -> real ClickHouse
@@ -146,11 +151,12 @@ describe("an accepted batch", () => {
     expect(res.json()).toEqual({ accepted: 6, duplicates: 0 });
     expect(Date.now() - t0).toBeLessThan(500);
 
-    await expect.poll(() => count("actions", id), { timeout: 3000, interval: 100 }).toBe(2);
+    // issues is the last table of a flush: once it has its row, all of them do
+    await expect.poll(() => count("issues", id), { timeout: 3000, interval: 100 }).toBe(1);
     expect(Date.now() - t0).toBeLessThan(2500);
+    expect(await count("actions", id)).toBe(2);
     expect(await count("resource_samples", id)).toBe(1);
     expect(await count("network_requests", id)).toBe(1);
-    expect(await count("issues", id)).toBe(1);
     expect(await sessionStatus(id)).toBe("running");
   });
 
@@ -394,5 +400,221 @@ describe("GET /healthz", () => {
       clickhouse: "ok",
       ingest: { queued: 1, capacity: 10, retrying: false, lastFlushError: null },
     });
+  });
+});
+
+const DAY = 86_400_000;
+
+describe("events that used to make ClickHouse refuse the flush forever (R-M1-01, QA-M1-01)", () => {
+  it("stores a lone UTF-16 surrogate in free text as U+FFFD, and the rest of the batch with it", async () => {
+    const id = sid("surrogate");
+    const { post } = start();
+    // JSON.stringify writes the lone surrogates as escapes, which is what a collector sends
+    const res = await post([
+      started(id),
+      newEvent("issue", ctx(id), { kind: "crash", message: "boom \ud83d half an emoji" }),
+      newEvent(
+        "action",
+        ctx(id),
+        {
+          seq: 0,
+          action_type: "click",
+          target: "button\ude00",
+          duration_ms: 3,
+          ok: false,
+          error_code: "bad\ud800code",
+        },
+        Date.now(),
+      ),
+      newEvent("session.ended", ctx(id), {
+        status: "failed",
+        reason: "page said \udbff",
+        duration_ms: 10,
+      }),
+    ]);
+    expect(res.statusCode).toBe(202);
+
+    // issues is the last table of a flush: once it has its row, all of them do
+    await expect.poll(() => count("issues", id), { timeout: 5000 }).toBe(1);
+    expect(await sessionStatus(id)).toBe("failed");
+    const read = async (query: string) => {
+      const result = await db.client.query({
+        query,
+        query_params: { id },
+        format: "JSONEachRow",
+      });
+      return result.json<Record<string, string>>();
+    };
+    expect(await read("SELECT message FROM issues WHERE session_id = {id:String}")).toEqual([
+      { message: "boom \uFFFD half an emoji" },
+    ]);
+    expect(
+      await read("SELECT target, error_code FROM actions WHERE session_id = {id:String}"),
+    ).toEqual([{ target: "button\uFFFD", error_code: "bad\uFFFDcode" }]);
+    expect(await read("SELECT reason FROM sessions FINAL WHERE session_id = {id:String}")).toEqual([
+      { reason: "page said \uFFFD" },
+    ]);
+  });
+
+  it("refuses a lone surrogate in an id instead of renaming the session", async () => {
+    const { post } = start();
+    const res = await post([action("bad-id-\ud83d", 0)]);
+    expect(res.statusCode).toBe(400);
+    expect(res.json().issues[0].path).toEqual([0, "session_id"]);
+  });
+
+  it("stores a batch that spans the whole retention window: 31 days of partitions in one flush", async () => {
+    const id = sid("31-days");
+    const { post } = start();
+    const now = Date.now();
+    const oldest = oldestAcceptedTs(now);
+    const events = [];
+    // one event on every day from the oldest accepted day to today, plus one just inside the
+    // future limit (tomorrow, when the test runs close to midnight UTC)
+    for (let day = oldest, seq = 0; day <= now; day += DAY, seq++) {
+      events.push(action(id, seq, day));
+    }
+    events.push(action(id, events.length, now + 4 * 60_000));
+    const days = new Set(events.map((e) => new Date(e.ts).toISOString().slice(0, 10)));
+    expect(days.size).toBeGreaterThanOrEqual(30);
+
+    expect((await post(events)).statusCode).toBe(202);
+    await expect
+      .poll(() => count("actions", id), { timeout: 5000, interval: 100 })
+      .toBe(events.length);
+  });
+
+  it("answers 400 to a batch over 101 days, stores nothing of it, and keeps ingesting for everybody else", async () => {
+    const bad = sid("101-days");
+    const good = sid("innocent");
+    const { post, app } = start();
+    const now = Date.now();
+    const poison = Array.from({ length: 101 }, (_, i) => action(bad, i, now - i * DAY));
+    const refused = await post(poison);
+    expect(refused.statusCode).toBe(400);
+    expect(refused.json().error).toContain("retention window");
+
+    expect((await post([started(good), action(good, 0), ended(good)])).statusCode).toBe(202);
+    await expect.poll(() => sessionStatus(good), { timeout: 5000 }).toBe("success");
+    expect(await count("actions", bad)).toBe(0);
+    const health = (await app.inject({ method: "GET", url: "/healthz" })).json();
+    expect(health.ingest).toMatchObject({ retrying: false, deadLettered: 0, lastFlushError: null });
+  });
+
+  it("accepts the oldest day the retention window allows, and ClickHouse keeps it", async () => {
+    const id = sid("oldest-day");
+    const { post } = start();
+    const oldest = oldestAcceptedTs(Date.now());
+    expect((await post([action(id, 0, oldest)])).statusCode).toBe(202);
+    await expect.poll(() => count("actions", id), { timeout: 5000 }).toBe(1);
+
+    // force the TTL merge: the row must survive it (an event from a day further back would not)
+    await db.client.command({ query: "OPTIMIZE TABLE actions FINAL" });
+    expect(await count("actions", id)).toBe(1);
+  });
+});
+
+describe("a flush that ClickHouse refuses for its data, whatever the cause (dead letter)", () => {
+  /**
+   * The edge now repairs lone surrogates, so to get a refusal that slips through, the test puts
+   * one back in the rows of the `issues` table just before they go to ClickHouse. ClickHouse then
+   * answers with its real error 25, which is a data error. `sessions` and `actions` are written
+   * first, as in a real partial write.
+   */
+  function corruptIssues(client: ClickHouseClient): ClickHouseClient {
+    return new Proxy(client, {
+      get(target, property, receiver) {
+        if (property !== "insert") return Reflect.get(target, property, receiver);
+        return (params: { table: string; values: Array<Record<string, unknown>> }) =>
+          target.insert(
+            (params.table === "issues"
+              ? {
+                  ...params,
+                  values: params.values.map((row) => ({ ...row, message: `${row.message}\ud83d` })),
+                }
+              : params) as never,
+          );
+      },
+    });
+  }
+
+  const dirs: string[] = [];
+  afterEach(async () => {
+    await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+  });
+
+  it("moves the flush to a JSONL file after 3 attempts, and the clients behind it carry on", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "fleetscope-dead-"));
+    dirs.push(dir);
+    const bad = sid("dead");
+    const good = sid("behind");
+    const { post, app, logs } = start(
+      { deadLetter: fileDeadLetter(dir), ingest: { flushIntervalMs: 20 } },
+      corruptIssues,
+    );
+    const poisoned = [started(bad), action(bad, 0), issue(bad), ended(bad)];
+    expect((await post(poisoned)).statusCode).toBe(202);
+
+    await expect
+      .poll(
+        async () =>
+          (await app.inject({ method: "GET", url: "/healthz" })).json().ingest.deadLettered,
+        {
+          timeout: 5000,
+          interval: 20,
+        },
+      )
+      .toBe(4);
+
+    // the file has every event of the flush, one per line
+    const files = await readdir(dir);
+    expect(files).toHaveLength(1);
+    const lines = (await readFile(join(dir, files[0] ?? ""), "utf8")).trimEnd().split("\n");
+    expect(lines.map((line) => JSON.parse(line).event_id).sort()).toEqual(
+      poisoned.map((event) => event.event_id).sort(),
+    );
+
+    // one error log: error name and code, flush id, event count
+    const moved = logs.filter((line) => String(line.msg).includes("dead-letter file"));
+    expect(moved).toHaveLength(1);
+    expect(moved[0]).toMatchObject({
+      level: 50,
+      events: 4,
+      error: "ClickHouseError 25 CANNOT_PARSE_ESCAPE_SEQUENCE",
+      attempts: 3,
+    });
+    expect(String(moved[0]?.file)).toContain(String(moved[0]?.flushId));
+
+    // the tables written before the refusal have their rows once, not three times
+    expect(await count("actions", bad)).toBe(1);
+    expect(await count("issues", bad)).toBe(0);
+
+    // ingest goes on
+    const next = [started(good), action(good, 0), ended(good)];
+    expect((await post(next)).statusCode).toBe(202);
+    await expect.poll(() => sessionStatus(good), { timeout: 5000 }).toBe("success");
+    const ingest = (await app.inject({ method: "GET", url: "/healthz" })).json().ingest;
+    expect(ingest).toMatchObject({ retrying: false, queued: 0, deadLettered: 4 });
+  });
+
+  it("without a dead-letter directory the flush is retried and nothing is dropped", async () => {
+    const id = sid("no-dead-letter");
+    const { post, app } = start(
+      { ingest: { flushIntervalMs: 20, shutdownTimeoutMs: 100 } },
+      corruptIssues,
+    );
+    await post([action(id, 0), issue(id)]);
+    await expect
+      .poll(
+        async () => (await app.inject({ method: "GET", url: "/healthz" })).json().ingest.retrying,
+        {
+          timeout: 5000,
+        },
+      )
+      .toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const ingest = (await app.inject({ method: "GET", url: "/healthz" })).json().ingest;
+    expect(ingest).toMatchObject({ retrying: true, deadLettered: 0, queued: 2 });
+    expect(ingest.lastFlushError.error).toBe("ClickHouseError 25 CANNOT_PARSE_ESCAPE_SEQUENCE");
   });
 });

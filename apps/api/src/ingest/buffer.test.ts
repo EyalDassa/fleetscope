@@ -1,4 +1,4 @@
-import { INSERT_TABLES } from "@fleetscope/db";
+import { ClickHouseError, INSERT_TABLES } from "@fleetscope/db";
 import {
   type EventEnvelope,
   type FleetEvent,
@@ -6,7 +6,13 @@ import {
   type SessionEndedEvent,
 } from "@fleetscope/schema";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { backoffDelay, IngestBuffer, type IngestBufferOptions, type WriteBatch } from "./buffer";
+import {
+  backoffDelay,
+  type DeadLetter,
+  IngestBuffer,
+  type IngestBufferOptions,
+  type WriteBatch,
+} from "./buffer";
 
 // The buffer is tested without Fastify and without ClickHouse: `write` is a fake, and the clock
 // is a variable. Retry delays are real but a few milliseconds long.
@@ -50,7 +56,12 @@ function ended(session_id: string, ts = T0): SessionEndedEvent {
 }
 
 /** A fake clock and a logger that records what was logged. */
-function setup(write: WriteBatch, options: Partial<IngestBufferOptions> = {}, random = () => 0.5) {
+function setup(
+  write: WriteBatch,
+  options: Partial<IngestBufferOptions> = {},
+  random = () => 0.5,
+  deadLetter?: DeadLetter,
+) {
   let now = T0;
   const logs: Array<{ level: string; obj: Record<string, unknown>; msg: string }> = [];
   const record = (level: string) => (obj: object, msg: string) =>
@@ -60,6 +71,7 @@ function setup(write: WriteBatch, options: Partial<IngestBufferOptions> = {}, ra
     log: { debug: record("debug"), warn: record("warn"), error: record("error") },
     now: () => now,
     random,
+    deadLetter,
     options: { retryBaseMs: 1, retryMaxMs: 2, shutdownTimeoutMs: 50, ...options },
   });
   return {
@@ -555,5 +567,245 @@ describe("close", () => {
     await buffer.close();
     expect(vi.getTimerCount()).toBe(0);
     expect(calls).toEqual([]);
+  });
+});
+
+describe("a batch bigger than the whole buffer (QA-M1-09)", () => {
+  it("is refused as too large, which is not 'full': waiting would never help", () => {
+    const { buffer } = track(setup(recordingWrite().write, { capacity: 3 }));
+    expect(buffer.offer([action(), action(), action(), action()])).toEqual({
+      ok: false,
+      reason: "too_large",
+    });
+    expect(buffer.stats().queued).toBe(0);
+  });
+
+  it("accepts a batch of exactly the capacity, and says full (not too large) when it is taken", () => {
+    const { buffer } = track(setup(recordingWrite().write, { capacity: 3 }));
+    const batch = [action(), action(), action()];
+    expect(buffer.offer(batch)).toMatchObject({ ok: true, accepted: 3 });
+    expect(buffer.offer([action()])).toEqual({ ok: false, reason: "full" });
+  });
+
+  it("does not remember the ids of a refused batch", () => {
+    const { buffer } = track(setup(recordingWrite().write, { capacity: 2 }));
+    const batch = [action(), action(), action()];
+    buffer.offer(batch);
+    expect(buffer.offer(batch.slice(0, 2))).toEqual({ ok: true, accepted: 2, duplicates: 0 });
+  });
+
+  it("counts only the new events against the capacity, so a resent batch is not too large", () => {
+    const { buffer } = track(setup(recordingWrite().write, { capacity: 3 }));
+    const seen = [action(), action(), action()];
+    buffer.offer(seen);
+    // 3 repeats + 1 new: 4 events, but only 1 would be queued
+    expect(buffer.offer([...seen, action()])).toEqual({ ok: false, reason: "full" });
+  });
+});
+
+describe("a flush that ClickHouse refuses because of its data (R-M1-01)", () => {
+  const dataError = () =>
+    new ClickHouseError({
+      message: "Cannot parse escape sequence: missing second part of surrogate pair",
+      code: "25",
+      type: "CANNOT_PARSE_ESCAPE_SEQUENCE",
+    });
+  const networkError = () =>
+    Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:8123"), { code: "ECONNREFUSED" });
+
+  /** Fails with the given errors in order, then stores everything. */
+  function scripted(errors: Array<() => Error>) {
+    const calls: Array<{ events: FleetEvent[]; tokens: Record<string, string> }> = [];
+    let next = 0;
+    const write: WriteBatch = async (events, tokens) => {
+      calls.push({ events: [...events], tokens: { ...tokens } as Record<string, string> });
+      const fail = errors[next++];
+      if (fail) throw fail();
+      return { orphans: [] };
+    };
+    return { write, calls };
+  }
+
+  /** A dead letter that remembers what it was given. */
+  function recordingDeadLetter() {
+    const saved: Array<{ flushId: string; events: readonly FleetEvent[] }> = [];
+    const deadLetter: DeadLetter = async (flushId, events) => {
+      saved.push({ flushId, events: [...events] });
+      return `/dead/${flushId}.jsonl`;
+    };
+    return { deadLetter, saved };
+  }
+
+  it("moves the flush to the dead letter after 3 data errors in a row, and carries on", async () => {
+    const { write, calls } = scripted([dataError, dataError, dataError]);
+    const { deadLetter, saved } = recordingDeadLetter();
+    const { buffer, logs } = track(setup(write, {}, undefined, deadLetter));
+    const poisoned = [action("bad-1"), action("bad-2")];
+    buffer.offer(poisoned);
+    await buffer.flush();
+
+    expect(calls).toHaveLength(3);
+    expect(calls.map((call) => call.events)).toEqual([poisoned, poisoned, poisoned]);
+    expect(saved).toHaveLength(1);
+    expect(saved[0]?.events).toEqual(poisoned);
+    expect(calls[0]?.tokens.actions).toBe(`${saved[0]?.flushId}:actions`);
+
+    const stats = buffer.stats();
+    expect(stats).toMatchObject({ queued: 0, retrying: false, deadLettered: 2 });
+    expect(stats.lastFlushError?.error).toBe("ClickHouseError 25 CANNOT_PARSE_ESCAPE_SEQUENCE");
+
+    // one error log says what happened, with the flush id, the event count and the error
+    const moved = logs.filter((entry) => entry.msg.includes("dead-letter file"));
+    expect(moved).toHaveLength(1);
+    expect(moved[0]?.level).toBe("error");
+    expect(moved[0]?.obj).toMatchObject({
+      flushId: saved[0]?.flushId,
+      events: 2,
+      error: "ClickHouseError 25 CANNOT_PARSE_ESCAPE_SEQUENCE",
+      file: `/dead/${saved[0]?.flushId}.jsonl`,
+    });
+
+    // the next events are stored normally, and a success clears the error
+    const good = [action("good")];
+    buffer.offer(good);
+    await buffer.flush();
+    expect(calls[3]?.events).toEqual(good);
+    expect(calls[3]?.tokens.actions).not.toBe(calls[0]?.tokens.actions);
+    expect(buffer.stats()).toMatchObject({ deadLettered: 2, lastFlushError: null });
+  });
+
+  it("does not stop the clients behind it: events offered during the retries are stored after it", async () => {
+    const { write, calls } = scripted([dataError, dataError, dataError]);
+    const { deadLetter } = recordingDeadLetter();
+    const { buffer } = track(
+      setup(write, { retryBaseMs: 30, retryMaxMs: 30 }, undefined, deadLetter),
+    );
+    buffer.offer([action("bad")]);
+    const flushing = buffer.flush();
+    await vi.waitFor(() => expect(calls.length).toBe(1));
+    const later = [action("innocent")];
+    expect(buffer.offer(later)).toMatchObject({ ok: true, accepted: 1 });
+    await flushing;
+    await buffer.flush();
+    expect(calls.at(-1)?.events).toEqual(later);
+  });
+
+  it("starts counting again after a transient error in between", async () => {
+    const { write, calls } = scripted([dataError, dataError, networkError, dataError, dataError]);
+    const { deadLetter, saved } = recordingDeadLetter();
+    const { buffer } = track(setup(write, {}, undefined, deadLetter));
+    buffer.offer([action()]);
+    await buffer.flush();
+    expect(calls).toHaveLength(6); // two data, one network, two data, then it was stored
+    expect(saved).toEqual([]);
+    expect(buffer.stats()).toMatchObject({ deadLettered: 0, queued: 0 });
+  });
+
+  it("never gives up on transient errors, however many", async () => {
+    const { write, calls } = scripted(Array.from({ length: 12 }, () => networkError));
+    const { deadLetter, saved } = recordingDeadLetter();
+    const { buffer } = track(setup(write, {}, undefined, deadLetter));
+    buffer.offer([action()]);
+    await buffer.flush();
+    expect(calls).toHaveLength(13);
+    expect(saved).toEqual([]);
+    expect(buffer.stats().queued).toBe(0);
+  });
+
+  it("treats a ClickHouse error that is not on the data list as transient", async () => {
+    const memory = () =>
+      new ClickHouseError({
+        message: "Memory limit exceeded",
+        code: "241",
+        type: "MEMORY_LIMIT_EXCEEDED",
+      });
+    const { write, calls } = scripted([memory, memory, memory, memory]);
+    const { deadLetter, saved } = recordingDeadLetter();
+    const { buffer } = track(setup(write, {}, undefined, deadLetter));
+    buffer.offer([action()]);
+    await buffer.flush();
+    expect(calls).toHaveLength(5);
+    expect(saved).toEqual([]);
+  });
+
+  it("retries a data error forever when there is no dead letter configured", async () => {
+    const { write, calls } = scripted(Array.from({ length: 8 }, () => dataError));
+    const { buffer } = track(setup(write));
+    buffer.offer([action()]);
+    await buffer.flush();
+    expect(calls).toHaveLength(9);
+    expect(buffer.stats()).toMatchObject({ deadLettered: 0, queued: 0 });
+  });
+
+  it("keeps the events and tries again when the dead-letter file cannot be written", async () => {
+    const { write, calls } = scripted(Array.from({ length: 10 }, () => dataError));
+    const saved: Array<readonly FleetEvent[]> = [];
+    let attempts = 0;
+    const deadLetter: DeadLetter = async (flushId, events) => {
+      if (attempts++ === 0) throw new Error("ENOSPC: no space left on device");
+      saved.push([...events]);
+      return `/dead/${flushId}.jsonl`;
+    };
+    const { buffer, logs } = track(setup(write, {}, undefined, deadLetter));
+    const poisoned = [action("bad")];
+    buffer.offer(poisoned);
+    await buffer.flush();
+
+    expect(attempts).toBe(2); // the first save failed, the next data error tried again
+    expect(calls).toHaveLength(4);
+    expect(saved).toEqual([poisoned]);
+    expect(logs.some((entry) => entry.msg.includes("could not write the dead-letter file"))).toBe(
+      true,
+    );
+    expect(buffer.stats()).toMatchObject({ deadLettered: 1, queued: 0 });
+  });
+
+  it("keeps the flush in memory while the dead-letter file cannot be written", async () => {
+    const { write } = scripted(Array.from({ length: 100 }, () => dataError));
+    const deadLetter: DeadLetter = async () => {
+      throw new Error("EACCES");
+    };
+    const { buffer } = track(
+      setup(write, { retryBaseMs: 20, retryMaxMs: 20 }, undefined, deadLetter),
+    );
+    buffer.offer([action(), action()]);
+    void buffer.flush();
+    await vi.waitFor(() => expect(buffer.stats().retrying).toBe(true));
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(buffer.stats()).toMatchObject({ queued: 2, retrying: true, deadLettered: 0 });
+  });
+
+  it("lets go of held orphans that were in the dead-lettered flush", async () => {
+    const lost = ended("s-held");
+    let poison = false;
+    const write: WriteBatch = async (events) => {
+      if (poison) throw dataError();
+      return { orphans: events.includes(lost) ? [lost] : [] };
+    };
+    const { deadLetter, saved } = recordingDeadLetter();
+    const { buffer } = track(setup(write, {}, undefined, deadLetter));
+    buffer.offer([lost]);
+    await buffer.flush();
+    expect(buffer.stats().orphansHeld).toBe(1);
+
+    poison = true;
+    buffer.offer([action()]);
+    const flushing = buffer.flush();
+    await vi.waitFor(() => expect(saved).toHaveLength(1));
+    await flushing;
+    expect(saved[0]?.events).toContain(lost);
+    expect(buffer.stats()).toMatchObject({ orphansHeld: 0, queued: 0, deadLettered: 2 });
+  });
+
+  it("dead-letters during shutdown instead of waiting for the timeout", async () => {
+    const { write } = scripted(Array.from({ length: 10 }, () => dataError));
+    const { deadLetter, saved } = recordingDeadLetter();
+    const { buffer, logs } = setup(write, { shutdownTimeoutMs: 2000 }, undefined, deadLetter);
+    buffer.offer([action(), action(), action()]);
+    const started = Date.now();
+    await buffer.close();
+    expect(Date.now() - started).toBeLessThan(1500);
+    expect(saved).toHaveLength(1);
+    expect(logs.some((entry) => entry.msg.includes("not written to ClickHouse"))).toBe(false);
   });
 });

@@ -1,5 +1,10 @@
 import Fastify, { type FastifyInstance, LogController } from "fastify";
-import { IngestBuffer, type IngestBufferOptions, type WriteBatch } from "./ingest/buffer";
+import {
+  type DeadLetter,
+  IngestBuffer,
+  type IngestBufferOptions,
+  type WriteBatch,
+} from "./ingest/buffer";
 import { eventsRoutes } from "./routes/events";
 import { healthRoutes } from "./routes/health";
 import { v1Routes } from "./routes/v1";
@@ -13,6 +18,11 @@ export interface AppDeps {
    * has no `POST /v1/events`, which keeps tests of the other routes simple.
    */
   insert?: WriteBatch;
+  /**
+   * Where a flush goes that ClickHouse keeps refusing because of its data (production:
+   * `fileDeadLetter`). Without it such a flush is retried forever.
+   */
+  deadLetter?: DeadLetter;
   /** Overrides for the ingest buffer (capacity, flush interval, ...). Mostly for tests. */
   ingest?: Partial<IngestBufferOptions>;
   /** Milliseconds since the epoch, for the skew check and the buffer. Defaults to `Date.now`. */
@@ -46,6 +56,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
         log: app.log,
         now: deps.now,
         random: deps.random,
+        deadLetter: deps.deadLetter,
         options: deps.ingest,
       })
     : undefined;

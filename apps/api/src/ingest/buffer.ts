@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { type DedupTokens, dedupTokensFor } from "@fleetscope/db";
+import {
+  ClickHouseError,
+  classifyInsertError,
+  type DedupTokens,
+  dedupTokensFor,
+} from "@fleetscope/db";
 import type { FleetEvent, SessionEndedEvent } from "@fleetscope/schema";
 import { RecentIds } from "./recent-ids";
 
@@ -21,6 +26,9 @@ import { RecentIds } from "./recent-ids";
  *    the tables it already wrote. New events keep arriving meanwhile, up to `capacity`; beyond
  *    that `offer()` says "full" and the route answers 503, so memory stays bounded.
  *  - Event ids seen in the last minutes are dropped (client retries): see RecentIds.
+ *  - A flush that ClickHouse keeps refusing because of the DATA (not the network) is moved to a
+ *    dead-letter file after a few attempts, so one bad batch cannot stop everybody else. Nothing
+ *    that was acknowledged disappears: it is in ClickHouse or in that file.
  */
 
 /** Writes one flush to ClickHouse. The real one is `insertEvents`; tests pass a fake. */
@@ -28,6 +36,12 @@ export type WriteBatch = (
   events: FleetEvent[],
   dedupTokens: DedupTokens,
 ) => Promise<{ orphans: readonly SessionEndedEvent[] }>;
+
+/**
+ * Keeps the events of a flush that cannot be stored, for a human to look at (a JSONL file in
+ * production). Resolves to where they went; rejects if they could not be saved.
+ */
+export type DeadLetter = (flushId: string, events: readonly FleetEvent[]) => Promise<string>;
 
 export interface BufferLogger {
   debug(obj: object, msg: string): void;
@@ -53,6 +67,11 @@ export interface IngestBufferOptions {
   retryMaxMs: number;
   /** `close()` gives up after this long. */
   shutdownTimeoutMs: number;
+  /**
+   * A flush that fails with a data error this many times in a row goes to the dead-letter file.
+   * Transient errors (network, timeouts, memory) never count: those are retried forever.
+   */
+  dataErrorAttempts: number;
 }
 
 export const DEFAULT_INGEST_OPTIONS: IngestBufferOptions = {
@@ -65,6 +84,7 @@ export const DEFAULT_INGEST_OPTIONS: IngestBufferOptions = {
   retryBaseMs: 500,
   retryMaxMs: 10_000,
   shutdownTimeoutMs: 10_000,
+  dataErrorAttempts: 3,
 };
 
 export interface IngestDeps {
@@ -74,13 +94,18 @@ export interface IngestDeps {
   now?: () => number;
   /** Returns a number in [0, 1). Tests pass a fixed value to make the jitter predictable. */
   random?: () => number;
+  /** Without it a flush that ClickHouse keeps refusing is retried forever, like a transient one. */
+  deadLetter?: DeadLetter;
   options?: Partial<IngestBufferOptions>;
 }
 
 export type OfferResult =
   | { ok: true; accepted: number; duplicates: number }
-  /** "full": the buffer is at capacity, try later. "closing": the server is shutting down. */
-  | { ok: false; reason: "full" | "closing" };
+  /**
+   * "full": the buffer is at capacity, try later. "closing": the server is shutting down.
+   * "too_large": the batch alone is bigger than the buffer, so it can never fit: do not retry.
+   */
+  | { ok: false; reason: "full" | "closing" | "too_large" };
 
 /** What `/healthz` reports about the buffer. */
 export interface IngestStats {
@@ -98,6 +123,8 @@ export interface IngestStats {
   orphansHeld: number;
   /** session.ended events dropped after the grace period, since startup. */
   orphansDropped: number;
+  /** Events written to the dead-letter file instead of ClickHouse, since startup. */
+  deadLettered: number;
 }
 
 interface Queued {
@@ -116,7 +143,16 @@ interface Flush {
   /** `taken` plus the held orphans: what is passed to `write`. */
   events: FleetEvent[];
   failures: number;
+  /** Failures in a row that were data errors; a transient error resets it. */
+  dataErrors: number;
 }
+
+/** How `writeUntilStored` ended. */
+type WriteOutcome =
+  | { kind: "stored"; orphans: readonly SessionEndedEvent[] }
+  | { kind: "dead-lettered" }
+  /** Shutdown ran out of time. */
+  | { kind: "abandoned" };
 
 /**
  * Delay before retry number `failures + 1`: exponential, capped, with jitter so that many API
@@ -133,8 +169,14 @@ export function backoffDelay(
   return ceiling / 2 + random() * (ceiling / 2);
 }
 
-/** A short description that is safe to show on /healthz (no message, which may name hosts). */
+/**
+ * A short description that is safe to show on /healthz: the error's name and code, never its
+ * message, which may name hosts or tables.
+ */
 function describeError(error: unknown): string {
+  if (error instanceof ClickHouseError) {
+    return `ClickHouseError ${error.code}${error.type ? ` ${error.type}` : ""}`;
+  }
   if (!(error instanceof Error)) return "unknown error";
   const code = (error as { code?: unknown }).code;
   return typeof code === "string" || typeof code === "number"
@@ -147,6 +189,7 @@ export class IngestBuffer {
   private readonly log: BufferLogger;
   private readonly now: () => number;
   private readonly random: () => number;
+  private readonly deadLetter: DeadLetter | undefined;
   private readonly options: IngestBufferOptions;
   private readonly recentIds: RecentIds;
 
@@ -168,12 +211,14 @@ export class IngestBuffer {
   private lastFlushAt: number | null = null;
   private lastFlushError: { at: number; error: string } | null = null;
   private orphansDropped = 0;
+  private deadLettered = 0;
 
   constructor(deps: IngestDeps) {
     this.write = deps.write;
     this.log = deps.log;
     this.now = deps.now ?? Date.now;
     this.random = deps.random ?? Math.random;
+    this.deadLetter = deps.deadLetter;
     this.options = { ...DEFAULT_INGEST_OPTIONS, ...deps.options };
     this.recentIds = new RecentIds(
       this.options.duplicateWindowMs,
@@ -207,6 +252,8 @@ export class IngestBuffer {
       fresh.push(event);
     }
 
+    // A batch that is bigger than the whole buffer would be told "full" forever. Say so instead.
+    if (fresh.length > this.options.capacity) return { ok: false, reason: "too_large" };
     if (this.queued + fresh.length > this.options.capacity) {
       return { ok: false, reason: "full" };
     }
@@ -255,6 +302,7 @@ export class IngestBuffer {
       lastFlushError: this.lastFlushError,
       orphansHeld: this.held.size,
       orphansDropped: this.orphansDropped,
+      deadLettered: this.deadLettered,
     };
   }
 
@@ -271,17 +319,23 @@ export class IngestBuffer {
       const flush = this.current;
       if (!flush) return;
 
-      const result = await this.writeUntilStored(flush);
-      if (!result) return; // abandoned during shutdown; `current` stays so the loss is counted
+      const outcome = await this.writeUntilStored(flush);
+      if (outcome.kind === "abandoned") return; // `current` stays, so shutdown counts the loss
 
       this.current = null;
+      if (outcome.kind === "dead-lettered") {
+        // Ingest goes on. The held orphans that rode along are in the file too: let them go.
+        this.deadLettered += flush.events.length;
+        for (const id of flush.heldIds) this.held.delete(id);
+        continue;
+      }
       this.lastFlushAt = this.now();
       this.lastFlushError = null;
       this.log.debug(
         { flushId: flush.id, events: flush.events.length, failures: flush.failures },
         "flushed to ClickHouse",
       );
-      this.settleOrphans(flush, result.orphans);
+      this.settleOrphans(flush, outcome.orphans);
     } while (this.pending.length >= this.options.maxBatchSize);
   }
 
@@ -298,30 +352,68 @@ export class IngestBuffer {
       heldIds: new Set(this.held.keys()),
       events: [...taken.map((queued) => queued.event), ...heldEvents],
       failures: 0,
+      dataErrors: 0,
     };
   }
 
   /**
    * Layer 2: write the flush, and if that fails, wait and write the same flush again with the same
-   * tokens. Returns null only when shutdown has given up.
+   * tokens. Transient errors (network, timeouts, memory) are retried for as long as it takes.
+   * A data error that comes back `dataErrorAttempts` times in a row means these very rows are
+   * refused and will always be: the flush goes to the dead-letter file and ingest moves on.
    */
-  private async writeUntilStored(
-    flush: Flush,
-  ): Promise<{ orphans: readonly SessionEndedEvent[] } | null> {
+  private async writeUntilStored(flush: Flush): Promise<WriteOutcome> {
     for (;;) {
       try {
-        return await this.write(flush.events, flush.tokens);
+        return { kind: "stored", ...(await this.write(flush.events, flush.tokens)) };
       } catch (error) {
         flush.failures++;
+        flush.dataErrors = classifyInsertError(error) === "data" ? flush.dataErrors + 1 : 0;
         this.lastFlushError = { at: this.now(), error: describeError(error) };
+
+        if (flush.dataErrors >= this.options.dataErrorAttempts && this.deadLetter) {
+          if (await this.moveToDeadLetter(flush, error, this.deadLetter)) {
+            return { kind: "dead-lettered" };
+          }
+          // The file could not be written. Keep the events and try again below.
+        }
+
         this.log.error(
           { err: error, flushId: flush.id, events: flush.events.length, failures: flush.failures },
           "flush to ClickHouse failed, will retry the same batch",
         );
-        if (this.abandoned) return null;
+        if (this.abandoned) return { kind: "abandoned" };
         await this.sleepBeforeRetry(flush.failures - 1);
-        if (this.abandoned) return null;
+        if (this.abandoned) return { kind: "abandoned" };
       }
+    }
+  }
+
+  /** Save the flush's events to the dead-letter file and say so. False if that did not work. */
+  private async moveToDeadLetter(
+    flush: Flush,
+    error: unknown,
+    deadLetter: DeadLetter,
+  ): Promise<boolean> {
+    try {
+      const file = await deadLetter(flush.id, flush.events);
+      this.log.error(
+        {
+          flushId: flush.id,
+          events: flush.events.length,
+          error: describeError(error),
+          attempts: flush.dataErrors,
+          file,
+        },
+        "ClickHouse keeps refusing this flush; its events were moved to the dead-letter file",
+      );
+      return true;
+    } catch (writeError) {
+      this.log.error(
+        { err: writeError, flushId: flush.id, events: flush.events.length },
+        "could not write the dead-letter file, keeping the flush in memory",
+      );
+      return false;
     }
   }
 

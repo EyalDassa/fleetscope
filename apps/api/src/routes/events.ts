@@ -23,7 +23,8 @@ export const RETRY_AFTER_SECONDS = 2;
  * POST /v1/events (the contract is in packages/schema, `ingest.ts`)
  *   202 { accepted, duplicates }   queued; it reaches ClickHouse within about a second
  *   400 { error, issues? }         malformed JSON, schema violation, or ts too far in the future
- *   413 { error }                  more than 1000 events, or a body over 2 MB
+ *   413 { error }                  more than 1000 events, a body over 2 MB, or a batch that is
+ *                                  bigger than the whole ingest buffer (it could never fit)
  *   503 { error } + Retry-After    the buffer is full, or the server is shutting down
  */
 export const eventsRoutes: FastifyPluginAsync<EventsRouteOptions> = async (app, options) => {
@@ -45,6 +46,12 @@ export const eventsRoutes: FastifyPluginAsync<EventsRouteOptions> = async (app, 
     }
 
     const offered = options.buffer.offer(checked.events);
+    if (!offered.ok && offered.reason === "too_large") {
+      // Not "retry later": no amount of waiting makes this batch fit, so the client must send less.
+      return reply.code(413).send({
+        error: `batch of ${checked.events.length} events is larger than the ingest buffer, send smaller batches`,
+      } satisfies IngestErrorResponse);
+    }
     if (!offered.ok) {
       const error =
         offered.reason === "full"

@@ -7,6 +7,7 @@ import {
 } from "@fleetscope/db";
 import { buildApp } from "./app";
 import { loadApiEnv } from "./env";
+import { fileDeadLetter } from "./ingest/dead-letter";
 
 let env: ReturnType<typeof loadApiEnv>;
 try {
@@ -25,6 +26,7 @@ const app = buildApp({
   ping: () => ping(client, 1000),
   insert: (events, dedupTokens) => insertEvents(client, events, { dedupTokens }),
   ingest: { capacity: env.INGEST_BUFFER_CAPACITY },
+  deadLetter: fileDeadLetter(env.INGEST_DEADLETTER_DIR),
   logLevel: env.LOG_LEVEL,
 });
 

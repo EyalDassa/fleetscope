@@ -56,4 +56,42 @@ describe("RecentIds", () => {
     expect(recent.has("6f1c2f0e-8f0a-4c1e-9d55-0d2a7e3c1b11")).toBe(true);
     expect(recent.size).toBe(1);
   });
+
+  it("stays correct over many evictions and compactions of its internal arrays", () => {
+    const { recent } = ids(1000, 100);
+    for (let i = 0; i < 20_000; i++) recent.add(`id-${i}`);
+    expect(recent.size).toBe(100);
+    expect(recent.has("id-19899")).toBe(false);
+    expect(recent.has("id-19900")).toBe(true);
+    expect(recent.has("id-19999")).toBe(true);
+    expect(recent.has("id-0")).toBe(false);
+  });
+
+  it("expires by age across compactions too", () => {
+    const { recent, tick } = ids(1000, 1_000_000);
+    for (let i = 0; i < 5000; i++) recent.add(`old-${i}`);
+    tick(600);
+    for (let i = 0; i < 5000; i++) recent.add(`new-${i}`);
+    tick(600); // the old ones are now 1200 ms old, the new ones 600 ms
+    expect(recent.has("old-0")).toBe(false);
+    expect(recent.has("old-4999")).toBe(false);
+    expect(recent.size).toBe(5000);
+    expect(recent.has("new-0")).toBe(true);
+    expect(recent.has("new-4999")).toBe(true);
+    tick(500);
+    expect(recent.has("new-0")).toBe(false);
+    expect(recent.size).toBe(0);
+  });
+
+  it("forgets an id and accepts it again as new", () => {
+    const { recent } = ids(1000, 2);
+    recent.add("a");
+    recent.add("b");
+    recent.add("c"); // a goes
+    expect(recent.has("a")).toBe(false);
+    recent.add("a"); // b goes; a is new again
+    expect(recent.has("a")).toBe(true);
+    expect(recent.has("b")).toBe(false);
+    expect(recent.size).toBe(2);
+  });
 });

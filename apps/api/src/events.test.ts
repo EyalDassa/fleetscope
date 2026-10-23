@@ -10,7 +10,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type AppDeps, buildApp } from "./app";
 import type { WriteBatch } from "./ingest/buffer";
-import { MAX_FUTURE_SKEW_MS } from "./ingest/validate";
+import { MAX_FUTURE_SKEW_MS, oldestAcceptedTs } from "./ingest/validate";
 import { INGEST_BODY_LIMIT_BYTES, RETRY_AFTER_SECONDS } from "./routes/events";
 
 // POST /v1/events through the real Fastify app, with a fake `insert` and a fake clock.
@@ -134,6 +134,28 @@ describe("POST /v1/events", () => {
       expect(writes).toEqual([]); // the good event in the same batch is not accepted either
     });
 
+    it("for a ts older than the retention window, naming the indexes (R-M1-01)", async () => {
+      const { post, writes, app } = setup();
+      const cutoff = oldestAcceptedTs(NOW);
+      const res = await post([issue(), issue(cutoff - 1), issue(NOW - 40 * 86_400_000)]);
+      expect(res.statusCode).toBe(400);
+      const body = IngestErrorResponse.parse(res.json());
+      expect(body.error).toContain("retention window");
+      expect(body.error).toContain("indexes 1, 2");
+      expect(body.issues?.map((i) => i.path)).toEqual([
+        [1, "ts"],
+        [2, "ts"],
+      ]);
+      await app.close();
+      expect(writes).toEqual([]);
+    });
+
+    it("for a batch spread over 101 days, the one that used to stall ClickHouse", async () => {
+      const { post } = setup();
+      const res = await post(Array.from({ length: 101 }, (_, i) => issue(NOW - i * 86_400_000)));
+      expect(res.statusCode).toBe(400);
+    });
+
     it("accepts a ts exactly 5 minutes ahead", async () => {
       const { post } = setup();
       expect((await post([issue(NOW + MAX_FUTURE_SKEW_MS)])).statusCode).toBe(202);
@@ -160,6 +182,19 @@ describe("POST /v1/events", () => {
       const res = await post(Array.from({ length: MAX_BATCH_SIZE }, () => issue()));
       expect(res.statusCode).toBe(202);
       expect(res.json()).toEqual({ accepted: MAX_BATCH_SIZE, duplicates: 0 });
+    });
+
+    it("for a batch bigger than the whole ingest buffer: it could never fit, so not a retryable 503 (QA-M1-09)", async () => {
+      const { post, app } = setup({ ingest: { capacity: 3 } });
+      const res = await post([issue(), issue(), issue(), issue()]);
+      expect(res.statusCode).toBe(413);
+      expect(res.headers["retry-after"]).toBeUndefined();
+      expect(IngestErrorResponse.parse(res.json()).error).toContain(
+        "larger than the ingest buffer",
+      );
+      // the same events in two smaller batches go through
+      expect((await post([issue(), issue()])).statusCode).toBe(202);
+      await app.close();
     });
 
     it("for a body over the size limit", async () => {
@@ -229,6 +264,7 @@ describe("GET /healthz with the ingest buffer", () => {
         lastFlushError: null,
         orphansHeld: 0,
         orphansDropped: 0,
+        deadLettered: 0,
       },
     });
   });

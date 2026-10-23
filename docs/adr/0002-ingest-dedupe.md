@@ -1,17 +1,32 @@
-# 0002. Keeping duplicates out of ClickHouse
+# 0002. Ingest: keeping duplicates out of ClickHouse, and what to do with a flush it refuses
 
-Status: accepted (M1)
+Status: accepted (M1, amended in the M1 fix round: dead letter, age check, surrogates)
 
 ## Context
 
 `POST /v1/events` returns `202` as soon as a batch is in the API's in-memory ingest buffer, and a
-timer writes the buffer to ClickHouse about once a second. Collectors retry when they do not get an
-answer, so the same event can reach the API twice. Separately, one flush is several INSERTs (one
-per table), and ClickHouse has no transaction across tables, so a flush that fails halfway leaves
-some tables written. The retry then writes those rows again (QA-M0-03).
+timer writes the buffer to ClickHouse about once a second. Two things can go wrong on the way.
 
-Both produce duplicate rows, and the dashboard counts rows: every action, error and sample would
-be counted twice.
+**Duplicates.** Collectors retry when they do not get an answer, so the same event can reach the API
+twice. Separately, one flush is several INSERTs (one per table), and ClickHouse has no transaction
+across tables, so a flush that fails halfway leaves some tables written. The retry then writes those
+rows again (QA-M0-03). The dashboard counts rows, so every action, error and sample would be
+counted twice.
+
+**Flushes that ClickHouse refuses.** The first version of this ADR said "validated events should
+never be refused", retried a failed flush forever, and accepted a stalled buffer as the price. The
+review and QA of M1 (R-M1-01, QA-M1-01) found two counterexamples, both reachable by one client:
+
+1. A string with a lone UTF-16 surrogate (half an emoji). `JSON.stringify` sends it as `\ud83d`,
+   and ClickHouse answers `CANNOT_PARSE_ESCAPE_SEQUENCE` every time. Our own collector can produce
+   one by cutting a text in the middle of an emoji, and any web page can produce one on purpose.
+2. A flush that touches more than 100 different days. The raw tables are partitioned by day, and
+   ClickHouse refuses more than `max_partitions_per_insert_block = 100` partitions in one INSERT. The
+   schema accepted any `ts` from 2020, so 101 events on 101 different days were enough.
+
+A flush holds the events of all clients, so one of these stalls everybody: the buffer fills to its
+50,000 events, every client gets `503`, and a restart loses what was acknowledged. Retrying forever
+is the right answer to an outage, but the wrong answer to rows that will never be accepted.
 
 What we have to work with:
 
@@ -20,8 +35,12 @@ What we have to work with:
 - ClickHouse can skip an INSERT it has already seen: it remembers the last N blocks per table
   (`non_replicated_deduplication_window`, default **0 = off** for a non-replicated table) and
   compares either a hash of the block or a caller-supplied `insert_deduplication_token`.
+- ClickHouse's error codes tell a refusal of the data (`CANNOT_PARSE_*`, `TYPE_MISMATCH`, too many
+  partitions) from trouble with the server or the network (connection refused, timeouts, memory).
 
 ## Options considered
+
+For duplicates:
 
 1. **In-memory window of recent `event_id`s in the API only.**
    Simple and fast. Catches client retries. Does not help when a flush fails halfway, because the
@@ -38,9 +57,20 @@ What we have to work with:
    ClickHouse skips the blocks it already wrote. Exact, cheap, no query changes. Only covers
    retries of the same flush, not the same event arriving in two different flushes.
 
+For a flush that ClickHouse refuses:
+
+A. **Retry forever** (the first version). Right for outages. A stall for everybody when the rows are
+   the problem, and a restart loses the queue.
+B. **Drop the flush with a log line.** Unblocks ingest, but acknowledged events are lost for good.
+C. **Move the flush to a dead-letter file** after a few identical refusals. Unblocks ingest, and
+   nothing acknowledged is lost: it is in ClickHouse or in the file.
+D. **Split the flush in halves** to find the bad events and store the rest. Rejected: the failed
+   attempts may already have written some tables, and rows re-inserted in halves carry different
+   tokens and blocks, so the tables that were written would get duplicates.
+
 ## Decision
 
-Use **1 and 3 together**, because they cover different failures:
+**Duplicates: 1 and 3 together**, because they cover different failures:
 
 | Failure | Caught by |
 |---|---|
@@ -71,10 +101,50 @@ Details that matter:
   that it also works for a batch that spans two daily partitions
   (`packages/db/src/dedupe.integration.test.ts`). Without migration 0006 it silently does nothing.
 
+**Refused flushes: keep the events out of the poison, and add a safety valve (C).**
+
+Two guards at the edge remove the known causes, so that in practice a valid batch is not refused:
+
+- *Lone surrogates are repaired, not rejected.* Every free-text field in `packages/schema` (labels,
+  targets, messages, urls) goes through `String.prototype.toWellFormed()`: each lone surrogate
+  becomes U+FFFD, the length does not change, and the event is kept. Text that a page produced
+  should not sink a whole batch. `session_id` and `agent_id` are rejected instead (400), because a
+  changed id would silently split or merge sessions. Enum fields are strict anyway.
+- *Events older than the retention window are rejected* (400, naming the indexes, like the
+  clock-skew check). The raw tables have `TTL toDate(ts) + INTERVAL 30 DAY`, which works on whole
+  days, so the oldest `ts` that survives is midnight UTC 29 days ago (`RETENTION_DAYS` in the
+  schema, `oldestAcceptedTs` in the API; a test against ClickHouse checks both edges). An older event
+  would get `202` and be deleted a moment later. The same rule caps a flush at 31 daily partitions,
+  far under the limit of 100. A client with a clock far in the past now hears about it.
+
+Then the safety valve for the causes nobody has thought of yet:
+
+- Errors are classified in `packages/db` (`classifyInsertError`). A **data error** is a refusal that
+  depends on the rows: the parse and type errors (`CANNOT_PARSE_TEXT`, `_ESCAPE_SEQUENCE`,
+  `_QUOTED_STRING`, `_INPUT_ASSERTION_FAILED`, `_DATE`, `_DATETIME`, `_NUMBER`, `_UUID`,
+  `TYPE_MISMATCH`, `CANNOT_CONVERT_TYPE`, `INCORRECT_DATA`, `TOO_LARGE_STRING_SIZE`,
+  `VALUE_IS_OUT_OF_RANGE_OF_DATA_TYPE`) and `TOO_MANY_PARTS` when the message says "too many
+  partitions". Everything else is **transient**: connection refused or reset, timeouts, aborted
+  requests, 5xx, memory limits, too many queries, merges falling behind (`TOO_MANY_PARTS` for parts),
+  and also anything we do not recognise.
+- Transient errors are retried forever with backoff, as before. A missing table or database
+  (migrations not run) is also treated as transient: the operator fixes it, changing the rows would
+  not, and dropping data because a migration was forgotten would be worse than a visible stall.
+- When the same flush fails with a data error **3 times in a row** (a transient error in between
+  resets the count), its events are written to a **dead-letter file** and the buffer moves on to the
+  next flush. One `error` log line says why (error name and code, flush id, event count, file), and
+  `/healthz` shows `ingest.deadLettered` (events). If the file cannot be written (disk full,
+  permissions), the events stay in memory and the flush keeps being retried, so nothing is lost.
+- The file is `INGEST_DEADLETTER_DIR/<UTC time>-<flush id>.jsonl` (default `./.data/deadletter`,
+  relative to the API's working directory), one validated event per line.
+
 A related guard in the same buffer: a `session.ended` whose `session.started` is not in the batch
 or in `sessions` is not written (we do not invent a session). The buffer holds it for 60 seconds and
 offers it again with every flush, since the start may be in the next batch. After that it logs a
 warning with the session ids and drops it (counted in `/healthz`).
+
+A batch with more new events than the whole buffer holds can never be accepted, so it gets `413`,
+not a retryable `503` (QA-M1-09).
 
 ## Consequences
 
@@ -83,6 +153,8 @@ Good:
 - Retries at both levels are safe: no duplicate rows, no query-time dedupe, no `FINAL`.
 - The dashboard can count rows.
 - The rules are small enough to explain: an id window, plus one token per flush and table.
+- One client, or one hostile web page, can no longer stop ingestion for everybody. Everything the
+  API acknowledged is in ClickHouse or in a dead-letter file.
 
 Not covered, and accepted:
 
@@ -98,10 +170,24 @@ Not covered, and accepted:
   instance would not be recognised. Today there is one instance; sticky routing by `session_id` or a
   shared store (Redis) would fix it.
 - **Memory:** one million remembered ids cost on the order of 100 MB. The count limit is the real
-  bound at high rates, and the age limit at low rates.
-- **A batch that ClickHouse refuses every time would block the buffer** (it retries forever), and
-  ingestion would answer `503` once the buffer fills. Validated events should never be refused;
-  `/healthz` shows `retrying` and the error name, and the log has the full error. We chose a
-  visible stall over silently dropping data that was already acknowledged.
+  bound at high rates, and the age limit at low rates. Adding and expiring ids costs the same at any
+  fill level (about 1.5 microseconds per event); an earlier `Map`-only version swung between 17 and
+  400 microseconds once it was full (QA-M1-07).
+- **The dead-letter file holds a whole flush, not just the bad event.** A flush has the events of all
+  clients (up to 5,000), and we cannot tell which one ClickHouse disliked (D above is unsafe).
+  Innocent events end up in the file too. They are valid and can be sent again.
+- **The file may contain events that are already in ClickHouse**, because the attempts before the
+  refusal can have written the tables that come first (`sessions`, `actions`, ...). There is no
+  automatic replay. To replay, first check the `event_id`s against the tables (or the rows are
+  counted twice), fix or drop the bad events, then `POST` the lines to `/v1/events` in batches of up
+  to 1,000. The directory needs an owner who looks at it: `deadLettered` in `/healthz` is the
+  signal, and the files are never deleted by the API.
+- **Only known data errors are dead-lettered.** An unknown ClickHouse error counts as transient and
+  stalls the buffer visibly (`retrying: true`, the error name in `lastFlushError`, the full error in
+  the log) instead of dropping data. Teach `classifyInsertError` about it when it happens.
+- The default directory is relative to the working directory, and on a platform with an ephemeral
+  disk a file there disappears with the container. Set `INGEST_DEADLETTER_DIR` to a volume.
 - The buffer is bounded (50,000 events by default). When it is full, `POST /v1/events` returns `503`
   with `Retry-After` and queues nothing; the collector keeps its events and retries.
+- `z.toJSONSchema` cannot describe the repairing transforms in the free-text fields. When OpenAPI
+  is generated from the schema (later), use `io: "input"`.

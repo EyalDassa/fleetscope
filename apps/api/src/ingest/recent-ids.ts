@@ -10,10 +10,21 @@
  *
  * Ids are compared lower-cased, because ClickHouse stores them as a UUID and reads upper and
  * lower case as the same value.
+ *
+ * Shape: a `Set` answers "have I seen this?", and two arrays remember the order the ids came in.
+ * Forgetting the oldest id moves a `head` index forward, which costs the same no matter how many
+ * ids are stored. (An earlier version kept everything in one `Map` and evicted with
+ * `map.keys().next()`: on V8 a Map that is emptied from the front leaves holes the next call has to
+ * skip, so the cost per event swung between 17 and 400 microseconds, QA-M1-07.)
  */
 export class RecentIds {
-  /** id -> when it was added. A Map iterates in insertion order, which here is also age order. */
-  private readonly seen = new Map<string, number>();
+  private readonly members = new Set<string>();
+  /** The ids in the order they were added; slots before `head` have been forgotten (set to ""). */
+  private order: string[] = [];
+  /** When each id was added, same positions as `order`. */
+  private addedAt: number[] = [];
+  /** Position of the oldest id that is still remembered. */
+  private head = 0;
 
   constructor(
     private readonly maxAgeMs: number,
@@ -28,30 +39,42 @@ export class RecentIds {
 
   has(eventId: string): boolean {
     this.expire();
-    return this.seen.has(RecentIds.key(eventId));
+    return this.members.has(RecentIds.key(eventId));
   }
 
   add(eventId: string): void {
     const key = RecentIds.key(eventId);
-    if (this.seen.has(key)) return; // keep the original time: the window starts at first sight
-    this.seen.set(key, this.now());
-    while (this.seen.size > this.maxIds) this.dropOldest();
+    if (this.members.has(key)) return; // keep the original time: the window starts at first sight
+    this.members.add(key);
+    this.order.push(key);
+    this.addedAt.push(this.now());
+    while (this.members.size > this.maxIds) this.forgetOldest();
   }
 
   get size(): number {
-    return this.seen.size;
+    return this.members.size;
   }
 
+  /** Forget the ids that are older than the window. Each id is looked at once in its lifetime. */
   private expire(): void {
     const oldestAllowed = this.now() - this.maxAgeMs;
-    for (const [key, addedAt] of this.seen) {
-      if (addedAt >= oldestAllowed) return; // everything after this one is newer
-      this.seen.delete(key);
+    while (this.head < this.order.length && (this.addedAt[this.head] ?? 0) < oldestAllowed) {
+      this.forgetOldest();
     }
   }
 
-  private dropOldest(): void {
-    const oldest = this.seen.keys().next();
-    if (!oldest.done) this.seen.delete(oldest.value);
+  private forgetOldest(): void {
+    const key = this.order[this.head];
+    if (key === undefined) return;
+    this.members.delete(key);
+    this.order[this.head] = ""; // let the string go now, not at the next compaction
+    this.head++;
+    // Drop the forgotten prefix once it is at least half of the arrays, so the arrays stay
+    // under twice the number of remembered ids and the copying is paid for by the forgetting.
+    if (this.head >= 1024 && this.head * 2 >= this.order.length) {
+      this.order = this.order.slice(this.head);
+      this.addedAt = this.addedAt.slice(this.head);
+      this.head = 0;
+    }
   }
 }

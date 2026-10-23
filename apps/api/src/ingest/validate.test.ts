@@ -1,6 +1,8 @@
 import { type EventEnvelope, MAX_BATCH_SIZE, newEvent } from "@fleetscope/schema";
 import { describe, expect, it } from "vitest";
-import { checkBatch, MAX_FUTURE_SKEW_MS, MAX_REPORTED_ISSUES } from "./validate";
+import { checkBatch, MAX_FUTURE_SKEW_MS, MAX_REPORTED_ISSUES, oldestAcceptedTs } from "./validate";
+
+const DAY = 86_400_000;
 
 const NOW = 1_760_000_000_000;
 const ctx: EventEnvelope = {
@@ -84,14 +86,82 @@ describe("checkBatch", () => {
       ]);
     });
 
-    it("does not reject old events (replays are fine)", () => {
-      expect(checkBatch([issue(NOW - 30 * 86_400_000)], NOW).ok).toBe(true);
-    });
-
     it("uses the clock it is given", () => {
       const event = issue(NOW + 10 * 60_000);
       expect(checkBatch([event], NOW).ok).toBe(false);
       expect(checkBatch([event], NOW + 6 * 60_000).ok).toBe(true);
+    });
+  });
+
+  describe("age (the retention window)", () => {
+    // NOW is 2025-10-09T08:53:20Z. The raw tables keep 30 days by whole day, so the oldest day
+    // that is still alive is 2025-09-10 (today minus 29).
+    const CUTOFF = Date.UTC(2025, 8, 10);
+
+    it("computes the oldest accepted ts: midnight UTC, 29 days back", () => {
+      expect(oldestAcceptedTs(NOW)).toBe(CUTOFF);
+      expect(new Date(oldestAcceptedTs(NOW)).toISOString()).toBe("2025-09-10T00:00:00.000Z");
+      // the whole day gives the same answer, and the next day moves it by one day
+      expect(oldestAcceptedTs(Date.UTC(2025, 9, 9, 0, 0, 0))).toBe(CUTOFF);
+      expect(oldestAcceptedTs(Date.UTC(2025, 9, 9, 23, 59, 59, 999))).toBe(CUTOFF);
+      expect(oldestAcceptedTs(Date.UTC(2025, 9, 10, 0, 0, 0))).toBe(CUTOFF + DAY);
+    });
+
+    it("accepts a ts exactly at the cutoff and rejects one millisecond before it", () => {
+      expect(checkBatch([issue(CUTOFF)], NOW).ok).toBe(true);
+      expect(checkBatch([issue(CUTOFF - 1)], NOW)).toMatchObject({ ok: false, status: 400 });
+    });
+
+    it("rejects an event from 30 days ago: ClickHouse would delete it at once", () => {
+      expect(checkBatch([issue(NOW - 30 * DAY)], NOW).ok).toBe(false);
+      expect(checkBatch([issue(NOW - 29 * DAY)], NOW).ok).toBe(true);
+    });
+
+    it("names the offending indexes, like the future check", () => {
+      const result = checkBatch(
+        [issue(), issue(CUTOFF - DAY), issue(), issue(Date.UTC(2021, 0, 1))],
+        NOW,
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.status).toBe(400);
+      expect(result.body.error).toContain("2 event(s)");
+      expect(result.body.error).toContain("retention window");
+      expect(result.body.error).toContain("indexes 1, 3");
+      expect(result.body.issues).toEqual([
+        { path: [1, "ts"], message: expect.stringContaining("retention window") },
+        { path: [3, "ts"], message: expect.stringContaining("retention window") },
+      ]);
+    });
+
+    it("reports old and future events together", () => {
+      const result = checkBatch([issue(CUTOFF - 1), issue(NOW + 3_600_000)], NOW);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.body.error).toContain("in the future (indexes 1)");
+      expect(result.body.error).toContain("retention window");
+      expect(result.body.error).toContain("(indexes 0)");
+      expect(result.body.issues?.map((i) => i.path)).toEqual([
+        [1, "ts"],
+        [0, "ts"],
+      ]);
+    });
+
+    it("rejects a batch that spans 101 days (the one that ClickHouse used to refuse forever)", () => {
+      const events = Array.from({ length: 101 }, (_, i) => issue(NOW - i * DAY));
+      const result = checkBatch(events, NOW);
+      expect(result).toMatchObject({ ok: false, status: 400 });
+      if (result.ok) return;
+      expect(result.body.issues).toHaveLength(MAX_REPORTED_ISSUES);
+      expect(result.body.error).toContain("indexes 30, 31");
+    });
+
+    it("accepts the widest batch it lets through: from the cutoff to the future limit (31 days)", () => {
+      const days = Array.from({ length: 30 }, (_, i) => issue(NOW - i * DAY));
+      const events = [...days, issue(CUTOFF), issue(NOW + MAX_FUTURE_SKEW_MS)];
+      expect(checkBatch(events, NOW).ok).toBe(true);
+      const partitions = new Set(events.map((e) => new Date(e.ts).toISOString().slice(0, 10)));
+      expect(partitions.size).toBeLessThanOrEqual(31);
     });
   });
 });
