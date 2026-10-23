@@ -231,15 +231,17 @@ export class CollectedPage {
       return value;
     } catch (error) {
       let code = classifyError(error, spec.fallback ?? "unknown");
+      let message = shortMessage(error);
       // Playwright reports "element not there" as a timeout; ask the page which one it really was.
       if (code === "timeout" && spec.selector && (await this.isMissing(spec.selector))) {
         code = "selector_not_found";
+        message = `selector not found: ${spec.selector} (${message})`;
       }
       record(false, code);
       const kind = ISSUE_FOR_CODE[code];
-      if (kind) this.sink.recordIssue(kind, shortMessage(error));
+      if (kind) this.sink.recordIssue(kind, message);
       if (error instanceof CollectedError && error.code === code) throw error;
-      throw new CollectedError(code, shortMessage(error), { cause: error });
+      throw new CollectedError(code, message, { cause: error });
     }
   }
 

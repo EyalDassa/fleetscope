@@ -202,6 +202,7 @@ describe("actions", () => {
     const error = await rejection(page.click("#ghost"));
 
     expect(error.code).toBe("selector_not_found");
+    expect(error.message).toBe("selector not found: #ghost (page.click: Timeout 5000ms exceeded.)");
     const all = await events();
     expect(ofType(all, "action")[0]).toMatchObject({ ok: false, error_code: "selector_not_found" });
     expect(ofType(all, "issue")).toHaveLength(0);
