@@ -7,7 +7,7 @@ export interface ForceShutdownDeps {
   /** Sessions that started and have not ended. */
   live: ReadonlySet<CollectedSession>;
   collectors: ReadonlyMap<Engine, Collector>;
-  fleets: ReadonlyMap<Engine, DockerFleet>;
+  fleets: ReadonlyMap<Engine, Pick<DockerFleet, "removeAllOwned"> & { starting?: number }>;
   /** Only this run's containers are removed. */
   runId: string;
   logger: Logger;
@@ -57,12 +57,22 @@ export async function forceShutdown(deps: ForceShutdownDeps): Promise<void> {
     })(),
   );
 
+  // A container that Docker is still creating shows up after a first sweep, so keep sweeping until
+  // a sweep has run with nothing being created (all within `cleanupMs`).
   let removed = 0;
+  const deadline = Date.now() + cleanupMs;
   await within(
     cleanupMs,
     Promise.allSettled(
       [...fleets.values()].map(async (fleet) => {
-        removed += await fleet.removeAllOwned({ runId });
+        for (;;) {
+          const startingBefore = fleet.starting ?? 0;
+          removed += await fleet.removeAllOwned({ runId });
+          // Done after a sweep that ran with nothing being created: nothing can appear any more.
+          if (startingBefore === 0 && !fleet.starting) return;
+          if (Date.now() >= deadline) return;
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
       }),
     ),
   );

@@ -138,6 +138,45 @@ describe("forceShutdown (second Ctrl+C)", () => {
     expect(Date.now() - t0).toBeLessThan(2000);
   });
 
+  it("sweeps again while a container is still being created, until a sweep ran with nothing starting", async () => {
+    const { collector } = collectorWith();
+    let starting = 2;
+    let sweeps = 0;
+    const fleet = {
+      get starting() {
+        return starting;
+      },
+      removeAllOwned: vi.fn(async () => {
+        sweeps++;
+        if (sweeps === 2) starting = 1; // one container finished starting and showed up
+        if (sweeps === 3) starting = 0;
+        return sweeps === 2 ? 1 : 0;
+      }),
+    } as unknown as DockerFleet;
+
+    await forceShutdown({ live: new Set(), runId: "r1", logger, ...maps(collector, fleet) });
+
+    expect(sweeps).toBeGreaterThanOrEqual(4); // the sweep that finds nothing is the one that ends it
+    expect(starting).toBe(0);
+  });
+
+  it("stops sweeping at the deadline even if containers keep appearing", async () => {
+    const { collector } = collectorWith();
+    const fleet = {
+      starting: 1,
+      removeAllOwned: vi.fn(async () => 1),
+    } as unknown as DockerFleet;
+    const t0 = Date.now();
+    await forceShutdown({
+      live: new Set(),
+      runId: "r1",
+      logger,
+      cleanupMs: 400,
+      ...maps(collector, fleet),
+    });
+    expect(Date.now() - t0).toBeLessThan(2500);
+  });
+
   it("copes with nothing to do", async () => {
     const { collector } = collectorWith();
     const { fleet } = fleetThatRemoves(0);

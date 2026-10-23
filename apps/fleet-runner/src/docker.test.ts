@@ -166,6 +166,40 @@ describe("DockerFleet.startBrowser", () => {
     expect(container.remove).toHaveBeenCalled();
   });
 
+  it("counts containers that are being started, so the exit-now path can wait for them", async () => {
+    const port = await fakeBrowserServer();
+    const { docker } = fakeDocker(fakeContainer(port));
+    const fleet = new DockerFleet("img", "chromium", logger, { docker });
+    expect(fleet.starting).toBe(0);
+    const starting = fleet.startBrowser({ sessionId: "s" });
+    expect(fleet.starting).toBe(1);
+    await starting;
+    expect(fleet.starting).toBe(0);
+
+    const failing = new DockerFleet("img", "chromium", logger, {
+      docker: {
+        createContainer: async () => Promise.reject(new Error("no space")),
+      } as unknown as Docker,
+    });
+    await expect(failing.startBrowser({ sessionId: "s" })).rejects.toThrow("no space");
+    expect(failing.starting).toBe(0);
+  });
+
+  it("an interrupt while Docker was creating the container: it is removed without being started", async () => {
+    const container = fakeContainer(1);
+    const abort = new AbortController();
+    abort.abort();
+    const { docker } = fakeDocker(container);
+    await expect(
+      new DockerFleet("img", "chromium", logger, { docker }).startBrowser({
+        sessionId: "s",
+        signal: abort.signal,
+      }),
+    ).rejects.toThrow(/interrupted/);
+    expect(container.start).not.toHaveBeenCalled();
+    expect(container.remove).toHaveBeenCalled();
+  });
+
   it("remove() treats 'no such container' and 'already being removed' as done", async () => {
     const port = await fakeBrowserServer();
     for (const statusCode of [404, 409]) {

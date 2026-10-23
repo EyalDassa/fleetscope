@@ -75,6 +75,7 @@ export class DockerFleet {
   readonly docker: Docker;
   private readonly env: string[];
   private readonly runId: string | undefined;
+  private startingNow = 0;
 
   constructor(
     private readonly image: string,
@@ -92,6 +93,15 @@ export class DockerFleet {
     this.runId = options.runId;
     // With no options dockerode follows DOCKER_HOST, else uses the Linux socket or the Windows pipe.
     this.docker = options.docker ?? new Docker();
+  }
+
+  /**
+   * How many containers are being created or started right now. A container that Docker is still
+   * creating when we sweep for leftovers would appear after the sweep, so the exit-now path waits
+   * for this to reach zero.
+   */
+  get starting(): number {
+    return this.startingNow;
   }
 
   /** Throws if the Docker daemon cannot be reached. */
@@ -115,6 +125,15 @@ export class DockerFleet {
    * anything listens inside.)
    */
   async startBrowser(options: StartOptions): Promise<BrowserContainer> {
+    this.startingNow++;
+    try {
+      return await this.createAndStart(options);
+    } finally {
+      this.startingNow--;
+    }
+  }
+
+  private async createAndStart(options: StartOptions): Promise<BrowserContainer> {
     const startedAt = performance.now();
     const container = await this.docker.createContainer({
       Image: this.image,
@@ -145,6 +164,9 @@ export class DockerFleet {
     };
 
     try {
+      // Ctrl+C while Docker was creating it: do not bother starting what we are about to remove.
+      if (options.signal?.aborted)
+        throw new Error("interrupted while the browser container was starting");
       await container.start();
       const info = await container.inspect();
       const binding = info.NetworkSettings.Ports?.[SERVER_PORT]?.[0];
