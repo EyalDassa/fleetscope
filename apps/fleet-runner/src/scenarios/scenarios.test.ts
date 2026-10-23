@@ -5,7 +5,7 @@ import { createRng, type Rng } from "../rng";
 import { SCENARIO_NAMES, SCENARIOS, type ScenarioName, scenarioFor } from "./index";
 import type { ScenarioContext } from "./types";
 
-const BASE = "http://host.docker.internal:3100";
+const BASE = "http://localhost:3100";
 const logger = pino({ level: "silent" });
 
 /**

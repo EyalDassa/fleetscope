@@ -3,7 +3,7 @@ import type { Logger } from "pino";
 import type { Rng } from "../rng";
 
 export interface ScenarioContext {
-  /** Demo site as the browser sees it, e.g. `http://host.docker.internal:3100`. No trailing slash. */
+  /** Demo site as the browser sees it, e.g. `http://localhost:3100`. No trailing slash. */
   baseUrl: string;
   /** Seeded per session: every random choice a scenario makes comes from here. */
   rng: Rng;

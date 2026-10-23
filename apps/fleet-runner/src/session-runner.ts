@@ -150,7 +150,7 @@ export async function runSession(deps: SessionDeps, spec: SessionSpec): Promise<
     const context = await browser.newContext({ viewport: VIEWPORT });
     const page = await session.collectPage(await context.newPage());
     await SCENARIOS[spec.scenario](page, {
-      baseUrl: deps.config.demoSiteContainerUrl,
+      baseUrl: deps.config.demoSiteBrowserUrl,
       rng: createRng(spec.seed),
       logger: log,
     });

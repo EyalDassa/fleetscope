@@ -38,15 +38,21 @@ function isGone(error: unknown): boolean {
 /** Our whole use of Docker: start one browser container, find ours, remove ours. */
 export class DockerFleet {
   readonly docker: Docker;
+  private readonly env: string[];
 
   constructor(
     private readonly image: string,
     private readonly engine: string,
     private readonly logger: Logger,
-    docker?: Docker,
+    options: {
+      /** Extra environment for every container, as "NAME=value" (e.g. DEMO_SITE_UPSTREAM). */
+      env?: string[];
+      docker?: Docker;
+    } = {},
   ) {
+    this.env = options.env ?? [];
     // With no options dockerode follows DOCKER_HOST, else uses the Linux socket or the Windows pipe.
-    this.docker = docker ?? new Docker();
+    this.docker = options.docker ?? new Docker();
   }
 
   /** Throws if the Docker daemon cannot be reached. */
@@ -73,6 +79,7 @@ export class DockerFleet {
     const startedAt = performance.now();
     const container = await this.docker.createContainer({
       Image: this.image,
+      Env: this.env,
       Labels: { [LABEL_ENGINE]: this.engine, [LABEL_SESSION]: options.sessionId },
       ExposedPorts: { [SERVER_PORT]: {} },
       HostConfig: {

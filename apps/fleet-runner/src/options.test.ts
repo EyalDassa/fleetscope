@@ -1,6 +1,6 @@
 import { hostname } from "node:os";
 import { describe, expect, it } from "vitest";
-import { containerUrlFor, loadConfig } from "./config";
+import { loadConfig } from "./config";
 import { parseRunArgs, UsageError } from "./options";
 
 const seed = () => 12345;
@@ -100,11 +100,13 @@ describe("parseRunArgs", () => {
 
 describe("config", () => {
   it("uses the documented defaults", () => {
-    expect(loadConfig({})).toMatchObject({
+    expect(loadConfig({})).toEqual({
       apiUrl: "http://localhost:4000",
       demoSiteUrl: "http://localhost:3100",
-      demoSiteContainerUrl: "http://host.docker.internal:3100",
+      demoSiteBrowserUrl: "http://localhost:3100",
+      demoSiteUpstream: undefined,
       browserImage: "fleetscope/playwright-chromium:1.64.1",
+      logLevel: "info",
     });
   });
 
@@ -112,21 +114,28 @@ describe("config", () => {
     const config = loadConfig({
       FLEETSCOPE_API_URL: "http://api.test:9000/",
       DEMO_SITE_URL: "http://127.0.0.1:3200/",
+      DEMO_SITE_BROWSER_URL: "http://localhost:3200/",
+      DEMO_SITE_UPSTREAM: " host.docker.internal:3200 ",
       FLEET_BROWSER_IMAGE: "  my/image:1  ",
       LOG_LEVEL: "",
     });
-    expect(config).toMatchObject({
+    expect(config).toEqual({
       apiUrl: "http://api.test:9000",
       demoSiteUrl: "http://127.0.0.1:3200",
-      demoSiteContainerUrl: "http://host.docker.internal:3200",
+      demoSiteBrowserUrl: "http://localhost:3200",
+      demoSiteUpstream: "host.docker.internal:3200",
       browserImage: "my/image:1",
       logLevel: "info",
     });
   });
 
-  it("only rewrites local hosts for the container", () => {
-    expect(containerUrlFor("http://localhost:3100")).toBe("http://host.docker.internal:3100");
-    expect(containerUrlFor("http://127.0.0.1:3100/")).toBe("http://host.docker.internal:3100");
-    expect(containerUrlFor("https://demo.example.com")).toBe("https://demo.example.com");
+  it("the host-side demo site URL does not change what the browser browses", () => {
+    expect(loadConfig({ DEMO_SITE_URL: "http://10.0.0.5:3100" }).demoSiteBrowserUrl).toBe(
+      "http://localhost:3100",
+    );
+  });
+
+  it("an empty DEMO_SITE_UPSTREAM counts as unset", () => {
+    expect(loadConfig({ DEMO_SITE_UPSTREAM: "  " }).demoSiteUpstream).toBeUndefined();
   });
 });

@@ -1,5 +1,5 @@
 import { pino } from "pino";
-import { loadConfig } from "./config";
+import { loadConfig, type RunnerConfig } from "./config";
 import { DockerFleet } from "./docker";
 import { parseRunArgs, USAGE, UsageError } from "./options";
 import { preflight } from "./preflight";
@@ -9,12 +9,20 @@ import { formatSummary } from "./summary";
 const out = (text: string) => process.stdout.write(text);
 const err = (text: string) => process.stderr.write(text);
 
+/** Environment passed to every browser container. */
+function containerEnv(config: RunnerConfig): string[] {
+  return config.demoSiteUpstream ? [`DEMO_SITE_UPSTREAM=${config.demoSiteUpstream}`] : [];
+}
+
 async function runCommand(args: string[]): Promise<number> {
   const options = parseRunArgs(args);
   const config = loadConfig();
   const logger = pino({ name: "fleet-runner", level: config.logLevel });
   const fleets = new Map(
-    options.engines.map((engine) => [engine, new DockerFleet(config.browserImage, engine, logger)]),
+    options.engines.map((engine) => [
+      engine,
+      new DockerFleet(config.browserImage, engine, logger, { env: containerEnv(config) }),
+    ]),
   );
   const anyFleet = fleets.values().next().value as DockerFleet;
 
@@ -83,7 +91,9 @@ async function runCommand(args: string[]): Promise<number> {
 async function cleanupCommand(): Promise<number> {
   const config = loadConfig();
   const logger = pino({ name: "fleet-runner", level: config.logLevel });
-  const fleet = new DockerFleet(config.browserImage, "chromium", logger);
+  const fleet = new DockerFleet(config.browserImage, "chromium", logger, {
+    env: containerEnv(config),
+  });
   try {
     await fleet.ping();
   } catch (error) {
