@@ -373,6 +373,7 @@ describe("README snippets", () => {
         "active-sessions",
         "browser-hours-and-cost",
         "cpu-mem-per-container",
+        "estimated-cost-total",
         "fleet-cores-and-memory",
         "fleet-in-use-now",
         "recent-failures",
@@ -380,6 +381,7 @@ describe("README snippets", () => {
         "session-facts",
         "session-rates",
         "sessions-by-cause",
+        "top-cause-per-engine",
         "top-failure-causes",
       ].sort(),
     );
@@ -496,6 +498,28 @@ describe("the rollup snippets", () => {
     // minute 0: cpu sum 40 %, mem sum 400 MiB, two samples of 2 s in a 60 s bucket
     expect(first?.cores_in_use).toBeCloseTo((40 / 100) * (2 / 60), 9);
     expect(first?.memory_mib_in_use).toBeCloseTo(400 * (2 / 60), 9);
+  });
+
+  it("fleet-in-use-now of an idle fleet is 0 cores and 0 MiB (the pinned aggregate_functions_null_for_empty = 0)", async () => {
+    const idle = { ...baseWindow(), engines: ["chrome-headless-shell"] }; // nothing of that engine runs yet
+    const [row] = await run<{
+      cores_in_use: number | null;
+      memory_mib_in_use: number | null;
+      containers: number;
+    }>("fleet-in-use-now", idle);
+    expect(row).toEqual({ cores_in_use: 0, memory_mib_in_use: 0, containers: 0 });
+
+    // what the read-only user is protected from: a server whose default is 1 turns the sums into NULL
+    const snippets = await readmeSnippets();
+    const sql = expand(
+      `${snippets.get("fleet-in-use-now")} SETTINGS aggregate_functions_null_for_empty = 1`,
+      idle,
+    );
+    const [nulls] = await (await db.client.query({ query: sql, format: "JSONEachRow" })).json<{
+      cores_in_use: number | null;
+      memory_mib_in_use: number | null;
+    }>();
+    expect(nulls).toMatchObject({ cores_in_use: null, memory_mib_in_use: null });
   });
 
   it("fleet-in-use-now adds the latest sample of each running session", async () => {
@@ -776,17 +800,177 @@ describe("the session snippets", () => {
     expect(lightpanda?.browser_hours).toBeCloseTo(hours(20_300 + 60_300 + 5_300), 9);
   });
 
-  it("browser-hours-and-cost counts sessions that have no price instead of pricing them at zero", async () => {
+  it("browser-hours-and-cost: an engine with an unpriced session has NO cost, not a partial sum", async () => {
     const [chromium] = await run<{
       sessions: number;
       browser_hours: number;
-      estimated_cost_usd: number;
+      estimated_cost_usd: number | null;
       unpriced_sessions: number;
     }>("browser-hours-and-cost", { ...baseWindow(), sources: ["sim"] });
     // sim1 and deg1 (local-docker) are priced, mys1 (provider "mystery") has no price
     expect(chromium?.sessions).toBe(3);
     expect(chromium?.unpriced_sessions).toBe(1);
     expect(chromium?.browser_hours).toBeCloseTo(hours(3 * 36_000), 9);
-    expect(chromium?.estimated_cost_usd).toBeCloseTo(hours(2 * 36_000) * 0.1, 9);
+    // the sum of the two priced ones ($0.002) would look like the total, so it is NULL
+    expect(chromium?.estimated_cost_usd).toBeNull();
+  });
+
+  describe("estimated-cost-total", () => {
+    type Total = {
+      estimated_cost_usd: number | null;
+      unpriced_sessions: number;
+      browser_hours: number;
+    };
+
+    it("is NULL, with the number of unpriced sessions, when any session in scope has no price", async () => {
+      const [total] = await run<Total>("estimated-cost-total", {
+        ...baseWindow(),
+        sources: ["sim"],
+      });
+      expect(total).toEqual({
+        estimated_cost_usd: null,
+        unpriced_sessions: 1,
+        browser_hours: expect.closeTo(hours(3 * 36_000), 9),
+      });
+    });
+
+    it("is the sum when every session has a price", async () => {
+      const [total] = await run<Total>("estimated-cost-total");
+      expect(total?.unpriced_sessions).toBe(0);
+      expect(total?.estimated_cost_usd).toBeCloseTo((total?.browser_hours ?? 0) * 0.1, 9);
+    });
+
+    it("is a true 0, not NULL, for a range in which no session started", async () => {
+      const [total] = await run<Total>("estimated-cost-total", {
+        ...baseWindow(),
+        from: T0 - 3 * 60 * MIN,
+        to: T0 - 2 * 60 * MIN,
+      });
+      expect(total).toEqual({ estimated_cost_usd: 0, unpriced_sessions: 0, browser_hours: 0 });
+    });
+  });
+
+  it("session-facts depends on the pinned join_use_nulls = 0: with 1, healthy sessions turn degraded", async () => {
+    const snippets = await readmeSnippets();
+    const sql = (setting: string) =>
+      expand(`${snippets.get("session-facts")} SETTINGS ${setting}`, baseWindow());
+    const statusOf = async (setting: string) => {
+      const rows = await (
+        await db.client.query({ query: sql(setting), format: "JSONEachRow" })
+      ).json<{
+        session_id: string;
+        display_status: string;
+      }>();
+      return rows.find((r) => r.session_id === "ok1")?.display_status;
+    };
+    expect(await statusOf("join_use_nulls = 0")).toBe("healthy");
+    // the unmatched issue row is NULL instead of 0, `issue_count = 0` is NULL, and nothing errors
+    expect(await statusOf("join_use_nulls = 1")).toBe("degraded");
+  });
+
+  describe("top-cause-per-engine", () => {
+    type Top = { engine: string; top_cause: string; top_n: number };
+
+    it("breaks a tie by the cause name, the same way on every run", async () => {
+      // lightpanda: blocked, timeout and failed once each
+      const first = await run<Top>("top-cause-per-engine");
+      for (let i = 0; i < 3; i++) expect(await run<Top>("top-cause-per-engine")).toEqual(first);
+      expect(first.find((r) => r.engine === "lightpanda")).toEqual({
+        engine: "lightpanda",
+        top_cause: "blocked", // alphabetically first of blocked / failed / timeout
+        top_n: 1,
+      });
+      expect(first.find((r) => r.engine === "chromium")).toMatchObject({
+        top_cause: "selector_not_found",
+        top_n: 1,
+      });
+    });
+  });
+});
+
+// These add sessions and samples, so they run after everything that counts the sessions above.
+describe("rules that need extra data (run last)", () => {
+  const ctxOf = (id: string, engine: EventEnvelope["engine"] = "lightpanda"): EventEnvelope => ({
+    session_id: id,
+    source: "real",
+    agent_id: "dash-test",
+    engine,
+    provider: "local-docker",
+  });
+  const sample = (id: string, ageMs: number, cpu: number, mem: number) =>
+    newEvent(
+      "resource.sample",
+      ctxOf(id, "chrome-headless-shell"),
+      { origin: "container", cpu_pct: cpu, mem_mb: mem, net_rx_bytes: 1, net_tx_bytes: 1 },
+      Date.now() - ageMs,
+    );
+  const started = (id: string, engine: EventEnvelope["engine"] = "chrome-headless-shell") =>
+    newEvent(
+      "session.started",
+      ctxOf(id, engine),
+      { engine_version: null, scenario: "x", region: "local", startup_ms: 1, connect_ms: 1 },
+      Date.now() - 5 * MIN,
+    );
+
+  it("fleet-in-use-now counts a sample up to 30 seconds old and not an older one (a dead runner stops counting)", async () => {
+    // only the headless-shell engine, so the sessions above are out of the way
+    const w = { ...baseWindow(), engines: ["chrome-headless-shell"] };
+    await insertEvents(db.client, [
+      started("live1"),
+      started("live2"),
+      started("dead1"),
+      sample("live1", 5_000, 100, 10), // fresh
+      sample("live2", 25_000, 50, 20), // old, but inside the 30 s window
+      sample("dead1", 45_000, 400, 400), // the runner died: outside it
+    ]);
+    const [row] = await run<{
+      cores_in_use: number;
+      memory_mib_in_use: number;
+      containers: number;
+    }>("fleet-in-use-now", w);
+    expect(row).toEqual({ cores_in_use: 1.5, memory_mib_in_use: 30, containers: 2 });
+  });
+
+  it("top-cause-per-engine prefers the cause with more sessions over the alphabetically first one", async () => {
+    // lightpanda already has blocked / failed / timeout once; two more timeouts make timeout the winner
+    const failed = (id: string) => [
+      started(id, "lightpanda"),
+      newEvent(
+        "action",
+        ctxOf(id),
+        {
+          seq: 0,
+          action_type: "goto",
+          target: "x",
+          duration_ms: 5,
+          ok: false,
+          error_code: "timeout",
+        },
+        Date.now() - 4 * MIN,
+      ),
+    ];
+    await insertEvents(db.client, [...failed("late-a"), ...failed("late-b")]);
+    await insertEvents(db.client, [
+      newEvent(
+        "session.ended",
+        ctxOf("late-a"),
+        { status: "timeout", reason: "t", duration_ms: 1000 },
+        Date.now() - 3 * MIN,
+      ),
+      newEvent(
+        "session.ended",
+        ctxOf("late-b"),
+        { status: "timeout", reason: "t", duration_ms: 1000 },
+        Date.now() - 3 * MIN,
+      ),
+    ]);
+    const rows = await run<{ engine: string; top_cause: string; top_n: number }>(
+      "top-cause-per-engine",
+    );
+    expect(rows.find((r) => r.engine === "lightpanda")).toEqual({
+      engine: "lightpanda",
+      top_cause: "timeout",
+      top_n: 3,
+    });
   });
 });

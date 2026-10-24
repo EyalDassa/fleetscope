@@ -30,6 +30,9 @@ Rules:
   (checksum). Add a new migration instead. M0 is merged, so `0001` to `0005` are frozen; schema
   changes go in a new file (`0006` sets the insert deduplication window, `0007` adds the
   `fleet_minute` rollup, `0008` the `pricing` table).
+- The first line of `0007` points at `docs/adr/0003-grafana.md`; the file is `0003-grafana-dashboards.md`.
+  The comment stays: the checksum covers the whole file, comments included, so fixing it would make
+  `db:migrate` fail on every database that already applied `0007`.
 - A file may hold several statements separated by `;`. `--` comments are stripped first, so a `;`
   or `--` inside a string literal is not supported.
 
@@ -126,6 +129,10 @@ How to read it:
    is the p95 of all the actions in it. The average of fifteen per-minute p95s is not a p95.
 4. **Set the panel's "Min interval" to `1m`.** The rollup has one row per minute; a finer bucket
    splits nothing.
+   **Filter with `minute >= toStartOfMinute($__fromTime) AND minute <= $__toTime`, not with
+   `$__timeFilter(minute)`.** A Grafana range hardly ever starts on a minute, and `minute >= from`
+   throws away the whole minute that contains `from` (a 5 minute range would lose a fifth of its data,
+   QA-M2-06). The price is that the first bucket may include up to 59 seconds from before `from`.
 5. Container samples are CPU and memory measured outside the browser by Docker stats. `cdp` samples
    (JS heap) are not in the rollup; read `resource_samples` for a single session.
 6. **The rollup counts actions, not sessions.** `action_errors` is its own metric, "action errors per
@@ -141,7 +148,7 @@ SELECT
     engine,
     countMerge(actions) / (greatest($__interval_s, 60) / 60) AS actions_per_min
 FROM fleet_minute
-WHERE $__timeFilter(minute)
+WHERE minute >= toStartOfMinute($__fromTime) AND minute <= $__toTime
   AND engine IN (${engine:singlequote})
   AND source IN (${source:singlequote})
 GROUP BY time, engine
@@ -156,7 +163,7 @@ SELECT
     engine,
     countMerge(action_errors) / (greatest($__interval_s, 60) / 60) AS action_errors_per_min
 FROM fleet_minute
-WHERE $__timeFilter(minute)
+WHERE minute >= toStartOfMinute($__fromTime) AND minute <= $__toTime
   AND engine IN (${engine:singlequote})
   AND source IN (${source:singlequote})
 GROUP BY time, engine
@@ -172,7 +179,7 @@ SELECT
     if(countMerge(actions) = 0, NULL, quantilesMerge(0.5, 0.95)(action_ms)[1]) AS p50_ms,
     if(countMerge(actions) = 0, NULL, quantilesMerge(0.5, 0.95)(action_ms)[2]) AS p95_ms
 FROM fleet_minute
-WHERE $__timeFilter(minute)
+WHERE minute >= toStartOfMinute($__fromTime) AND minute <= $__toTime
   AND engine IN (${engine:singlequote})
   AND source IN (${source:singlequote})
 GROUP BY time, engine
@@ -188,7 +195,7 @@ SELECT
     if(countMerge(samples) = 0, NULL, sumMerge(cpu_pct_sum) / countMerge(samples)) AS cpu_pct_per_container,
     if(countMerge(samples) = 0, NULL, sumMerge(mem_mb_sum) / countMerge(samples)) AS mem_mib_per_container
 FROM fleet_minute
-WHERE $__timeFilter(minute)
+WHERE minute >= toStartOfMinute($__fromTime) AND minute <= $__toTime
   AND engine IN (${engine:singlequote})
   AND source IN (${source:singlequote})
 GROUP BY time, engine
@@ -208,27 +215,36 @@ SELECT
     sumMerge(cpu_pct_sum) / 100 * 2 / greatest($__interval_s, 60) AS cores_in_use,
     sumMerge(mem_mb_sum) * 2 / greatest($__interval_s, 60) AS memory_mib_in_use
 FROM fleet_minute
-WHERE $__timeFilter(minute)
+WHERE minute >= toStartOfMinute($__fromTime) AND minute <= $__toTime
   AND engine IN (${engine:singlequote})
   AND source IN (${source:singlequote})
 GROUP BY time, engine
 ORDER BY time
 ```
 
-Cores and memory in use right now: the latest container sample of each running session. A session
-whose sampler stopped (no sample in the last 5 minutes) is not counted.
+Cores and memory in use right now: the latest container sample of each running session, counting
+only samples from the **last 30 seconds**. A live session's newest sample is normally at most about
+4 seconds old (one sample every 2 s, plus the collector's 1 s flush and the API's 1 s flush), so 30 s
+tolerates a short ingest stall and matches the dashboards' 30 s refresh. A longer window, 5 minutes
+say, would keep counting the containers of a runner that died. The price: when ingest has been down
+for more than 30 s, "in use" drops to 0, which is an honest reading of "no data now". The dashboards'
+Active now, CPU in use and Memory in use use the same 30 s.
 
 ```sql name=fleet-in-use-now
 SELECT
-    sum(cpu_pct) / 100 AS cores_in_use,
-    sum(mem_mib) AS memory_mib_in_use,
+    sum(latest_cpu_pct) / 100 AS cores_in_use,
+    sum(latest_mem_mib) AS memory_mib_in_use,
     count() AS containers
 FROM
 (
-    SELECT session_id, argMax(cpu_pct, ts) AS cpu_pct, argMax(mem_mb, ts) AS mem_mib
+    SELECT
+        session_id,
+        argMax(toFloat64(assumeNotNull(cpu_pct)), ts) AS latest_cpu_pct,
+        argMax(toFloat64(assumeNotNull(mem_mb)), ts) AS latest_mem_mib
     FROM resource_samples
     WHERE origin = 'container'
-      AND ts >= now() - INTERVAL 5 MINUTE
+      AND cpu_pct IS NOT NULL AND mem_mb IS NOT NULL
+      AND ts >= now() - INTERVAL 30 SECOND
       AND engine IN (${engine:singlequote})
       AND source IN (${source:singlequote})
       AND session_id IN (SELECT session_id FROM sessions FINAL WHERE status = 'running')
@@ -279,12 +295,26 @@ from the raw tables:
 pnpm db:backfill-rollups      # = pnpm --filter @fleetscope/db backfill-rollups
 ```
 
-It truncates `fleet_minute` and rebuilds it with `INSERT ... SELECT` from the raw tables (the same
-queries as the two views; a test checks that both give the same numbers), so it is idempotent: run
-it as often as you like, the result is the same. Run it with the API stopped (or at least with no
-ingest in progress): rows inserted while it runs are either counted twice or missed, because the
-rebuild and the views both see them. The rebuild covers what the raw tables still hold (30 days),
-so rollup rows older than that are gone after a backfill.
+It looks up the oldest minute that the raw tables still hold, deletes the rollup rows from that
+minute on (a mutation, waited for) and writes them again with `INSERT ... SELECT` from the raw tables
+(the same queries as the two views; a test checks that both give the same numbers). So it is
+idempotent: run it as often as you like, the result is the same.
+
+Things to know:
+
+- **Older rollup rows are kept.** The raw tables hold 30 days and the rollup a year, so a rollup row
+  older than the oldest raw row cannot be rebuilt. An earlier version truncated the whole table and
+  would have erased eleven months of history on a run at month 12. Now only the minutes the raw
+  tables can reproduce are rebuilt, and when the raw tables are empty nothing is touched.
+- **Run it with the API stopped** (or at least with no ingest in progress): rows inserted while it
+  runs are either counted twice or missed, because the rebuild and the views both see them.
+- **On ClickHouse Cloud, a repeated identical backfill could be dropped as a duplicate insert.** A
+  shared or replicated table remembers the hash of every block it has inserted and skips an
+  identical one, which would make a second run an empty one after the delete. We could not make a
+  local table do this: with a deduplication window set on `fleet_minute`, `TRUNCATE` and the old
+  `INSERT ... SELECT` repeated fine, three runs in a row gave the same numbers (tested). Both inserts
+  send `deduplicate_insert = 'disable'` anyway, which costs nothing, so the first run on Cloud is the
+  place to check: run it twice and compare `SELECT count(), sumMerge(...)` of `fleet_minute`.
 
 ### Prices and cost
 
@@ -354,8 +384,13 @@ with the Active sessions chart.
   ran in.
 
 **Estimated cost = browser-hours x `pricing_current.usd_per_browser_hour`**; NULL for a session whose
-provider has no price (a `LEFT JOIN` would give 0, which looks like "free"), counted as
-`unpriced_sessions`.
+provider has no price (a `LEFT JOIN` would give 0, which looks like "free").
+
+- **A total is NULL when any session in it has no price.** A sum of only the priced sessions, shown as
+  the total, would be too low and look right. The panel shows "Not available"; `unpriced_sessions`
+  says how many sessions had no price.
+- **A range with no sessions is a true 0** (`$0.00`), not "Not available": nothing ran, so nothing
+  was spent. Test `count() = 0` first, as the snippet below does.
 
 #### The per-session building block
 
@@ -436,6 +471,12 @@ LEFT JOIN issue_facts AS i ON i.session_id = p.session_id
 LEFT JOIN action_facts AS a ON a.session_id = p.session_id
 LEFT JOIN pricing_current AS price ON price.engine = p.engine AND price.provider = p.provider
 ```
+
+**M3 note: an old `running` session turns off partition pruning.** `picked` has no lower bound on
+`started_at`, so one session that stays `running` from days ago (a zombie, a killed runner) pulls
+`min(started_at)` back, and the `issues` and `actions` lookups then read from that day on, in every
+panel. That is fine with dozens of sessions (M2). Revisit it in M3, with the simulator's 500+
+sessions: cap the lookback, or keep per-session facts in a table filled at ingest.
 
 (An unmatched `LEFT JOIN` row gets `0` and `''`, not NULL, since the Grafana user cannot set
 `join_use_nulls`; the expressions above rely on that. `ts >= (SELECT min(started_at) FROM picked)` does
@@ -522,6 +563,28 @@ ORDER BY sessions DESC, cause
 LIMIT 10
 ```
 
+The most frequent cause of each engine (By engine). **A tie is broken by the cause name, so the
+answer never changes between two refreshes**: most sessions first, then the alphabetically first cause.
+`argMax(cause, n)` is arbitrary on equal counts, do not use it. The Top failure causes table above
+has the same rule (`ORDER BY sessions DESC, cause`).
+
+```sql name=top-cause-per-engine
+WITH facts AS (/* session-facts */)
+SELECT
+    engine,
+    argMin(cause, (-toInt64(n), cause)) AS top_cause,
+    max(n) AS top_n
+FROM
+(
+    SELECT engine, cause, count() AS n
+    FROM facts
+    WHERE ended_at IS NOT NULL AND $__timeFilter(ended_at) AND cause IS NOT NULL
+    GROUP BY engine, cause
+)
+GROUP BY engine
+ORDER BY engine
+```
+
 The Sessions list filtered by a `cause` dashboard variable (one cause per session, so a session is
 listed once; the variable's values are the `cause` column of the query above):
 
@@ -542,8 +605,8 @@ ORDER BY started_at DESC
 LIMIT 1000
 ```
 
-Browser-hours and estimated cost for the sessions that **started** in the range (running ones count
-until now):
+Browser-hours and estimated cost per engine for the sessions that **started** in the range (running
+ones count until now). The cost of an engine is NULL when any of its sessions has no price:
 
 ```sql name=browser-hours-and-cost
 WITH facts AS (/* session-facts */)
@@ -551,13 +614,41 @@ SELECT
     engine,
     count() AS sessions,
     sum(browser_hours) AS browser_hours,
-    sum(est_cost_usd) AS estimated_cost_usd,
+    multiIf(countIf(est_cost_usd IS NULL) > 0, NULL, sum(est_cost_usd)) AS estimated_cost_usd,
     countIf(est_cost_usd IS NULL) AS unpriced_sessions
 FROM facts
 WHERE $__timeFilter(started_at)
 GROUP BY engine
 ORDER BY engine
 ```
+
+The same for the whole fleet (the Estimated cost KPI). This is the one place where "nothing ran" must
+be a real 0 and "something is unpriced" must be NULL, so the order of the `multiIf` branches matters:
+
+```sql name=estimated-cost-total
+WITH facts AS (/* session-facts */)
+SELECT
+    multiIf(count() = 0, 0, countIf(est_cost_usd IS NULL) > 0, NULL, sum(est_cost_usd)) AS estimated_cost_usd,
+    countIf(est_cost_usd IS NULL) AS unpriced_sessions,
+    sum(browser_hours) AS browser_hours
+FROM facts
+WHERE $__timeFilter(started_at)
+```
+
+#### How the dashboards relate to these snippets
+
+- The `session-facts` block is embedded unchanged in every panel that needs it. The one allowed
+  change is on Session detail, where `picked`'s `WHERE` is replaced by the session id. A test
+  compares the embedded copies with the block above.
+- The panels add **presentation** to the snippets and nothing else: a short session id,
+  `cause: reason` as one text, `from_ms` / `to_ms` for the links, thresholds and the verdict word.
+  The filters, windows and order are the ones above.
+- Active now, CPU in use and Memory in use use the 30 s window of `fleet-in-use-now`; CPU and Memory are
+  two panels (one value each) and, like the snippet, only count samples with both values.
+- By engine computes the per-engine versions of the success rate, cost and top cause (with the
+  tie-break above) from one `facts`.
+- Anything not in this list that you find different between a panel and a snippet is a bug in one of
+  them, not a decision: fix both together.
 
 ## The read-only Grafana user
 
@@ -595,6 +686,18 @@ plus exactly two settings it may change:
 |---|---|---|
 | `max_execution_time` | the plugin sets it for the query timeout | default 60 s, at most 300 s |
 | `additional_table_filters` | how the plugin applies a dashboard's "ad hoc filters" | only narrows rows |
+
+Two more settings are **pinned** on the user (a plain user setting, which a panel cannot change
+either), so a different server or profile default, ClickHouse Cloud's for example, cannot silently
+change what the snippets mean:
+
+| Pinned | Why |
+|---|---|
+| `join_use_nulls = 0` | `session-facts` reads an unmatched `LEFT JOIN` row as `0` and `''`. With 1 it is NULL: every successful session without issues becomes "degraded" and every cause falls back to the status, with no error |
+| `aggregate_functions_null_for_empty = 0` | `sum()` over no rows must be `0`. With 1 it is NULL (`count()` stays 0), so an idle fleet's CPU in use and Memory in use would show no value instead of `0` |
+
+Running the script again puts them back if someone changed them by hand. If a snippet starts to
+depend on another setting, pin it in `grafana-user.ts` and add it here.
 
 Anything else is refused with `READONLY`, in particular a `SETTINGS` clause in a panel. Two layers
 protect the data: the grants (`SELECT` only) and `readonly = 1`. The integration test checks both: a
