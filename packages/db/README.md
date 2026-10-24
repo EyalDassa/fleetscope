@@ -437,6 +437,7 @@ WITH
         FROM sessions FINAL
         WHERE engine IN (${engine:singlequote})
           AND source IN (${source:singlequote})
+          AND started_at >= $__fromTime - INTERVAL 1 DAY
           AND started_at <= $__toTime
           AND (ended_at IS NULL OR ended_at >= $__fromTime)
     ),
@@ -446,6 +447,8 @@ WITH
         FROM issues
         WHERE session_id IN (SELECT session_id FROM picked)
           AND ts >= (SELECT min(started_at) FROM picked)
+          AND engine IN (${engine:singlequote})
+          AND source IN (${source:singlequote})
         GROUP BY session_id
     ),
     action_facts AS
@@ -458,6 +461,8 @@ WITH
         FROM actions
         WHERE session_id IN (SELECT session_id FROM picked)
           AND ts >= (SELECT min(started_at) FROM picked)
+          AND engine IN (${engine:singlequote})
+          AND source IN (${source:singlequote})
         GROUP BY session_id
     )
 SELECT
@@ -499,11 +504,18 @@ LEFT JOIN action_facts AS a ON a.session_id = p.session_id
 LEFT JOIN pricing_current AS price ON price.engine = p.engine AND price.provider = p.provider
 ```
 
-**M3 note: an old `running` session turns off partition pruning.** `picked` has no lower bound on
-`started_at`, so one session that stays `running` from days ago (a zombie, a killed runner) pulls
-`min(started_at)` back, and the `issues` and `actions` lookups then read from that day on, in every
-panel. That is fine with dozens of sessions (M2). Revisit it in M3, with the simulator's 500+
-sessions: cap the lookback, or keep per-session facts in a table filled at ingest.
+**Bounds that keep the lookups cheap (M3).**
+
+- `picked` only looks back **one day** from the start of the range
+  (`started_at >= $__fromTime - INTERVAL 1 DAY`). Without that bound, one session that stays
+  `running` from days ago (a zombie, a killed runner) pulled `min(started_at)` back, and the `issues`
+  and `actions` lookups then read every partition from that day on, in every panel (R-M2-18). The
+  price: **a session that started more than a day before the range and is still running or ended
+  inside it is out of scope** (no row, not counted anywhere). Sessions are minutes long; a day-long
+  session is a zombie, and "zombie sessions" is a different insight.
+- The `engine` and `source` filters are repeated in `issue_facts` and `action_facts`. `picked` already
+  filters, but ClickHouse cannot carry that through `session_id IN (...)`; `engine` is the first
+  column of the primary key of `issues` and `actions`, so the filter prunes granules.
 
 (An unmatched `LEFT JOIN` row gets `0` and `''`, not NULL, since the Grafana user cannot set
 `join_use_nulls`; the expressions above rely on that. `ts >= (SELECT min(started_at) FROM picked)` does
@@ -789,8 +801,11 @@ ORDER BY scenario, engine
 #### How the dashboards relate to these snippets
 
 - The `session-facts` block is embedded unchanged in every panel that needs it. The one allowed
-  change is on Session detail, where `picked`'s `WHERE` is replaced by the session id. A test
-  compares the embedded copies with the block above.
+  difference is on Session detail, which has no `engine` or `source` variable (it shows one session,
+  whatever its engine or source): there `picked`'s `WHERE` is replaced by the session id, and the
+  two lines `AND engine IN (${engine:singlequote})` and `AND source IN (${source:singlequote})` are
+  left out of `issue_facts` and `action_facts`. Nothing else may differ. A test compares the
+  embedded copies with the block above.
 - The panels add **presentation** to the snippets and nothing else: a short session id,
   `cause: reason` as one text, `from_ms` / `to_ms` for the links, thresholds and the verdict word.
   The filters, windows and order are the ones above.

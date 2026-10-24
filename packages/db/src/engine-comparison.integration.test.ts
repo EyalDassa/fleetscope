@@ -408,3 +408,44 @@ describe("compatibility-matrix", () => {
     ]);
   });
 });
+
+describe("session-facts lower bound (R-M2-18)", () => {
+  it("ignores a zombie from days ago and a session older than a day, keeps one from 23 hours ago", async () => {
+    const from = T0 - 5 * MIN;
+    const HOUR = 60 * MIN;
+    const ctx = (id: string): EventEnvelope => ({
+      session_id: id,
+      source: "real",
+      agent_id: "cmp-test",
+      engine: "chrome-headless-shell",
+      provider: "local-docker",
+    });
+    const started = (id: string, at: number) =>
+      newEvent(
+        "session.started",
+        ctx(id),
+        { engine_version: null, scenario: "login", region: "local", startup_ms: 1, connect_ms: 1 },
+        at,
+      );
+    const ended = (id: string, at: number) =>
+      newEvent(
+        "session.ended",
+        ctx(id),
+        { status: "success", reason: null, duration_ms: 1000 },
+        at,
+      );
+    await insertEvents(db.client, [
+      started("zombie", from - 72 * HOUR), // still running, three days old
+      started("old", from - 25 * HOUR), // ended inside the range, but started over a day before it
+      started("edge", from - 23 * HOUR), // started 23 hours before, ended inside the range
+    ]);
+    await insertEvents(db.client, [ended("old", from + MIN), ended("edge", from + MIN)]);
+    const rows = await run<{ session_id: string }>(
+      "session-facts",
+      ["chrome-headless-shell"],
+      from,
+      Date.now() + MIN,
+    );
+    expect(rows.map((r) => r.session_id).sort()).toEqual(["edge", "h1"]);
+  });
+});
