@@ -3,7 +3,7 @@ import type { ClickHouseClient } from "./client";
 import { ConfigError, identifierSchema, parseEnv } from "./config";
 
 /**
- * The read-only ClickHouse user that Grafana connects as (docs/adr/0003-grafana.md).
+ * The read-only ClickHouse user that Grafana connects as (docs/adr/0003-grafana-dashboards.md).
  *
  * Grafana runs whatever SQL a dashboard contains, so the user must not be able to change anything,
  * even if someone pastes a `DROP TABLE` into a panel. Two layers:
@@ -23,6 +23,17 @@ import { ConfigError, identifierSchema, parseEnv } from "./config";
  *    narrows the rows a query sees.
  * Anything else, such as `SETTINGS join_use_nulls = 1` in a panel, is refused, so dashboard SQL
  * must not need a SETTINGS clause (packages/db/README.md).
+ *
+ * Two settings are PINNED to the value the dashboard SQL was written for, so a different server or
+ * profile default (ClickHouse Cloud's, say) cannot silently change a result. They are plain user
+ * settings, not `CHANGEABLE_IN_READONLY`, so a panel cannot change them either:
+ *  - `join_use_nulls = 0`: the `session-facts` query reads an unmatched LEFT JOIN row as `0` and
+ *    `''`. With 1 it would be NULL, every successful session without issues would become
+ *    "degraded" and every cause would fall back to the status, with no error anywhere;
+ *  - `aggregate_functions_null_for_empty = 0`: `sum()` over no rows must be `0`. With 1 it is NULL
+ *    (`count()` stays 0), so an idle fleet's "CPU in use" and "Memory in use" would show no value
+ *    instead of 0, and the browser-hours of an empty range NULL instead of 0.
+ * If a snippet starts to depend on another setting, pin it here too (and say why).
  *
  * The password is passed as a query parameter ({password:String}), so it is never part of the SQL
  * text, and ClickHouse does not write it to `system.query_log`. It also works on ClickHouse Cloud,
@@ -131,6 +142,8 @@ export class GrafanaUserError extends Error {
 /** Same for CREATE and ALTER, so a freshly created user is read-only from its first moment. */
 const USER_CLAUSES = `IDENTIFIED WITH sha256_password BY {password:String}
   SETTINGS readonly = 1,
+           join_use_nulls = 0,
+           aggregate_functions_null_for_empty = 0,
            max_execution_time = ${GRAFANA_DEFAULT_EXECUTION_SECONDS} MAX ${GRAFANA_MAX_EXECUTION_SECONDS} CHANGEABLE_IN_READONLY,
            additional_table_filters CHANGEABLE_IN_READONLY`;
 

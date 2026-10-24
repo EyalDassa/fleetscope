@@ -199,6 +199,9 @@ describe("ensureGrafanaUser", () => {
     // read-only from the moment it exists, and only the settings the plugin needs are changeable
     for (const call of calls.slice(0, 2)) {
       expect(call.query).toContain("readonly = 1");
+      // pinned, so a server default cannot change what the dashboard SQL means
+      expect(call.query).toContain("join_use_nulls = 0");
+      expect(call.query).toContain("aggregate_functions_null_for_empty = 0");
       expect(call.query).toContain("max_execution_time = 60 MAX 300 CHANGEABLE_IN_READONLY");
     }
     expect(calls[2]?.query).toBe("GRANT SELECT ON `fleetscope`.* TO `grafana`");

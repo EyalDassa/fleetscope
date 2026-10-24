@@ -182,6 +182,88 @@ describe("fleet_minute", () => {
     expect((await rows(SNAPSHOT)).length).toBe(4);
   });
 
+  it("keeps rollup rows that are older than the raw tables (the rollup lives a year, the raw rows 30 days)", async () => {
+    // a rollup minute 200 days ago, from raw rows that were deleted long ago: it cannot be rebuilt
+    const oldMinute = "2026-03-01 10:00:00";
+    await db.client.command({
+      query: `INSERT INTO fleet_minute (minute, engine, source, actions, action_errors, action_ms)
+              SELECT toDateTime('${oldMinute}', 'UTC'), 'chromium', 'real',
+                     countState(), countIfState(number = 0), quantilesState(0.5, 0.95)(toUInt32(number))
+              FROM numbers(5)`,
+    });
+    const oldRow = () =>
+      rows<{ actions: number }>(
+        `SELECT countMerge(actions) AS actions FROM fleet_minute WHERE minute = toDateTime('${oldMinute}', 'UTC')`,
+      );
+    const recent = SNAPSHOT.replace(
+      "FROM fleet_minute",
+      "FROM fleet_minute WHERE fleet_minute.minute >= now() - INTERVAL 30 DAY",
+    );
+    const before = await rows(recent);
+    expect(await oldRow()).toEqual([{ actions: 5 }]);
+
+    const result = await backfillRollups(db.client);
+
+    expect(await oldRow()).toEqual([{ actions: 5 }]); // survived
+    // and the minutes the raw tables hold are exactly as before
+    expect(await rows(recent)).toEqual(before);
+    // the rebuild started at the oldest raw minute, to the second
+    const [raw] = await rows<{ oldest: number }>(
+      "SELECT toUnixTimestamp(min(toStartOfMinute(ts))) AS oldest FROM actions",
+    );
+    expect(result.from?.getTime()).toBe(Number(raw?.oldest) * 1000);
+
+    // idempotent with the old row in place
+    await backfillRollups(db.client);
+    expect(await oldRow()).toEqual([{ actions: 5 }]);
+    await db.client.command({
+      query: `ALTER TABLE fleet_minute DELETE WHERE minute = toDateTime('${oldMinute}', 'UTC')`,
+      clickhouse_settings: { mutations_sync: "2" },
+    });
+  });
+
+  it("does not touch the rollup when the raw tables are empty", async () => {
+    const empty = await createTestDatabase();
+    try {
+      await empty.client.command({
+        query: `INSERT INTO fleet_minute (minute, engine, source, actions, action_errors, action_ms)
+                SELECT toDateTime('2026-03-01 10:00:00', 'UTC'), 'chromium', 'real',
+                       countState(), countIfState(number = 0), quantilesState(0.5, 0.95)(toUInt32(number))
+                FROM numbers(7)`,
+      });
+      const result = await backfillRollups(empty.client);
+      expect(result.from).toBeNull();
+      const [row] = await (
+        await empty.client.query({
+          query: "SELECT countMerge(actions) AS actions FROM fleet_minute",
+          format: "JSONEachRow",
+        })
+      ).json<{ actions: number }>();
+      expect(row?.actions).toBe(7);
+    } finally {
+      await empty.cleanup();
+    }
+  });
+
+  it("gives the same result when the table remembers inserted blocks (the ClickHouse Cloud case)", async () => {
+    const dedup = await createTestDatabase();
+    try {
+      await insertEvents(dedup.client, events());
+      await dedup.client.command({
+        query: "ALTER TABLE fleet_minute MODIFY SETTING non_replicated_deduplication_window = 100",
+      });
+      const numbers = async () =>
+        await (await dedup.client.query({ query: SNAPSHOT, format: "JSONEachRow" })).json();
+      const expected = await numbers();
+      for (let run = 0; run < 3; run++) {
+        await backfillRollups(dedup.client);
+        expect(await numbers(), `run ${run + 1}`).toEqual(expected);
+      }
+    } finally {
+      await dedup.cleanup();
+    }
+  });
+
   it("merges partial rows: the same minute inserted in two batches reads as one", async () => {
     const d = ctx("rollup-d", "chrome-headless-shell");
     const at = T0 + 5 * 60_000;

@@ -10,8 +10,18 @@ try {
   const client = createClickHouseClient(config);
   try {
     logger.warn("rebuilding fleet_minute from the raw tables: stop ingest while this runs");
-    const { rows } = await backfillRollups(client);
-    logger.info({ database: config.database, rows }, "fleet_minute rebuilt");
+    const { rows, from } = await backfillRollups(client);
+    if (from === null) {
+      logger.warn(
+        { database: config.database, rows },
+        "the raw tables are empty: fleet_minute left as it was",
+      );
+    } else {
+      logger.info(
+        { database: config.database, rows, rebuiltFrom: from.toISOString() },
+        "fleet_minute rebuilt from the oldest raw minute (older rollup rows are kept)",
+      );
+    }
   } finally {
     await client.close();
   }

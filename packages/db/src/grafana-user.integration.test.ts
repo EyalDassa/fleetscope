@@ -110,6 +110,54 @@ describe("the read-only Grafana user", () => {
     }
   });
 
+  it("has the settings the dashboard SQL depends on pinned, and cannot change them", async () => {
+    const reader = readerClient();
+    const result = await reader.query({
+      query:
+        "SELECT getSetting('join_use_nulls') AS join_use_nulls, getSetting('aggregate_functions_null_for_empty') AS null_for_empty, getSetting('readonly') AS readonly",
+      format: "JSONEachRow",
+    });
+    const [row] = await result.json<Record<string, number | string>>();
+    expect(Object.values(row ?? {}).map(Number)).toEqual([0, 0, 1]);
+
+    // a panel cannot flip them either
+    for (const setting of ["join_use_nulls = 1", "aggregate_functions_null_for_empty = 1"]) {
+      expect(
+        await outcome(() =>
+          reader
+            .query({ query: `SELECT 1 SETTINGS ${setting}`, format: "JSONEachRow" })
+            .then((r) => r.json()),
+        ),
+        setting,
+      ).toBe("READONLY");
+    }
+  });
+
+  it("pins them again when the user's settings were changed by hand (a run of the script repairs it)", async () => {
+    const drifted = `${user}_drift`;
+    await ensureGrafanaUser(db.client, { user: drifted, password, database: db.config.database });
+    try {
+      await db.client.command({
+        query: `ALTER USER \`${drifted}\` SETTINGS readonly = 1, join_use_nulls = 1, aggregate_functions_null_for_empty = 1`,
+      });
+      const read = async () => {
+        const reader = createReaderClient(db.config, drifted, password);
+        readers.push(reader);
+        const result = await reader.query({
+          query:
+            "SELECT getSetting('join_use_nulls') AS a, getSetting('aggregate_functions_null_for_empty') AS b",
+          format: "JSONEachRow",
+        });
+        return Object.values((await result.json<Record<string, number>>())[0] ?? {}).map(Number);
+      };
+      expect(await read()).toEqual([1, 1]);
+      await ensureGrafanaUser(db.client, { user: drifted, password, database: db.config.database });
+      expect(await read()).toEqual([0, 0]);
+    } finally {
+      await db.client.command({ query: `DROP USER IF EXISTS \`${drifted}\`` });
+    }
+  });
+
   it("may change max_execution_time (within the limit) and no other setting", async () => {
     const reader = readerClient();
     const run = (settings: string) =>

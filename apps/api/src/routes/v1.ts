@@ -13,7 +13,7 @@ export interface V1RouteOptions {
 
 /**
  * Everything under /v1 that is registered with the prefix. The dashboards read ClickHouse
- * themselves (Grafana, docs/adr/0003-grafana.md), so the API has no query routes for them; what it
+ * themselves (Grafana, docs/adr/0003-grafana-dashboards.md), so the API has no query routes for them; what it
  * adds is the session timeline for Perfetto. `POST /v1/events` is registered in routes/events.ts
  * with the full path from `INGEST_PATH`, so the collector and the API share one constant.
  *
