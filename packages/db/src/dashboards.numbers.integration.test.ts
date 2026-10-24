@@ -766,7 +766,7 @@ describe("the dashboards against the README", () => {
       "\n",
     );
     const map = new Map<string, string>();
-    for (const match of readme.matchAll(/```sql name=([a-z-]+)\n([\s\S]*?)\n```/g))
+    for (const match of readme.matchAll(/```sql name=([a-z0-9-]+)\n([\s\S]*?)\n```/g))
       map.set(match[1] as string, match[2] as string);
     return map;
   }

@@ -30,7 +30,7 @@ async function readmeSnippets(): Promise<Map<string, string>> {
   const snippets = new Map<string, string>();
   for (const match of readme
     .replace(/\r\n/g, "\n")
-    .matchAll(/```sql name=([a-z-]+)\n([\s\S]*?)\n```/g)) {
+    .matchAll(/```sql name=([a-z0-9-]+)\n([\s\S]*?)\n```/g)) {
     snippets.set(match[1] as string, match[2] as string);
   }
   return snippets;
@@ -42,6 +42,7 @@ const CAPACITY_SNIPPETS = [
   "capacity-replicas",
   "capacity-limit-changes",
   "capacity-alerts-mem-pct",
+  "capacity-alerts-mem-pct-1m",
   "capacity-alerts-cpu-pct",
   "capacity-alerts-limits-changed",
   "capacity-alerts-load-mismatch-pct",
@@ -107,7 +108,7 @@ beforeAll(async () => {
 
   // Stand-ins with the columns the snippets use. Plain MergeTree, so the read-only user reads them
   // like any other table of the database.
-  for (const name of ["metrics_full", "metrics_dev", "metrics_empty"]) {
+  for (const name of ["metrics_full", "metrics_dev", "metrics_empty", "metrics_spike"]) {
     await db.client.command({
       query: `CREATE TABLE ${name} (hostname LowCardinality(String), event_time DateTime, metric LowCardinality(String), value Float64) ENGINE = MergeTree ORDER BY (event_time, metric)`,
     });
@@ -230,6 +231,7 @@ describe("the capacity snippets", () => {
 
     it.for([
       "capacity-alerts-mem-pct",
+      "capacity-alerts-mem-pct-1m",
       "capacity-alerts-cpu-pct",
       "capacity-alerts-limits-changed",
       "capacity-alerts-load-mismatch-pct",
@@ -375,7 +377,7 @@ describe("the capacity snippets on worked-out data", () => {
       const add = (metric: string, value: number) =>
         out.push({ hostname, event_time: at, metric, value });
       add("Uptime", 1000);
-      add("CGroupMemoryUsed", 8 * GIB);
+      add("CGroupMemoryUsedWithoutPageCache", 8 * GIB);
       add("CGroupUserTime", 0.5);
       add("CGroupSystemTime", 0.25);
       add("CGroupMemoryTotal", options.limits ? (scaled ? 32 : 16) * GIB : 0);
@@ -401,6 +403,19 @@ describe("the capacity snippets on worked-out data", () => {
         event_time: iso(T - 30 * MIN),
       },
     ]);
+    // one second at 31 of 32 GiB in each of the last whole minutes, the other 59 seconds at 8 GiB
+    const spike: MetricRow[] = [];
+    for (const minute of [T - 2 * MIN, T - MIN, T]) {
+      for (let second = 0; second < 60; second++) {
+        const at = iso(minute + second * 1000);
+        const used = second === 30 ? 31 * GIB : 8 * GIB;
+        spike.push(
+          { hostname: A, event_time: at, metric: "CGroupMemoryUsedWithoutPageCache", value: used },
+          { hostname: A, event_time: at, metric: "CGroupMemoryTotal", value: 32 * GIB },
+        );
+      }
+    }
+    await insert("metrics_spike", spike);
     // a dev container: no memory limit (0), no CGroupMaxCPU at all
     await insert("metrics_dev", replicaRows(A, T - 45 * MIN, { scaledAt: null, limits: false }));
   });
@@ -504,6 +519,26 @@ describe("the capacity snippets on worked-out data", () => {
   describe("the alert queries", () => {
     it("mem_pct is the busiest replica's use of its limit over the last 10 minutes (the new 32 GiB limit)", async () => {
       expect(await alertValue("capacity-alerts-mem-pct", tables)).toBeCloseTo(25, 9);
+    });
+
+    it("mem_pct_1m is the average of the last whole minute: a one-second spike moves it by 1/60 where the 10-minute peak jumps", async () => {
+      // 59 s at 8 GiB and 1 s at 31 GiB of 32: the average is 8.383 GiB (26.2 %), the peak 96.9 %
+      const spikeTables = { metrics: "metrics_spike" };
+      expect(await alertValue("capacity-alerts-mem-pct-1m", spikeTables)).toBeCloseTo(
+        (100 * (59 * 8 + 31)) / 60 / 32,
+        6,
+      );
+      expect(await alertValue("capacity-alerts-mem-pct", spikeTables)).toBeCloseTo(
+        (100 * 31) / 32,
+        6,
+      );
+    });
+
+    it("mem_pct_1m is NULL without a limit or without data", async () => {
+      expect(await alertValue("capacity-alerts-mem-pct-1m", { metrics: "metrics_dev" })).toBeNull();
+      expect(
+        await alertValue("capacity-alerts-mem-pct-1m", { metrics: "metrics_empty" }),
+      ).toBeNull();
     });
 
     it("cpu_pct is the average use of the CPU limit (0.75 of 8 cores)", async () => {

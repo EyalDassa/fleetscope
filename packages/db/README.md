@@ -835,7 +835,11 @@ The "Fleetscope / Capacity" dashboard answers two questions: does the load the f
 ClickHouse says it wrote, and how close is ClickHouse to its own memory and CPU limits? The snippets
 read **two system tables** besides ours, `system.part_log` (one row per part ClickHouse writes or
 merges) and `system.asynchronous_metric_log` (one row per metric per second). The Grafana user gets
-`SELECT` on exactly these two (see "The read-only Grafana user"). Rules for this section:
+`SELECT` on **only the columns the snippets use** of exactly these two tables (see "The read-only Grafana
+user"): `part_log(event_type, database, table, rows, error, event_time)` and
+`asynchronous_metric_log(hostname, event_time, metric, value)`. A new snippet that reads another column
+fails with `ACCESS_DENIED` until the column is added to `CAPACITY_SYSTEM_COLUMNS` in `grafana-user.ts`;
+a query must name a granted column (write `count(event_time)`, not a bare `count()`). Rules for this section:
 
 - **No `source` or `engine` filter.** `part_log` and the metric log know nothing about our columns, and
   load is what the database sees, whoever sent it (real, sim, seed). The panels say "all sources". This
@@ -959,8 +963,11 @@ One row per minute and replica. Columns: `time, replica, mem_used_gib, mem_limit
 cpu_limit_cores`. `replica` is the first label of the host name (`c-tealaws-ds-15-server-tshu674-0`, not the
 whole `...svc.cluster.local`).
 
-- **Memory** is `CGroupMemoryUsed` (the container's cgroup, page cache included; on Cloud it equals
-  `CGroupMemoryUsedWithoutPageCache`) and the limit `CGroupMemoryTotal`, both in GiB (bytes / 2^30).
+- **Memory** is `CGroupMemoryUsedWithoutPageCache` and the limit `CGroupMemoryTotal`, both in GiB
+  (bytes / 2^30). Without the page cache, because the page cache is reclaimable: the kernel drops it
+  when the container needs memory, so it never causes an out-of-memory kill, while the number that is
+  left cannot be given back. The metric exists on Cloud 26.6 and local 26.8 and equals
+  `CGroupMemoryUsed` on both today (0.401 GiB), so the choice is about meaning, not today's numbers.
   The minute shows the **peak** (`max`), because running out of memory is decided by the peak.
 - **CPU** is `CGroupUserTime + CGroupSystemTime`, the **average of the minute**, in cores. These two
   metrics are already "cores busy" (checked on Cloud 26.6: 0.027 + 0.020 against
@@ -978,13 +985,13 @@ whole `...svc.cluster.local`).
 SELECT
     toStartOfMinute(event_time) AS time,
     splitByChar('.', hostname)[1] AS replica,
-    maxIfOrNull(value, metric = 'CGroupMemoryUsed') / 1073741824 AS mem_used_gib,
+    maxIfOrNull(value, metric = 'CGroupMemoryUsedWithoutPageCache') / 1073741824 AS mem_used_gib,
     nullIf(maxIfOrNull(value, metric = 'CGroupMemoryTotal'), 0) / 1073741824 AS mem_limit_gib,
     avgIfOrNull(value, metric = 'CGroupUserTime') + avgIfOrNull(value, metric = 'CGroupSystemTime') AS cpu_used_cores,
     nullIf(maxIfOrNull(value, metric = 'CGroupMaxCPU'), 0) AS cpu_limit_cores
 FROM system.asynchronous_metric_log
 WHERE event_time >= toStartOfMinute($__fromTime) AND event_time <= $__toTime
-  AND metric IN ('CGroupMemoryUsed', 'CGroupMemoryTotal', 'CGroupUserTime', 'CGroupSystemTime', 'CGroupMaxCPU')
+  AND metric IN ('CGroupMemoryUsedWithoutPageCache', 'CGroupMemoryTotal', 'CGroupUserTime', 'CGroupSystemTime', 'CGroupMaxCPU')
 GROUP BY time, replica
 ORDER BY time, replica
 ```
@@ -1060,14 +1067,25 @@ ORDER BY time
 
 #### Alert queries
 
-Five queries for Grafana alert rules, each **one row, one column `value`** (Nullable). They use `now()`,
+Six queries for Grafana alert rules, each **one row, one column `value`** (Nullable). They use `now()`,
 not the dashboard's time range, and **NULL means "no data"**, never a fake 0 (`maxOrNull`, `avgOrNull`,
 `if(... = 0, NULL, ...)`): set the rule's no-data state on purpose. Thresholds are the rule's business;
 suggested ones are in brackets. The query format is "Table"; use a Reduce (Last) expression.
 
 - `capacity-alerts-mem-pct`: the highest memory use of any replica in the last 10 minutes, as a
   percentage of its limit (per replica and minute, so a limit that changed inside the window is
-  respected). NULL when there is no limit (dev). [> 85 for 5 min]
+  respected). NULL when there is no limit (dev). **It is a peak, so it suits the stat panel and not a
+  `for:` rule**: one second above the threshold keeps the value above it for the next 10 minutes.
+- `capacity-alerts-mem-pct-1m`: the memory use of the worst replica over the **last whole minute** (the
+  minute before the current one, so the unfinished minute and the 7.5 s metric-log flush are outside
+  it), as a percentage of its limit. It is the **average** of the minute's per-second samples, not the
+  maximum: memory is a slowly moving gauge, so the average is the level the replica held, and a
+  one-second blip changes it by 1/60. With the maximum a single second would again page for as long as
+  the rule's `for:` window needs minutes in a row, which is what this block exists to avoid. So a rule
+  with `for: 5m` here means five consecutive minutes above the threshold. NULL without a limit or
+  without data. [warning > 75, critical > 85 for 5 min: ClickHouse starts refusing queries at about
+  90% of the limit (`max_server_memory_usage` is 0.9 x the cgroup limit), so a critical threshold of
+  90 pages only when queries already fail]
 - `capacity-alerts-cpu-pct`: the average CPU of the worst replica over the last 10 minutes, as a
   percentage of its core limit. NULL without a limit. [> 85 for 10 min]
 - `capacity-alerts-limits-changed`: 1 when the memory limit, the CPU limit or the replica count had
@@ -1089,12 +1107,27 @@ SELECT maxOrNull(pct) AS value
 FROM
 (
     SELECT
-        100 * maxIfOrNull(value, metric = 'CGroupMemoryUsed')
+        100 * maxIfOrNull(value, metric = 'CGroupMemoryUsedWithoutPageCache')
             / nullIf(maxIfOrNull(value, metric = 'CGroupMemoryTotal'), 0) AS pct
     FROM system.asynchronous_metric_log
     WHERE event_time >= now() - INTERVAL 10 MINUTE
-      AND metric IN ('CGroupMemoryUsed', 'CGroupMemoryTotal')
+      AND metric IN ('CGroupMemoryUsedWithoutPageCache', 'CGroupMemoryTotal')
     GROUP BY toStartOfMinute(event_time), hostname
+)
+```
+
+```sql name=capacity-alerts-mem-pct-1m
+SELECT maxOrNull(pct) AS value
+FROM
+(
+    SELECT
+        100 * avgIfOrNull(value, metric = 'CGroupMemoryUsedWithoutPageCache')
+            / nullIf(maxIfOrNull(value, metric = 'CGroupMemoryTotal'), 0) AS pct
+    FROM system.asynchronous_metric_log
+    WHERE event_time >= toStartOfMinute(now()) - INTERVAL 1 MINUTE
+      AND event_time < toStartOfMinute(now())
+      AND metric IN ('CGroupMemoryUsedWithoutPageCache', 'CGroupMemoryTotal')
+    GROUP BY hostname
 )
 ```
 
@@ -1181,11 +1214,16 @@ the default that is public in this repository can never become a real password.
 
 The script connects with the admin user (`CLICKHOUSE_USER`, which may manage users) and runs
 `CREATE USER IF NOT EXISTS`, `ALTER USER` (password and settings), `GRANT SELECT ON <database>.*` and,
-for the Capacity dashboard, `GRANT SELECT ON system.asynchronous_metric_log` and
-`GRANT SELECT ON system.part_log` (see "Capacity"). Nothing else is granted: not the other system
-tables, and not `READ ON REMOTE`, which `clusterAllReplicas` would need. A grant on a system table
-that does not exist (a server with `part_log` switched off) is accepted by ClickHouse, and the
-Capacity queries that read it fail with an unknown-table error, which is the honest answer.
+for the Capacity dashboard, column grants `GRANT SELECT(event_time, hostname, metric, value) ON
+system.asynchronous_metric_log` and `GRANT SELECT(database, error, event_time, event_type, rows, table)
+ON system.part_log` (see "Capacity"; it first revokes any table-level grant an earlier version made).
+Nothing else is granted: not the other columns of those tables (`part_log` also holds `query_id`,
+`exception`, which can quote the data of a failed insert, `path_on_disk`, `partition` and
+`ProfileEvents`), not the other system tables, and not `READ ON REMOTE`, which `clusterAllReplicas`
+would need. `part_log` still shows the names of every database's tables and their row counts, which is
+what the snippets read. A grant on a system table that does not exist (a server with `part_log` switched
+off) is accepted by ClickHouse, and the Capacity queries that read it fail with an unknown-table error,
+which is the honest answer.
 Run it again whenever you like: it is idempotent, and running it with a new password rotates the
 password. It refuses to touch the admin user's own name, never logs the password (it is passed as a
 query parameter, so it is not in the SQL text either, and ClickHouse does not write it to

@@ -270,7 +270,7 @@ async function readmeSnippets(): Promise<Map<string, string>> {
   const snippets = new Map<string, string>();
   for (const match of readme
     .replace(/\r\n/g, "\n")
-    .matchAll(/```sql name=([a-z-]+)\n([\s\S]*?)\n```/g)) {
+    .matchAll(/```sql name=([a-z0-9-]+)\n([\s\S]*?)\n```/g)) {
     snippets.set(match[1] as string, match[2] as string);
   }
   return snippets;
@@ -387,6 +387,7 @@ describe("README snippets", () => {
         "capacity-alerts-limits-changed",
         "capacity-alerts-load-mismatch-pct",
         "capacity-alerts-mem-pct",
+        "capacity-alerts-mem-pct-1m",
         "capacity-alerts-minutes-since-write",
         "capacity-limit-changes",
         "capacity-load",
