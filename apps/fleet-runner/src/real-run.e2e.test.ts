@@ -30,7 +30,7 @@ try {
 }
 
 const packageDir = fileURLToPath(new URL("..", import.meta.url));
-const IMAGE = process.env.FLEET_BROWSER_IMAGE ?? "fleetscope/playwright-chromium:1.64.1";
+const IMAGE = process.env.FLEET_BROWSER_IMAGE ?? "fleetscope/playwright-chromium:1.64.1-2";
 const SITE = process.env.DEMO_SITE_BROWSER_URL ?? "http://localhost:3100";
 
 async function sql<T = Record<string, unknown>>(query: string): Promise<T[]> {
@@ -339,6 +339,7 @@ describe.skipIf(!ENABLED)("QA-M1-05: container samples at high concurrency", () 
 function runWithSignals(
   signalsAtMs: number[],
   args: string[],
+  logLevel = "warn",
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   const code = `
     process.argv = [process.argv[0], "cli.ts", "run", ...JSON.parse(process.env.QA_ARGS)];
@@ -353,7 +354,7 @@ function runWithSignals(
         cwd: packageDir,
         env: {
           ...process.env,
-          LOG_LEVEL: "warn",
+          LOG_LEVEL: logLevel,
           QA_ARGS: JSON.stringify(args),
           QA_SIGNALS: JSON.stringify(signalsAtMs),
           QA_CLI: pathToFileURL(join(packageDir, "src", "cli.ts")).href,
@@ -382,7 +383,7 @@ describe.skipIf(!ENABLED)("Ctrl+C", () => {
     agent,
   ];
 
-  async function expectTidy(agent: string) {
+  async function expectTidy(agent: string, runId?: string) {
     const rows = await sql<{ status: string; reason: string | null }>(
       `SELECT status, reason FROM sessions FINAL WHERE agent_id = '${agent}'`,
     );
@@ -398,9 +399,10 @@ describe.skipIf(!ENABLED)("Ctrl+C", () => {
     expect(crashes).toEqual([]); // QA-M1-08 for Ctrl+C: we closed the browser, nothing crashed
     const left = await new Docker().listContainers({
       all: true,
-      filters: { label: ["fleetscope.session"] },
+      // Scoped to this run when we know its id: other runs (the live loop) may be going on.
+      filters: { label: ["fleetscope.session", ...(runId ? [`fleetscope.run=${runId}`] : [])] },
     });
-    expect(left).toEqual([]);
+    expect(left.map((c) => c.Names)).toEqual([]);
   }
 
   it("one Ctrl+C: running sessions end failed/interrupted, the summary is printed, nothing is left, exit 130", async () => {
@@ -430,6 +432,53 @@ describe.skipIf(!ENABLED)("Ctrl+C", () => {
     await waitForSessions(agent, 1);
     await expectTidy(agent);
   }, 120_000);
+});
+
+describe.skipIf(!ENABLED)("Ctrl+C on a three-engine run (M3)", () => {
+  it("one Ctrl+C: browsers AND forwarder sidecars are removed, nothing stays running, exit 130", async () => {
+    const agent = `qa-e2e-ctrlc-3eng-${stamp}`;
+    const run = await runWithSignals(
+      [20_000],
+      [
+        "--engines",
+        "chromium,chrome-headless-shell,lightpanda",
+        "--sessions",
+        "30",
+        "--concurrency",
+        "3",
+        "--scenario",
+        "heavy-page-crawl",
+        "--seed",
+        "7",
+        "--agent",
+        agent,
+      ],
+      "info",
+    );
+    expect(run.code).toBe(130);
+    expect(run.stdout).toContain("not started (interrupted)");
+    const runId = /"runId":"([0-9a-f]+)"/.exec(run.stdout + run.stderr)?.[1];
+    expect(runId).toBeDefined();
+    await waitForSessions(agent, 1);
+    const rows = await sql<{ status: string; reason: string | null; engine: string }>(
+      `SELECT status, reason, engine FROM sessions FINAL WHERE agent_id = '${agent}'`,
+    );
+    expect(rows.filter((r) => r.status === "running")).toEqual([]);
+    for (const r of rows.filter((x) => x.status !== "success")) {
+      // Lightpanda's heavy-page-crawl fails by itself (unsupported_api) before the signal: both are fine.
+      expect(["failed"]).toContain(r.status);
+      expect(["interrupted", "webWorker"].some((x) => r.reason?.includes(x))).toBe(true);
+    }
+    const crashes = await sql(
+      `SELECT kind FROM issues WHERE agent_id = '${agent}' AND kind = 'crash'`,
+    );
+    expect(crashes).toEqual([]);
+    const left = await new Docker().listContainers({
+      all: true,
+      filters: { label: ["fleetscope.session", `fleetscope.run=${runId}`] },
+    });
+    expect(left.map((c) => `${c.Names} ${c.Labels["fleetscope.role"]}`)).toEqual([]);
+  }, 150_000);
 });
 
 describe.skipIf(!ENABLED)("sessions the runner cuts off itself", () => {
@@ -474,7 +523,13 @@ describe.skipIf(!ENABLED)("sessions the runner cuts off itself", () => {
 
 describe.skipIf(!ENABLED)("the collector with a real Chromium", () => {
   const logger = pino({ level: "silent" });
-  const fleet = new DockerFleet(IMAGE, "chromium", logger);
+  // Since M3 the image has no forwarder of its own: the sidecar makes localhost:3100 work in the browser.
+  const fleet = new DockerFleet(IMAGE, "chromium", logger, {
+    forwarder: {
+      image: process.env.FLEET_FORWARDER_IMAGE ?? "fleetscope/forwarder:1",
+      env: ["DEMO_SITE_UPSTREAM=host.docker.internal:3100"],
+    },
+  });
   let container: Awaited<ReturnType<DockerFleet["startBrowser"]>> | undefined;
 
   afterAll(async () => {
@@ -490,7 +545,7 @@ describe.skipIf(!ENABLED)("the collector with a real Chromium", () => {
     prepare?: (page: import("playwright-core").Page) => Promise<void>,
   ): Promise<FleetEvent[]> {
     container ??= await fleet.startBrowser({ sessionId: "qa-e2e-collector" });
-    const browser = await chromium.connect(container.wsEndpoint);
+    const browser = await chromium.connect(container.endpoint);
     const events: FleetEvent[] = [];
     const collector = createCollector({
       apiUrl: "http://127.0.0.1:1",
@@ -594,7 +649,7 @@ describe.skipIf(!ENABLED)("the collector with a real Chromium", () => {
     expect(issues).toHaveLength(2);
   }, 60_000);
 
-  it.fails("QA-M1-03: a missing crypto.subtle on /js-heavy is an unsupported_api issue too", async () => {
+  it("QA-M1-03: a missing crypto.subtle on /js-heavy is an unsupported_api issue too", async () => {
     const events = await record(
       async ({ page }) => {
         await page.goto(`${SITE}/js-heavy`);

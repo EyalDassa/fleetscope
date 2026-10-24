@@ -1,7 +1,13 @@
 import { hostname } from "node:os";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "./config";
-import { defaultAgentId, parseRunArgs, UsageError } from "./options";
+import {
+  defaultAgentId,
+  parseDuration,
+  parseRunArgs,
+  parseTrafficArgs,
+  UsageError,
+} from "./options";
 
 const seed = () => 12345;
 
@@ -57,12 +63,11 @@ describe("parseRunArgs", () => {
     expect(parseRunArgs(["--sessions", "2", "--concurrency", "8"], seed).concurrency).toBe(2);
   });
 
-  it("rejects an engine that is not chromium, with a clear message", () => {
-    expect(() => parseRunArgs(["--engines", "lightpanda"], seed)).toThrow(
-      /not supported by the runner yet/,
-    );
-    expect(() => parseRunArgs(["--engines", "chromium,lightpanda"], seed)).toThrow(/lightpanda/);
-    expect(() => parseRunArgs(["--engines", "chrome-headless-shell"], seed)).toThrow(UsageError);
+  it("accepts all three engines, once each", () => {
+    expect(
+      parseRunArgs(["--engines", "chromium,chrome-headless-shell,lightpanda,lightpanda"], seed)
+        .engines,
+    ).toEqual(["chromium", "chrome-headless-shell", "lightpanda"]);
   });
 
   it("rejects an unknown engine and hints at chromium for chrome", () => {
@@ -105,7 +110,15 @@ describe("config", () => {
       demoSiteUrl: "http://localhost:3100",
       demoSiteBrowserUrl: "http://localhost:3100",
       demoSiteUpstream: undefined,
-      browserImage: "fleetscope/playwright-chromium:1.64.1",
+      browserImage: "fleetscope/playwright-chromium:1.64.1-2",
+      browserImages: {
+        chromium: "fleetscope/playwright-chromium:1.64.1-2",
+        "chrome-headless-shell":
+          "chromedp/headless-shell:156.0.8078.48@sha256:3da74b0945e4f80f00f0310bcda9f76cee283539ebd200a053a7bebf3de89423",
+        lightpanda:
+          "lightpanda/browser:1.0.2@sha256:5d1d724c476957d8c2f8393a51fd089477523b0e5aa9c783c48688785d934fb9",
+      },
+      forwarderImage: "fleetscope/forwarder:1-1",
       logLevel: "info",
     });
   });
@@ -125,8 +138,32 @@ describe("config", () => {
       demoSiteBrowserUrl: "http://localhost:3200",
       demoSiteUpstream: "host.docker.internal:3200",
       browserImage: "my/image:1",
+      browserImages: {
+        chromium: "my/image:1",
+        "chrome-headless-shell":
+          "chromedp/headless-shell:156.0.8078.48@sha256:3da74b0945e4f80f00f0310bcda9f76cee283539ebd200a053a7bebf3de89423",
+        lightpanda:
+          "lightpanda/browser:1.0.2@sha256:5d1d724c476957d8c2f8393a51fd089477523b0e5aa9c783c48688785d934fb9",
+      },
+      forwarderImage: "fleetscope/forwarder:1-1",
       logLevel: "info",
     });
+  });
+
+  it("FLEET_BROWSER_IMAGE_<ENGINE> wins over the old FLEET_BROWSER_IMAGE", () => {
+    const config = loadConfig({
+      FLEET_BROWSER_IMAGE: "old/image:1",
+      FLEET_BROWSER_IMAGE_CHROMIUM: "new/image:2",
+      FLEET_BROWSER_IMAGE_LIGHTPANDA: "lp:9",
+      FLEET_BROWSER_IMAGE_CHROME_HEADLESS_SHELL: "hs:8",
+      FLEET_FORWARDER_IMAGE: "fwd:3",
+    });
+    expect(config.browserImages).toEqual({
+      chromium: "new/image:2",
+      "chrome-headless-shell": "hs:8",
+      lightpanda: "lp:9",
+    });
+    expect(config.forwarderImage).toBe("fwd:3");
   });
 
   it("the host-side demo site URL does not change what the browser browses", () => {
@@ -172,4 +209,55 @@ describe("the agent id (dashboards put it into SQL, so the schema allows A-Z a-z
       expect(() => parseRunArgs(["--agent", agent], seed)).toThrow(/1 to 128 characters from A-Z/);
     },
   );
+});
+
+describe("parseTrafficArgs", () => {
+  it("defaults to 3 sessions a minute, 2 at a time, until Ctrl+C", () => {
+    const options = parseTrafficArgs([], seed);
+    expect(options.ratePerMinute).toBe(3);
+    expect(options.concurrency).toBe(2);
+    expect(options.durationMs).toBeUndefined();
+    expect(options.agentId).toMatch(/^traffic@/);
+    expect(options.engines).toEqual(["chromium"]);
+  });
+
+  it("reads rate, concurrency, duration and agent", () => {
+    const options = parseTrafficArgs(
+      [
+        "--engines",
+        "chromium,lightpanda",
+        "--rate",
+        "12",
+        "--concurrency",
+        "5",
+        "--duration",
+        "10m",
+        "--agent",
+        "t@x",
+      ],
+      seed,
+    );
+    expect(options).toMatchObject({
+      ratePerMinute: 12,
+      concurrency: 5,
+      durationMs: 600_000,
+      agentId: "t@x",
+      engines: ["chromium", "lightpanda"],
+    });
+  });
+
+  it("rejects bad values", () => {
+    expect(() => parseTrafficArgs(["--rate", "0"], seed)).toThrow(UsageError);
+    expect(() => parseTrafficArgs(["--duration", "soon"], seed)).toThrow(UsageError);
+    expect(() => parseTrafficArgs(["--sessions", "5"], seed)).toThrow(UsageError);
+  });
+});
+
+describe("parseDuration", () => {
+  it("understands s, m, h and bare seconds", () => {
+    expect(parseDuration("90s")).toBe(90_000);
+    expect(parseDuration("2m")).toBe(120_000);
+    expect(parseDuration("1h")).toBe(3_600_000);
+    expect(parseDuration("45")).toBe(45_000);
+  });
 });

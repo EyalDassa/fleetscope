@@ -26,9 +26,45 @@ export class BlockedError extends CollectedError {
   }
 }
 
-/** "X is not defined" and friends: the page used an API this engine does not provide. */
+/**
+ * Web APIs whose absence shows up as a TypeError instead of "X is not defined" (a guarded
+ * `window.X` is undefined, then `new X()` or `X.method()` throws). A fixed list on purpose: a broad
+ * "is not a function" rule would call every page bug an engine gap.
+ */
+const KNOWN_WEB_APIS =
+  /(?:^|[\s.(])(?:IntersectionObserver|ResizeObserver|MutationObserver|PerformanceObserver|ReportingObserver|Worker|SharedWorker|ServiceWorker|WebSocket|EventSource|BroadcastChannel|OffscreenCanvas|indexedDB|requestIdleCallback|cancelIdleCallback|matchMedia|AudioContext|WebAssembly|RTCPeerConnection|crypto\.subtle|crypto\.randomUUID|navigator\.(?:serviceWorker|clipboard|geolocation|mediaDevices|storage|permissions|locks))(?:\.\w+)*\s+is not (?:a constructor|a function|defined)/;
+/** `crypto.subtle` is undefined (insecure context, or an engine without it): `.digest()` etc. throw. */
+const MISSING_SUBTLE =
+  /Cannot read propert(?:y|ies) of (?:undefined|null) \(reading '(?:digest|encrypt|decrypt|sign|verify|generateKey|importKey|exportKey|deriveKey|deriveBits|wrapKey|unwrapKey)'\)/;
+
+/**
+ * "X is not defined" and friends: the page used an API this engine does not provide. A
+ * ReferenceError always counts; a TypeError only when it names an API from the list above.
+ */
 export function isMissingApiError(error: { name?: string; message?: string }): boolean {
-  return error.name === "ReferenceError" || /\bis not defined\b/.test(error.message ?? "");
+  const message = error.message ?? "";
+  if (error.name === "ReferenceError" || /\bis not defined\b/.test(message)) return true;
+  return KNOWN_WEB_APIS.test(message) || MISSING_SUBTLE.test(message);
+}
+
+/**
+ * The engine refused a Playwright or CDP feature. Playwright words a CDP method the browser does
+ * not implement as "Protocol error (Domain.method): 'Domain.method' wasn't found" (CDP code -32601);
+ * some engines say "not implemented" or "not supported". Needs the "Protocol error" wrapper or the
+ * -32601 code, so a page saying "not supported" is not mistaken for an engine limit.
+ */
+export function isUnsupportedFeatureError(error: { message?: string }): boolean {
+  const message = error.message ?? "";
+  // The JSON-RPC code is specific enough on its own.
+  if (/-32601/.test(message)) return true;
+  // Everything else must come in Playwright's "Protocol error" wrapper, so a page's own
+  // "Method not found" (thrown from eval or an app call) is not taken for an engine limit.
+  return (
+    /Protocol error/i.test(message) &&
+    /wasn't found|was not found|Method not found|UnknownMethod|not implemented|not supported|unsupported|not available/i.test(
+      message,
+    )
+  );
 }
 
 const CLOSED =
@@ -46,6 +82,7 @@ export function classifyError(error: unknown, fallback: ErrorCode = "unknown"): 
   if (CLOSED.test(message)) return "browser_closed";
   if (e.name === "TimeoutError" || /Timeout \d+ms exceeded/i.test(message)) return "timeout";
   if (NAV.test(message)) return "nav_error";
+  if (isUnsupportedFeatureError(e)) return "unsupported_feature";
   if (isMissingApiError(e)) return "unsupported_api";
   return fallback;
 }

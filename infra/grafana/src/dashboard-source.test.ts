@@ -6,7 +6,7 @@ import { checkDashboards } from "./check";
 import type { Fetch } from "./clickhouse-http";
 import { extractQueries } from "./dashboards";
 import type { JsonObject } from "./json";
-import { dashboardJson, readerPanel, statPanel } from "./test-fixtures";
+import { dashboardJson, readerPanel, statPanel, testPassword } from "./test-fixtures";
 
 // R-M2-01: panels that show the result of another panel's query (Grafana's "Dashboard" data source).
 
@@ -136,7 +136,7 @@ function run(panels: JsonObject[], fetchImpl: Fetch) {
   writeFileSync(join(dir, "d.json"), JSON.stringify(dashboardJson({ panels })));
   return checkDashboards({
     dir,
-    connection: { url: "http://ch.test:8123", user: "u", password: "p", database: "d" },
+    connection: { url: "http://ch.test:8123", user: "u", password: testPassword(), database: "d" },
     now: new Date(Date.UTC(2024, 0, 1, 12)),
     fetchImpl,
   });

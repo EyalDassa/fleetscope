@@ -9,20 +9,24 @@ import {
   LOCAL_GRAFANA_USER,
   loadGrafanaUserOptions,
 } from "./grafana-user";
+import { testPassword } from "./testing";
 
+const GRAFANA_PASSWORD = testPassword();
+const OWN_PASSWORD = testPassword();
+const SECRET_PASSWORD = testPassword();
 const env = {
   CLICKHOUSE_URL: "http://localhost:8123",
   CLICKHOUSE_USER: "fleetscope",
   CLICKHOUSE_DATABASE: "fleetscope",
   CLICKHOUSE_GRAFANA_USER: "grafana",
-  CLICKHOUSE_GRAFANA_PASSWORD: "a-long-enough-password",
+  CLICKHOUSE_GRAFANA_PASSWORD: GRAFANA_PASSWORD,
 };
 
 describe("loadGrafanaUserOptions", () => {
   it("reads the user, the password and the database", () => {
     expect(loadGrafanaUserOptions(env)).toEqual({
       user: "grafana",
-      password: "a-long-enough-password",
+      password: GRAFANA_PASSWORD,
       database: "fleetscope",
     });
   });
@@ -54,10 +58,10 @@ describe("loadGrafanaUserOptions", () => {
       loadGrafanaUserOptions({
         ...env,
         CLICKHOUSE_GRAFANA_USER: "bad name",
-        CLICKHOUSE_GRAFANA_PASSWORD: "hunter2hunter2",
+        CLICKHOUSE_GRAFANA_PASSWORD: SECRET_PASSWORD,
       });
     } catch (error) {
-      expect((error as Error).message).not.toContain("hunter2hunter2");
+      expect((error as Error).message).not.toContain(SECRET_PASSWORD);
     }
   });
 });
@@ -95,10 +99,10 @@ describe("the development defaults", () => {
       }),
     ).toMatchObject({ user: "reader", password: "grafana_ro_dev_password" });
     expect(
-      loadGrafanaUserOptions({ ...bare, CLICKHOUSE_GRAFANA_PASSWORD: "my-own-password" }),
+      loadGrafanaUserOptions({ ...bare, CLICKHOUSE_GRAFANA_PASSWORD: OWN_PASSWORD }),
     ).toMatchObject({
       user: "grafana_ro",
-      password: "my-own-password",
+      password: OWN_PASSWORD,
     });
   });
 
@@ -125,7 +129,7 @@ describe("the development defaults", () => {
       loadGrafanaUserOptions({
         ...bare,
         CLICKHOUSE_URL: url,
-        CLICKHOUSE_GRAFANA_PASSWORD: "a-real-password-1",
+        CLICKHOUSE_GRAFANA_PASSWORD: GRAFANA_PASSWORD,
       }),
     ).toThrow(/must be set explicitly/);
   });
@@ -152,9 +156,9 @@ describe("the development defaults", () => {
         ...bare,
         CLICKHOUSE_URL: "https://abc123.clickhouse.cloud:8443",
         CLICKHOUSE_GRAFANA_USER: "grafana_ro",
-        CLICKHOUSE_GRAFANA_PASSWORD: "a-real-password-1",
+        CLICKHOUSE_GRAFANA_PASSWORD: GRAFANA_PASSWORD,
       }),
-    ).toEqual({ user: "grafana_ro", password: "a-real-password-1", database: "fleetscope" });
+    ).toEqual({ user: "grafana_ro", password: GRAFANA_PASSWORD, database: "fleetscope" });
   });
 
   it("isLocalClickHouseUrl is false for nothing at all", () => {
@@ -180,7 +184,7 @@ describe("ensureGrafanaUser", () => {
     } as unknown as ClickHouseClient;
     return { client, calls };
   }
-  const options = { user: "grafana", password: "super-secret-pass", database: "fleetscope" };
+  const options = { user: "grafana", password: SECRET_PASSWORD, database: "fleetscope" };
 
   it("creates, updates and grants, with the password only as a query parameter", async () => {
     const { client, calls } = fakeAdmin();
@@ -191,10 +195,10 @@ describe("ensureGrafanaUser", () => {
       "ALTER USER {user:Identifier}",
       "GRANT SELECT ON",
     ]);
-    for (const call of calls) expect(call.query).not.toContain("super-secret-pass");
+    for (const call of calls) expect(call.query).not.toContain(SECRET_PASSWORD);
     expect(calls[0]?.query_params).toMatchObject({
       user: "grafana",
-      password: "super-secret-pass",
+      password: SECRET_PASSWORD,
     });
     // read-only from the moment it exists, and only the settings the plugin needs are changeable
     for (const call of calls.slice(0, 2)) {
@@ -220,12 +224,12 @@ describe("ensureGrafanaUser", () => {
 
   it("reports a failure without the password, even if the server echoes it", async () => {
     const { client } = fakeAdmin((query) =>
-      query.startsWith("ALTER") ? new Error("Syntax error near 'super-secret-pass'") : undefined,
+      query.startsWith("ALTER") ? new Error(`Syntax error near '${SECRET_PASSWORD}'`) : undefined,
     );
     const failure = await ensureGrafanaUser(client, options).catch((e: unknown) => e);
     expect(failure).toBeInstanceOf(GrafanaUserError);
     expect((failure as Error).message).toContain("***");
-    expect((failure as Error).message).not.toContain("super-secret-pass");
+    expect((failure as Error).message).not.toContain(SECRET_PASSWORD);
     expect((failure as Error).cause).toBeUndefined();
   });
 });

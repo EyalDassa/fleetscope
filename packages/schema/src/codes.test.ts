@@ -1,0 +1,16 @@
+import { describe, expect, it } from "vitest";
+import { ERROR_CODES, ISSUE_FOR_CODE } from "./codes";
+import { ISSUE_KINDS } from "./events";
+
+describe("error codes", () => {
+  it("every code maps to an issue kind or null, and nothing else is mapped", () => {
+    expect(Object.keys(ISSUE_FOR_CODE).sort()).toEqual([...ERROR_CODES].sort());
+    for (const kind of Object.values(ISSUE_FOR_CODE)) {
+      if (kind !== null) expect(ISSUE_KINDS).toContain(kind);
+    }
+  });
+
+  it("every code is a safe label (error_code is put into SQL by the dashboards)", () => {
+    for (const code of ERROR_CODES) expect(code).toMatch(/^[A-Za-z0-9._:@/+-]{1,128}$/);
+  });
+});

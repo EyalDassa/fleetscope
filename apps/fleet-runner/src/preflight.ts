@@ -4,6 +4,8 @@ export interface PreflightTarget {
   apiUrl: string;
   demoSiteUrl: string;
   browserImage: string;
+  /** Further images the run needs: the other engines' browsers and the forwarder sidecar. */
+  otherImages?: readonly { image: string; what: "browser image" | "forwarder image" }[];
   docker: Pick<DockerFleet, "ping" | "hasImage">;
 }
 
@@ -95,18 +97,23 @@ export async function preflight(target: PreflightTarget): Promise<PreflightFailu
         );
         return;
       }
-      try {
-        if (!(await target.docker.hasImage())) {
+      for (const { image, what } of [
+        { image: target.browserImage, what: "browser image" },
+        ...(target.otherImages ?? []),
+      ]) {
+        try {
+          if (!(await target.docker.hasImage(image))) {
+            fail(
+              "image",
+              `${what} ${image} not found locally. Run: pnpm browsers:build (our images) or pnpm browsers:pull (upstream images)`,
+            );
+          }
+        } catch (error) {
           fail(
             "image",
-            `browser image ${target.browserImage} not found locally. Run: pnpm browsers:build`,
+            `could not look up ${what} ${image} (${error instanceof Error ? error.message : String(error)})`,
           );
         }
-      } catch (error) {
-        fail(
-          "image",
-          `could not look up image ${target.browserImage} (${error instanceof Error ? error.message : String(error)})`,
-        );
       }
     })(),
   ]);

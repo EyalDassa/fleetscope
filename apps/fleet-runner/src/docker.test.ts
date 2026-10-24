@@ -91,7 +91,7 @@ describe("DockerFleet.startBrowser", () => {
     expect(hostConfig.IpcMode).not.toBe("host");
     expect(hostConfig.IpcMode).toBeUndefined();
     expect(container.start).toHaveBeenCalled();
-    expect(browser.wsEndpoint).toBe(`ws://127.0.0.1:${port}/`);
+    expect(browser.endpoint).toBe(`ws://127.0.0.1:${port}/`);
     expect(browser.id).toBe("container-1");
     expect(browser.startupMs).toBeGreaterThanOrEqual(0);
     expect(container.remove).not.toHaveBeenCalled();

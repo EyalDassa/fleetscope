@@ -2,7 +2,7 @@
 // Docker, Playwright and the rest, which takes a second or two (the first thing Eyal saw of a run
 // used to be nothing at all).
 const command = process.argv[2];
-if (command === "run" || command === "cleanup") {
+if (command === "run" || command === "traffic" || command === "cleanup") {
   process.stderr.write(`fleet ${command}: starting...\n`);
 }
 

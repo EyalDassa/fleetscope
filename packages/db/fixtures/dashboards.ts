@@ -29,11 +29,12 @@ export const DASHBOARD_DIR = fileURLToPath(
   new URL("../../../infra/grafana/dashboards", import.meta.url),
 );
 
-export type DashboardName = "overview" | "sessions" | "session";
+export type DashboardName = "overview" | "sessions" | "session" | "browsers";
 const FILES: Record<DashboardName, string> = {
   overview: "fleetscope-overview.json",
   sessions: "fleetscope-sessions.json",
   session: "fleetscope-session.json",
+  browsers: "fleetscope-browsers.json",
 };
 
 export const ENGINES = ["chromium", "chrome-headless-shell", "lightpanda"] as const;

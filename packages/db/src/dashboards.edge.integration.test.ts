@@ -17,7 +17,7 @@ import {
 import type { ClickHouseClient } from "./client";
 import { ensureGrafanaUser } from "./grafana-user";
 import { insertEvents } from "./insert";
-import { createTestDatabase, type TestDatabase } from "./testing";
+import { createTestDatabase, type TestDatabase, testPassword } from "./testing";
 
 /**
  * QA M2, edge data: the dashboards' SQL on an empty database, one session, only simulated data, an
@@ -36,7 +36,7 @@ interface Harness {
 async function harness(): Promise<Harness> {
   const db = await createTestDatabase();
   const user = `fleetscope_qa_${randomBytes(4).toString("hex")}`;
-  const password = "qa-dashboard-password";
+  const password = testPassword();
   await ensureGrafanaUser(db.client, { user, password, database: db.config.database });
   return {
     db,

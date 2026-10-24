@@ -1,11 +1,18 @@
 export { ERROR_CODES, type ErrorCode, ISSUE_FOR_CODE } from "./codes";
 export { type Collector, type CollectorOptions, createCollector } from "./collector";
-export { BlockedError, CollectedError, classifyError } from "./errors";
+export {
+  BlockedError,
+  CollectedError,
+  classifyError,
+  isMissingApiError,
+  isUnsupportedFeatureError,
+} from "./errors";
 export {
   type ActionOptions,
   CAPTCHA_SELECTOR,
   CollectedPage,
   type GotoOptions,
+  type TextCheck,
 } from "./page";
 export type { QueueStats } from "./queue";
 export {

@@ -4,17 +4,15 @@
 // as the admin user, a dashboard query that the read-only user refuses (a SETTINGS clause, a table
 // it has no GRANT for) would pass on a laptop and fail in CI (QA-M2-03). So:
 //   - default: CLICKHOUSE_GRAFANA_USER / CLICKHOUSE_GRAFANA_PASSWORD. For a ClickHouse on this
-//     machine a missing value falls back to the development defaults, the same ones as
-//     infra/docker-compose.yml, .env.example and `pnpm db:grafana-user` (packages/db);
+//     machine a missing value falls back to the development defaults in dev-defaults.ts (the same
+//     ones as infra/docker-compose.yml, .env.example and `pnpm db:grafana-user` in packages/db);
 //   - any other ClickHouse: both must be set, because a default that is public in this repository
 //     must never be tried on a real server;
 //   - --admin (explicit): CLICKHOUSE_USER / CLICKHOUSE_PASSWORD, for when the read-only user does
 //     not exist yet. The output says so.
 import type { ClickHouseConnection } from "./clickhouse-http";
+import { LOCAL_GRAFANA_PASSWORD, LOCAL_GRAFANA_USER } from "./dev-defaults";
 import { isLoopbackHost } from "./hosts";
-
-export const LOCAL_GRAFANA_USER = "grafana_ro";
-export const LOCAL_GRAFANA_PASSWORD = "grafana_ro_dev_password";
 
 export class ConnectionConfigError extends Error {
   override name = "ConnectionConfigError";

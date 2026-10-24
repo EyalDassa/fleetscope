@@ -437,6 +437,7 @@ WITH
         FROM sessions FINAL
         WHERE engine IN (${engine:singlequote})
           AND source IN (${source:singlequote})
+          AND started_at >= $__fromTime - INTERVAL 1 DAY
           AND started_at <= $__toTime
           AND (ended_at IS NULL OR ended_at >= $__fromTime)
     ),
@@ -446,6 +447,8 @@ WITH
         FROM issues
         WHERE session_id IN (SELECT session_id FROM picked)
           AND ts >= (SELECT min(started_at) FROM picked)
+          AND engine IN (${engine:singlequote})
+          AND source IN (${source:singlequote})
         GROUP BY session_id
     ),
     action_facts AS
@@ -458,6 +461,8 @@ WITH
         FROM actions
         WHERE session_id IN (SELECT session_id FROM picked)
           AND ts >= (SELECT min(started_at) FROM picked)
+          AND engine IN (${engine:singlequote})
+          AND source IN (${source:singlequote})
         GROUP BY session_id
     )
 SELECT
@@ -499,11 +504,18 @@ LEFT JOIN action_facts AS a ON a.session_id = p.session_id
 LEFT JOIN pricing_current AS price ON price.engine = p.engine AND price.provider = p.provider
 ```
 
-**M3 note: an old `running` session turns off partition pruning.** `picked` has no lower bound on
-`started_at`, so one session that stays `running` from days ago (a zombie, a killed runner) pulls
-`min(started_at)` back, and the `issues` and `actions` lookups then read from that day on, in every
-panel. That is fine with dozens of sessions (M2). Revisit it in M3, with the simulator's 500+
-sessions: cap the lookback, or keep per-session facts in a table filled at ingest.
+**Bounds that keep the lookups cheap (M3).**
+
+- `picked` only looks back **one day** from the start of the range
+  (`started_at >= $__fromTime - INTERVAL 1 DAY`). Without that bound, one session that stays
+  `running` from days ago (a zombie, a killed runner) pulled `min(started_at)` back, and the `issues`
+  and `actions` lookups then read every partition from that day on, in every panel (R-M2-18). The
+  price: **a session that started more than a day before the range and is still running or ended
+  inside it is out of scope** (no row, not counted anywhere). Sessions are minutes long; a day-long
+  session is a zombie, and "zombie sessions" is a different insight.
+- The `engine` and `source` filters are repeated in `issue_facts` and `action_facts`. `picked` already
+  filters, but ClickHouse cannot carry that through `session_id IN (...)`; `engine` is the first
+  column of the primary key of `issues` and `actions`, so the filter prunes granules.
 
 (An unmatched `LEFT JOIN` row gets `0` and `''`, not NULL, since the Grafana user cannot set
 `join_use_nulls`; the expressions above rely on that. `ts >= (SELECT min(started_at) FROM picked)` does
@@ -663,11 +675,142 @@ FROM facts
 WHERE $__timeFilter(started_at)
 ```
 
+#### The engine comparison (M3)
+
+One row per engine for the sessions that **ended** in the range, **interrupted sessions left out** of
+every number (they did not finish, so they are neither a success nor a failure, and their time to
+browser or memory would be cut short). The latency is the exception, see below. Engines with no
+ended session in the range have no row.
+
+| Column | Meaning |
+|---|---|
+| `sessions` | ended, not interrupted |
+| `success_rate` | 0 to 100, `status = 'success'` over `sessions` (a degraded session is a success, as everywhere) |
+| `time_to_browser_p50_ms`, `_p95_ms` | `startup_ms + connect_ms`: from "no container" to "a browser I can drive". The two parts mean different things per engine (Chromium launches its browser inside `connect_ms`), so only the sum compares |
+| `peak_mem_mib_p50` | per session the **maximum** of its container samples (MiB), then the **median across sessions**. NULL when no session of the engine has a container sample. Sessions with no sample are left out of the median, not counted as 0 |
+| `action_p95_ms` | p95 of all actions of the engine in the range, merged from `fleet_minute` (never an average of per-minute p95s). NULL with no actions. It is the one number that is not per ended session: the rollup counts actions when they arrive, so it includes the actions of interrupted sessions. **It also includes failed actions.** A failure can be instant (Lightpanda answers an unsupported CDP method with -32601 in a few ms) and a failed session stops before its heavy steps, so an engine that fails a lot can show a *better* p95 than its real page speed. Read it next to `success_rate`, never alone. (A p95 over `ok` actions only needs a rollup column: M4) |
+| `cost_per_1k_sessions_usd` | estimated cost of the sessions above (browser-hours x price, as in `session-facts`) divided by `sessions`, times 1000. **NULL when any of them has no price**, never a partial sum. It differs from the cost panels, which attribute by `started_at` and include interrupted and running sessions |
+| `sim_share` | 0 to 100: the percentage of the `sessions` above that have `source = 'sim'`. 0 when the source filter is `real`. A dashboard shows it next to the numbers so that a mixed selection is never read as real |
+| `js_heap_available` | 1 when at least one session of the engine has a non-null `cdp` heap sample, else 0 (Lightpanda has no `Performance.getMetrics`). "0" means "the engine cannot say", never "0 MiB" |
+
+`LEFT JOIN` gives an unmatched row `0`, not NULL (`join_use_nulls = 0`), so every joined value is
+read through a count (`container_samples`, `heap_samples`, `actions`) that says whether it exists.
+
+```sql name=engine-comparison
+WITH
+    facts AS (/* session-facts */),
+    done AS
+    (
+        SELECT *
+        FROM facts
+        WHERE ended_at IS NOT NULL AND $__timeFilter(ended_at) AND NOT is_interrupted
+    ),
+    samples AS
+    (
+        SELECT
+            session_id,
+            maxIf(mem_mb, origin = 'container') AS peak_mib,
+            countIf(origin = 'container' AND mem_mb IS NOT NULL) AS container_samples,
+            countIf(origin = 'cdp' AND js_heap_mb IS NOT NULL) AS heap_samples
+        FROM resource_samples
+        WHERE session_id IN (SELECT session_id FROM done)
+          AND ts >= $__fromTime - INTERVAL 1 DAY
+          AND engine IN (${engine:singlequote})
+          AND source IN (${source:singlequote})
+        GROUP BY session_id
+    ),
+    per_engine AS
+    (
+        SELECT
+            d.engine AS engine,
+            count() AS sessions,
+            100 * countIf(d.status = 'success') / count() AS success_rate,
+            quantile(0.5)(d.time_to_browser_ms) AS time_to_browser_p50_ms,
+            quantile(0.95)(d.time_to_browser_ms) AS time_to_browser_p95_ms,
+            if(countIf(s.container_samples > 0) = 0, NULL,
+                quantileIf(0.5)(s.peak_mib, s.container_samples > 0)) AS peak_mem_mib_p50,
+            if(countIf(d.est_cost_usd IS NULL) > 0, NULL, 1000 * sum(d.est_cost_usd) / count()) AS cost_per_1k_sessions_usd,
+            countIf(s.heap_samples > 0) > 0 AS js_heap_available,
+            100 * countIf(d.source = 'sim') / count() AS sim_share
+        FROM done AS d
+        LEFT JOIN samples AS s ON s.session_id = d.session_id
+        GROUP BY engine
+    ),
+    latency AS
+    (
+        SELECT
+            engine,
+            countMerge(actions) AS action_count,
+            quantilesMerge(0.5, 0.95)(action_ms)[2] AS p95_ms
+        FROM fleet_minute
+        WHERE minute >= toStartOfMinute($__fromTime) AND minute <= $__toTime
+          AND engine IN (${engine:singlequote})
+          AND source IN (${source:singlequote})
+        GROUP BY engine
+    )
+SELECT
+    p.engine AS engine,
+    p.sessions AS sessions,
+    p.success_rate AS success_rate,
+    p.time_to_browser_p50_ms AS time_to_browser_p50_ms,
+    p.time_to_browser_p95_ms AS time_to_browser_p95_ms,
+    p.peak_mem_mib_p50 AS peak_mem_mib_p50,
+    if(l.action_count = 0, NULL, l.p95_ms) AS action_p95_ms,
+    p.cost_per_1k_sessions_usd AS cost_per_1k_sessions_usd,
+    p.js_heap_available AS js_heap_available,
+    p.sim_share AS sim_share
+FROM per_engine AS p
+LEFT JOIN latency AS l ON l.engine = p.engine
+ORDER BY engine
+```
+
+The compatibility matrix: one row per scenario and engine, same sessions as above (ended, not
+interrupted). `top_cause` is the most frequent failure cause of the cell, a tie broken by the cause
+name (as in `top-cause-per-engine`), NULL when the cell has no failure. `sim_share` (0 to 100) is the
+percentage of the cell's sessions that are `source = 'sim'`, as in `engine-comparison`.
+
+```sql name=compatibility-matrix
+WITH
+    facts AS (/* session-facts */),
+    done AS
+    (
+        SELECT *
+        FROM facts
+        WHERE ended_at IS NOT NULL AND $__timeFilter(ended_at) AND NOT is_interrupted
+    ),
+    causes AS
+    (
+        SELECT scenario, engine, argMin(cause, (-toInt64(n), cause)) AS top_cause
+        FROM
+        (
+            SELECT scenario, engine, cause, count() AS n
+            FROM done
+            WHERE cause IS NOT NULL
+            GROUP BY scenario, engine, cause
+        )
+        GROUP BY scenario, engine
+    )
+SELECT
+    d.scenario AS scenario,
+    d.engine AS engine,
+    count() AS sessions,
+    100 * countIf(d.status = 'success') / count() AS success_rate,
+    nullIf(any(c.top_cause), '') AS top_cause,
+    100 * countIf(d.source = 'sim') / count() AS sim_share
+FROM done AS d
+LEFT JOIN causes AS c ON c.scenario = d.scenario AND c.engine = d.engine
+GROUP BY scenario, engine
+ORDER BY scenario, engine
+```
+
 #### How the dashboards relate to these snippets
 
 - The `session-facts` block is embedded unchanged in every panel that needs it. The one allowed
-  change is on Session detail, where `picked`'s `WHERE` is replaced by the session id. A test
-  compares the embedded copies with the block above.
+  difference is on Session detail, which has no `engine` or `source` variable (it shows one session,
+  whatever its engine or source): there `picked`'s `WHERE` is replaced by the session id, and the
+  two lines `AND engine IN (${engine:singlequote})` and `AND source IN (${source:singlequote})` are
+  left out of `issue_facts` and `action_facts`. Nothing else may differ. A test compares the
+  embedded copies with the block above.
 - The panels add **presentation** to the snippets and nothing else: a short session id,
   `cause: reason` as one text, `from_ms` / `to_ms` for the links, thresholds and the verdict word.
   The filters, windows and order are the ones above.

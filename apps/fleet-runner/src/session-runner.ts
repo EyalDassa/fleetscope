@@ -1,8 +1,12 @@
 import { randomUUID } from "node:crypto";
-import type { CollectedSession, Collector } from "@fleetscope/collector";
+import {
+  type CollectedSession,
+  type Collector,
+  isUnsupportedFeatureError,
+} from "@fleetscope/collector";
 import type { Engine, SessionStatus } from "@fleetscope/schema";
 import type { Logger } from "pino";
-import { type Browser, chromium } from "playwright-core";
+import { type Browser, chromium, type Page } from "playwright-core";
 import type { RunnerConfig } from "./config";
 import type { BrowserContainer, DockerFleet } from "./docker";
 import { classifyOutcome } from "./outcome";
@@ -56,6 +60,8 @@ export interface SessionResult {
   /** The session's own duration (what `session.ended` carries). 0 if it was never reported. */
   durationMs: number;
   startupMs: number | null;
+  /** Playwright connect time. With `startupMs` it is the time until the browser is usable. */
+  connectMs: number | null;
   actions: number;
   failedActions: number;
   /** Highest container memory reading, `null` if there was none. */
@@ -65,6 +71,42 @@ export interface SessionResult {
 const VIEWPORT = { width: 1280, height: 720 };
 const CONNECT_TIMEOUT_MS = 60_000;
 const CLOSE_TIMEOUT_MS = 5000;
+
+/** Playwright's own server takes `connect`; every other engine speaks plain CDP. */
+function connectBrowser(container: BrowserContainer): Promise<Browser> {
+  const options = { timeout: CONNECT_TIMEOUT_MS };
+  return container.connectMode === "playwright-server"
+    ? chromium.connect(container.endpoint, options)
+    : chromium.connectOverCDP(container.endpoint, options);
+}
+
+/** A CDP refusal that is about viewport/device emulation (not any other unsupported method). */
+function isViewportRefusal(error: unknown): boolean {
+  return (
+    isUnsupportedFeatureError(error as Error) &&
+    /Emulation\.|setDeviceMetricsOverride|viewport/i.test((error as Error).message)
+  );
+}
+
+/**
+ * A fresh context and one page. Always `newContext()`, never `contexts()[0]`: Lightpanda allows one
+ * context and one page per CDP connection, and a fresh context is what the other engines get too.
+ * Viewport emulation is a CDP call an engine may refuse (it fails when the page is created). Only
+ * then the first context is closed (one context per connection!) and the page is opened with the
+ * engine's default viewport, with the real error logged. Any other failure is thrown as it is.
+ * (Lightpanda 1.0.2 has never refused it in our runs, so this path is a guard.)
+ */
+export async function openPage(browser: Browser, log: Logger): Promise<Page> {
+  const context = await browser.newContext({ viewport: VIEWPORT });
+  try {
+    return await context.newPage();
+  } catch (error) {
+    if (!isViewportRefusal(error)) throw error;
+    log.warn({ err: error }, "engine refused viewport emulation, using its default viewport");
+    await context.close().catch(() => undefined);
+    return await (await browser.newContext({ viewport: null })).newPage();
+  }
+}
 
 /** Runs `promise`, but gives up waiting after `ms`. Never rejects. */
 async function bounded(promise: Promise<unknown> | undefined, ms: number): Promise<void> {
@@ -101,6 +143,7 @@ export async function runSession(deps: SessionDeps, spec: SessionSpec): Promise<
     reason: null,
     durationMs: 0,
     startupMs: null,
+    connectMs: null,
     actions: 0,
     failedActions: 0,
     peakMemMb: null,
@@ -123,8 +166,9 @@ export async function runSession(deps: SessionDeps, spec: SessionSpec): Promise<
     container = await deps.fleet.startBrowser({ sessionId, signal: deps.signal });
     result.startupMs = Math.round(container.startupMs);
     const connectStart = performance.now();
-    browser = await chromium.connect(container.wsEndpoint, { timeout: CONNECT_TIMEOUT_MS });
+    browser = await connectBrowser(container);
     connectMs = performance.now() - connectStart;
+    result.connectMs = Math.round(connectMs);
     if (deps.signal.aborted) throw new Error("interrupted before the session started");
   } catch (error) {
     result.reason = error instanceof Error ? error.message : String(error);
@@ -149,7 +193,8 @@ export async function runSession(deps: SessionDeps, spec: SessionSpec): Promise<
     sessionId,
     scenario: spec.scenario,
     region: "local",
-    engineVersion: browser.version(),
+    // Lightpanda answers CDP's Browser.getVersion as a Chrome; its own number is in /json/version.
+    engineVersion: container.engineVersion ?? browser.version(),
     startupMs: container.startupMs,
     connectMs,
   });
@@ -173,8 +218,7 @@ export async function runSession(deps: SessionDeps, spec: SessionSpec): Promise<
 
   let error: unknown;
   try {
-    const context = await browser.newContext({ viewport: VIEWPORT });
-    const page = await started.collectPage(await context.newPage());
+    const page = await started.collectPage(await openPage(browser, log));
     await SCENARIOS[spec.scenario](page, {
       baseUrl: deps.config.demoSiteBrowserUrl,
       rng: createRng(spec.seed),
@@ -184,13 +228,22 @@ export async function runSession(deps: SessionDeps, spec: SessionSpec): Promise<
     error = caught ?? new Error("scenario failed");
   }
 
-  const outcome = classifyOutcome({
+  let outcome = classifyOutcome({
     error,
     interrupted: deps.signal.aborted,
     timedOut,
     sessionTimeoutMs: deps.sessionTimeoutMs,
     disconnected,
   });
+
+  // A forwarder that died mid-session makes the demo site unreachable: that is our infrastructure,
+  // not the engine, so say so instead of leaving a bare nav_error.
+  if (outcome.status !== "success" && !deps.signal.aborted && (await container.forwarderExited())) {
+    outcome = {
+      status: "failed",
+      reason: `infra: forwarder sidecar exited (${outcome.reason ?? outcome.status})`,
+    };
+  }
 
   clearTimeout(deadline);
   deps.signal.removeEventListener("abort", onAbort);

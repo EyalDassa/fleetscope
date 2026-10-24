@@ -16,7 +16,7 @@ import { knownFleet, R5_ID, spec } from "../fixtures/known-fleet";
 import type { ClickHouseClient } from "./client";
 import { ensureGrafanaUser } from "./grafana-user";
 import { insertEvents } from "./insert";
-import { createTestDatabase, type TestDatabase } from "./testing";
+import { createTestDatabase, type TestDatabase, testPassword } from "./testing";
 
 /**
  * QA M2: the numbers the dashboards show, checked against a known fleet worked out by hand.
@@ -56,7 +56,7 @@ let db: TestDatabase;
 let admin: ClickHouseClient;
 let dash: DashboardRunner;
 const user = `fleetscope_qa_${randomBytes(4).toString("hex")}`;
-const password = "qa-dashboard-password";
+const password = testPassword();
 
 const T0 = Math.floor((Date.now() - 120 * MIN) / (5 * MIN)) * (5 * MIN);
 const m = (minutes: number) => T0 + minutes * MIN;

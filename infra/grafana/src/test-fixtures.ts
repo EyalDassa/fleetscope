@@ -1,5 +1,16 @@
 // Builders for dashboard JSON used by the tests. Not shipped, not a test itself.
+import { randomBytes } from "node:crypto";
 import type { JsonObject } from "./json";
+
+/**
+ * A fresh random password for a test. Tests never write a password as a literal (secret scanners
+ * flag those, and a literal that looks like a real one trains people to ignore the alerts). Call it
+ * once per test file or per test and compare against the returned value. The local development
+ * defaults live in dev-defaults.ts instead.
+ */
+export function testPassword(): string {
+  return randomBytes(12).toString("base64url");
+}
 
 export const CH = { type: "grafana-clickhouse-datasource", uid: "fleetscope-clickhouse" };
 

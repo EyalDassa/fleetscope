@@ -3,9 +3,6 @@ import { parseArgs } from "node:util";
 import { ENGINES, type Engine, SAFE_LABEL_PATTERN } from "@fleetscope/schema";
 import { SCENARIO_NAMES, type ScenarioName } from "./scenarios";
 
-/** Engines the runner can drive today. M3 adds the other two. */
-export const SUPPORTED_ENGINES = ["chromium"] as const satisfies readonly Engine[];
-
 export interface RunOptions {
   engines: Engine[];
   sessions: number;
@@ -27,10 +24,11 @@ export class UsageError extends Error {
 
 export const USAGE = `Usage:
   pnpm fleet run [options]     run sessions in Docker browser containers and report them
+  pnpm fleet traffic [options] keep running sessions at a steady rate until Ctrl+C (or --duration)
   pnpm fleet cleanup           remove leftover containers labelled fleetscope.session
 
 Options for "run":
-  --engines <list>          comma-separated, default chromium (only chromium for now)
+  --engines <list>          comma-separated: chromium, chrome-headless-shell, lightpanda; default chromium
   --sessions <n>            number of sessions, default 10
   --concurrency <n>         containers alive at the same time, default 4
   --scenario <name>         ${[...SCENARIO_NAMES, "mix"].join(" | ")}, default mix
@@ -38,7 +36,14 @@ Options for "run":
   --agent <id>              agent_id on every event, default fleet-runner@<hostname>
   --session-timeout <sec>   cut off a session that runs longer, default 120
 
-Environment: FLEETSCOPE_API_URL, DEMO_SITE_URL, FLEET_BROWSER_IMAGE, DOCKER_HOST, LOG_LEVEL`;
+Options for "traffic" (also --engines, --agent, --scenario, --seed, --session-timeout):
+  --rate <n>                sessions per minute, default 3
+  --concurrency <n>         containers alive at the same time, default 2
+  --duration <time>         stop after this long, e.g. 90s, 10m, 2h (default: until Ctrl+C)
+  --agent <id>              default traffic@<hostname>
+
+Environment: FLEETSCOPE_API_URL, DEMO_SITE_URL, FLEET_BROWSER_IMAGE_<ENGINE> (CHROMIUM,
+CHROME_HEADLESS_SHELL, LIGHTPANDA), FLEET_FORWARDER_IMAGE, DOCKER_HOST, LOG_LEVEL`;
 
 /**
  * `fleet-runner@<host name>`, with every character the schema does not allow in an agent id replaced
@@ -68,11 +73,6 @@ function parseEngines(raw: string | undefined): Engine[] {
     if (!(ENGINES as readonly string[]).includes(name)) {
       const hint = name === "chrome" ? ' (did you mean "chromium"?)' : "";
       throw new UsageError(`unknown engine "${name}"${hint}. Known engines: ${ENGINES.join(", ")}`);
-    }
-    if (!(SUPPORTED_ENGINES as readonly string[]).includes(name)) {
-      throw new UsageError(
-        `engine "${name}" is not supported by the runner yet (only ${SUPPORTED_ENGINES.join(", ")}; the other engines arrive in M3)`,
-      );
     }
     if (!engines.includes(name as Engine)) engines.push(name as Engine);
   }
@@ -129,5 +129,77 @@ export function parseRunArgs(
     seed: values.seed === undefined ? randomSeed() : Number(values.seed),
     agentId,
     sessionTimeoutMs: positiveInt("session-timeout", values["session-timeout"], 120, 3600) * 1000,
+  };
+}
+
+export interface TrafficOptions extends RunOptions {
+  /** Sessions started per minute. */
+  ratePerMinute: number;
+  /** Stop after this many ms; `undefined` runs until Ctrl+C. */
+  durationMs: number | undefined;
+}
+
+/** `90s`, `10m`, `2h` (a bare number is seconds). */
+export function parseDuration(raw: string): number {
+  const match = /^(\d+)(s|m|h)?$/.exec(raw.trim());
+  if (!match || Number(match[1]) < 1) {
+    throw new UsageError(`--duration must look like 90s, 10m or 2h, got "${raw}"`);
+  }
+  const unit = { s: 1000, m: 60_000, h: 3_600_000 }[(match[2] ?? "s") as "s" | "m" | "h"];
+  return Number(match[1]) * unit;
+}
+
+export function defaultTrafficAgentId(host: string = hostname()): string {
+  return `traffic@${host.replace(/[^A-Za-z0-9._:@/+-]/g, "_")}`.slice(0, 128);
+}
+
+/** Parses the arguments after `traffic`. */
+export function parseTrafficArgs(
+  argv: readonly string[],
+  randomSeed: () => number = () => Math.floor(Math.random() * 2 ** 31),
+): TrafficOptions {
+  let values: Record<string, string | undefined>;
+  try {
+    ({ values } = parseArgs({
+      args: [...argv],
+      options: {
+        engines: { type: "string" },
+        rate: { type: "string" },
+        concurrency: { type: "string" },
+        duration: { type: "string" },
+        scenario: { type: "string" },
+        seed: { type: "string" },
+        agent: { type: "string" },
+        "session-timeout": { type: "string" },
+      },
+      strict: true,
+      allowPositionals: false,
+    }));
+  } catch (error) {
+    throw new UsageError(error instanceof Error ? error.message : String(error));
+  }
+  // Same checks as `run` for everything they share; sessions is a placeholder, traffic has no count.
+  const shared = parseRunArgs(
+    [
+      ...(values.engines !== undefined ? ["--engines", values.engines] : []),
+      ...(values.concurrency !== undefined ? ["--concurrency", values.concurrency] : []),
+      ...(values.scenario !== undefined ? ["--scenario", values.scenario] : []),
+      ...(values.seed !== undefined ? ["--seed", values.seed] : []),
+      ...(values["session-timeout"] !== undefined
+        ? ["--session-timeout", values["session-timeout"]]
+        : []),
+      "--agent",
+      values.agent?.trim() || defaultTrafficAgentId(),
+      "--sessions",
+      "64",
+    ],
+    randomSeed,
+  );
+  return {
+    ...shared,
+    concurrency: values.concurrency === undefined ? 2 : shared.concurrency,
+    sessions: Number.MAX_SAFE_INTEGER,
+    ratePerMinute: positiveInt("rate", values.rate, 3, 600),
+    durationMs: values.duration === undefined ? undefined : parseDuration(values.duration),
   };
 }

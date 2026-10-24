@@ -7,12 +7,15 @@
 // with engine compatibility. Flags that fake a secure origin are Chromium-only, a loopback
 // forwarder works for every engine.
 //
-// Usage: node forward-port.mjs [<upstream-host>:<port>]   (default host.docker.internal:3100)
-// It listens on 127.0.0.1:<port> and [::1]:<port> inside the container, with the same port as the
-// upstream. If it cannot listen on 127.0.0.1 it exits non-zero, so the entrypoint stops the container.
+// Usage: node forward-port.mjs [<upstream-host>:<port>]
+// The upstream is the argument, else $DEMO_SITE_UPSTREAM, else host.docker.internal:3100.
+// It listens on 127.0.0.1:<port> and [::1]:<port> in its network namespace, with the same port as the
+// upstream. It runs in the sidecar image (infra/browsers/forwarder), which shares the browser
+// container's network namespace. If it cannot listen on 127.0.0.1, or the upstream is not
+// <host>:<port>, it exits non-zero: the runner treats a dead sidecar as a failed session.
 import net from "node:net";
 
-const upstream = process.argv[2] ?? "host.docker.internal:3100";
+const upstream = process.argv[2] ?? process.env.DEMO_SITE_UPSTREAM ?? "host.docker.internal:3100";
 const split = upstream.lastIndexOf(":");
 const upstreamHost = upstream.slice(0, split);
 const port = Number(upstream.slice(split + 1));
@@ -59,3 +62,8 @@ function listen(host, required) {
 
 listen("127.0.0.1", true);
 listen("::1", false);
+
+// PID 1 in a container ignores SIGTERM unless it handles it; without this `docker stop` waits 10 s.
+for (const signal of ["SIGTERM", "SIGINT"]) {
+  process.on(signal, () => process.exit(0));
+}

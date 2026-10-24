@@ -50,6 +50,14 @@ export interface PageConfig {
 
 export const CAPTCHA_SELECTOR = '[data-testid="captcha"]';
 
+/**
+ * Looks at extracted text. Returns `null` when it is fine. Otherwise the action fails with the given
+ * error code (`unsupported_api` raises that issue, `timeout` the timeout one) and message.
+ */
+export type TextCheck = (
+  text: string,
+) => { code: "unsupported_api" | "timeout" | "js_error"; message: string } | null;
+
 export interface ActionOptions {
   timeoutMs?: number;
 }
@@ -168,16 +176,23 @@ export class CollectedPage {
   /** Number of elements matching the selector. Zero is a valid answer, not an error. */
   extract(selector: string, options: { as: "count" }): Promise<number>;
   /** Text of the first element matching the selector. Fails with `selector_not_found` if none. */
-  extract(selector: string, options?: { as?: "text"; timeoutMs?: number }): Promise<string>;
   extract(
     selector: string,
-    options: { as?: "text" | "count"; timeoutMs?: number } = {},
+    options?: { as?: "text"; timeoutMs?: number; check?: TextCheck },
+  ): Promise<string>;
+  extract(
+    selector: string,
+    options: { as?: "text" | "count"; timeoutMs?: number; check?: TextCheck } = {},
   ): Promise<string | number> {
     const timeout = options.timeoutMs ?? this.config.actionTimeoutMs;
     return this.run({ type: "extract", target: selector, selector }, async () => {
       const locator = this.raw.locator(selector);
       if (options.as === "count") return locator.count();
-      return (await locator.first().textContent({ timeout })) ?? "";
+      const text = (await locator.first().textContent({ timeout })) ?? "";
+      // The page itself reports which of its features the engine lacks (the demo site's /js-heavy).
+      const problem = options.check?.(text);
+      if (problem) throw new CollectedError(problem.code, problem.message);
+      return text;
     });
   }
 

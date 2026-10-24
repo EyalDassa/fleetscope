@@ -121,6 +121,60 @@ describe("sessionFactsProblems", () => {
   });
 });
 
+describe("engine and source lines on Session detail", () => {
+  const ENGINE_LINE = "AND engine IN (${engine:singlequote})";
+  const SOURCE_LINE = "AND source IN (${source:singlequote})";
+  const FILTER = `${ENGINE_LINE}
+          ${SOURCE_LINE}`;
+  const WITH_FILTERS = `WITH
+    picked AS (SELECT * FROM sessions FINAL WHERE started_at <= $__toTime),
+    issue_facts AS
+    (
+        SELECT session_id, count() AS n FROM issues
+        WHERE session_id IN (SELECT session_id FROM picked)
+          ${FILTER}
+        GROUP BY session_id
+    ),
+    action_facts AS
+    (
+        SELECT session_id, count() AS n FROM actions
+        WHERE session_id IN (SELECT session_id FROM picked)
+          ${FILTER}
+        GROUP BY session_id
+    )
+SELECT p.session_id AS session_id FROM picked AS p`;
+  const without = (block: string): string => block.split(FILTER).join("");
+
+  it("allows leaving the two lines out of issue_facts and action_facts, only on Session detail", () => {
+    const copy = wrap(without(WITH_FILTERS));
+    expect(sessionFactsProblems(copy, WITH_FILTERS, "fleetscope-session")).toEqual([]);
+    // keeping them is fine too
+    expect(sessionFactsProblems(wrap(WITH_FILTERS), WITH_FILTERS, "fleetscope-session")).toEqual(
+      [],
+    );
+    // other dashboards must keep them
+    expect(sessionFactsProblems(copy, WITH_FILTERS, "fleetscope-sessions")).toHaveLength(1);
+    expect(sessionFactsProblems(copy, WITH_FILTERS, "fleetscope-overview")).toHaveLength(1);
+  });
+
+  it("does not allow leaving out other lines, only one of the two, or the lines elsewhere", () => {
+    const session = "fleetscope-session";
+    // only the source line removed
+    const onlySource = WITH_FILTERS.split(`
+          ${SOURCE_LINE}`).join("");
+    expect(sessionFactsProblems(wrap(onlySource), WITH_FILTERS, session)).toHaveLength(1);
+    // a different line removed
+    const otherLine = without(WITH_FILTERS).replace("GROUP BY session_id", "");
+    expect(sessionFactsProblems(wrap(otherLine), WITH_FILTERS, session)).toHaveLength(1);
+    // the lines are removed from picked (where the README has them) -> not allowed
+    const inPicked = `${WITH_FILTERS.replace(
+      "WHERE started_at <= $__toTime",
+      `WHERE started_at <= $__toTime ${FILTER}`,
+    )}`;
+    expect(sessionFactsProblems(wrap(without(inPicked)), inPicked, session)).toHaveLength(1);
+  });
+});
+
 describe("describeDifference", () => {
   it("is undefined for equal text and marks the differing part otherwise", () => {
     expect(describeDifference("abc", "abc")).toBeUndefined();

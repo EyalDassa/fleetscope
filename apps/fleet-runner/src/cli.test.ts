@@ -74,7 +74,7 @@ describe("pnpm fleet: usage errors exit with 2 and print the usage", () => {
     [["run", "--sessions", "100001"], "--sessions must be a whole number"],
     [["run", "--concurrency", "0"], "--concurrency must be a whole number from 1 to 64"],
     [["run", "--engines", "chrome"], 'did you mean "chromium"?'],
-    [["run", "--engines", "lightpanda"], "not supported by the runner yet"],
+    [["run", "--engines", "firefox"], "unknown engine"],
     [["run", "--engines", ","], "needs at least one engine"],
     [["run", "--scenario", "nope"], "unknown scenario"],
     [["run", "--seed", "1.5"], "--seed must be a non-negative whole number"],
@@ -117,67 +117,92 @@ describe("pnpm fleet: usage errors exit with 2 and print the usage", () => {
 });
 
 describe("pnpm fleet run: preflight", () => {
-  it("exits 1 before starting anything when Docker cannot be reached, and says so", async () => {
-    const ok = await okServer();
-    const out = await runCli(["run", "--sessions", "2"], {
-      FLEETSCOPE_API_URL: ok,
-      DEMO_SITE_URL: ok,
-      DOCKER_HOST: `tcp://127.0.0.1:${await closedPort()}`,
-    });
-    expect(out.code).toBe(1);
-    expect(out.stderr).toContain("Cannot start the run:");
-    expect(out.stderr).toMatch(/cannot reach Docker \(connect ECONNREFUSED/);
-    expect(out.stderr).toContain("Is Docker Desktop running?");
-    expect(out.stdout).toBe(""); // no run summary: nothing was started
-  });
+  it(
+    "exits 1 before starting anything when Docker cannot be reached, and says so",
+    async () => {
+      const ok = await okServer();
+      const out = await runCli(["run", "--sessions", "2"], {
+        FLEETSCOPE_API_URL: ok,
+        DEMO_SITE_URL: ok,
+        DOCKER_HOST: `tcp://127.0.0.1:${await closedPort()}`,
+      });
+      expect(out.code).toBe(1);
+      expect(out.stderr).toContain("Cannot start the run:");
+      expect(out.stderr).toMatch(/cannot reach Docker \(connect ECONNREFUSED/);
+      expect(out.stderr).toContain("Is Docker Desktop running?");
+      expect(out.stdout).toBe(""); // no run summary: nothing was started
+    },
+    CLI_TEST_TIMEOUT_MS,
+  );
 
-  it("a DOCKER_HOST that is not an address at all is a clean message, not a stack trace", async () => {
-    const ok = await okServer();
-    const out = await runCli(["run", "--sessions", "2"], {
-      FLEETSCOPE_API_URL: ok,
-      DEMO_SITE_URL: ok,
-      DOCKER_HOST: "banana",
-    });
-    expect(out.code).toBe(1);
-    expect(out.stderr).toContain("cannot reach Docker");
-    expect(out.stderr).not.toContain("    at ");
-  });
+  it(
+    "a DOCKER_HOST that is not an address at all is a clean message, not a stack trace",
+    async () => {
+      const ok = await okServer();
+      const out = await runCli(["run", "--sessions", "2"], {
+        FLEETSCOPE_API_URL: ok,
+        DEMO_SITE_URL: ok,
+        DOCKER_HOST: "banana",
+      });
+      expect(out.code).toBe(1);
+      expect(out.stderr).toContain("cannot reach Docker");
+      expect(out.stderr).not.toContain("    at ");
+    },
+    CLI_TEST_TIMEOUT_MS,
+  );
 
-  it.skipIf(!dockerUp)("names a missing browser image and the command that builds it", async () => {
-    const ok = await okServer();
-    const out = await runCli(["run", "--sessions", "2"], {
-      FLEETSCOPE_API_URL: ok,
-      DEMO_SITE_URL: ok,
-      FLEET_BROWSER_IMAGE: "fleetscope/qa-image-that-does-not-exist:0.0.0",
-    });
-    expect(out.code).toBe(1);
-    expect(out.stderr).toContain("browser image fleetscope/qa-image-that-does-not-exist:0.0.0");
-    expect(out.stderr).toContain("pnpm browsers:build");
-    // exactly one problem: API and demo site were fine
-    expect(out.stderr.match(/^ {2}- /gm)).toHaveLength(1);
-  });
+  it.skipIf(!dockerUp)(
+    "names a missing browser image and the command that builds it",
+    async () => {
+      const ok = await okServer();
+      const out = await runCli(["run", "--sessions", "2"], {
+        FLEETSCOPE_API_URL: ok,
+        DEMO_SITE_URL: ok,
+        FLEET_BROWSER_IMAGE_CHROMIUM: "fleetscope/qa-image-that-does-not-exist:0.0.0",
+      });
+      expect(out.code).toBe(1);
+      expect(out.stderr).toContain("browser image fleetscope/qa-image-that-does-not-exist:0.0.0");
+      expect(out.stderr).toContain("pnpm browsers:build");
+      // API and demo site were fine, so every listed problem is a missing image (CI's unit job has
+      // no forwarder image either, so there can be more than one)
+      const problems = out.stderr.split(/\r?\n/).filter((line) => line.startsWith("  - "));
+      expect(problems.length).toBeGreaterThanOrEqual(1);
+      for (const problem of problems) expect(problem).toMatch(/image \S+ not found locally/);
+    },
+    CLI_TEST_TIMEOUT_MS,
+  );
 
   // QA-M1-02 (verified in the re-test), end to end: API, demo site and Docker all down, addressed the way the defaults
   // are (localhost). All three must be listed (it used to be only Docker, see preflight.test.ts).
-  it("QA-M1-02: lists the API, the demo site and Docker when all three are down", async () => {
-    const out = await runCli(["run", "--sessions", "2"], {
-      FLEETSCOPE_API_URL: `http://localhost:${await closedPort()}`,
-      DEMO_SITE_URL: `http://localhost:${await closedPort()}`,
-      DOCKER_HOST: `tcp://127.0.0.1:${await closedPort()}`,
-    });
-    expect(out.code).toBe(1);
-    expect(out.stderr.match(/^ {2}- /gm)).toHaveLength(3);
-    expect(out.stderr).toMatch(/API not healthy at http:\/\/localhost:\d+\/healthz/);
-    expect(out.stderr).toMatch(/demo site not answering at http:\/\/localhost:\d+/);
-  });
+  it(
+    "QA-M1-02: lists the API, the demo site and Docker when all three are down",
+    async () => {
+      const out = await runCli(["run", "--sessions", "2"], {
+        FLEETSCOPE_API_URL: `http://localhost:${await closedPort()}`,
+        DEMO_SITE_URL: `http://localhost:${await closedPort()}`,
+        DOCKER_HOST: `tcp://127.0.0.1:${await closedPort()}`,
+      });
+      expect(out.code).toBe(1);
+      expect(out.stderr.match(/^ {2}- /gm)).toHaveLength(3);
+      expect(out.stderr).toMatch(/API not healthy at http:\/\/localhost:\d+\/healthz/);
+      expect(out.stderr).toMatch(/demo site not answering at http:\/\/localhost:\d+/);
+    },
+    CLI_TEST_TIMEOUT_MS,
+  );
 });
 
 describe("pnpm fleet cleanup", () => {
-  it("says it cannot reach Docker and exits 1", async () => {
-    const out = await runCli(["cleanup"], { DOCKER_HOST: `tcp://127.0.0.1:${await closedPort()}` });
-    expect(out.code).toBe(1);
-    expect(out.stderr).toContain("Cannot reach Docker");
-  });
+  it(
+    "says it cannot reach Docker and exits 1",
+    async () => {
+      const out = await runCli(["cleanup"], {
+        DOCKER_HOST: `tcp://127.0.0.1:${await closedPort()}`,
+      });
+      expect(out.code).toBe(1);
+      expect(out.stderr).toContain("Cannot reach Docker");
+    },
+    CLI_TEST_TIMEOUT_MS,
+  );
 
   // `cleanup` removes EVERY container labelled fleetscope.session, including those of a run someone
   // else has going. So this one only runs on request: FLEET_E2E=1.

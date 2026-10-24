@@ -42,6 +42,7 @@ function result(spec: SessionSpec): SessionResult {
     reason: null,
     durationMs: 10,
     startupMs: 5,
+    connectMs: 3,
     actions: 5,
     failedActions: 0,
     peakMemMb: 100,

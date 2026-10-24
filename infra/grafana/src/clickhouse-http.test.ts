@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { assertReadQuery, ClickHouseQueryError, runQuery } from "./clickhouse-http";
+import { testPassword } from "./test-fixtures";
 
 const connection = {
   url: "http://ch.test:8123",
   user: "grafana_ro",
-  password: "pw",
+  password: testPassword(),
   database: "fleetscope",
 };
 
@@ -51,9 +52,9 @@ describe("runQuery", () => {
     expect(request?.url).toContain("database=fleetscope");
     expect(request?.url).toContain("default_format=JSONCompact");
     expect(request?.headers["X-ClickHouse-User"]).toBe("grafana_ro");
-    expect(request?.headers["X-ClickHouse-Key"]).toBe("pw");
+    expect(request?.headers["X-ClickHouse-Key"]).toBe(connection.password);
     expect(request?.body).toBe("SELECT n FROM t"); // the trailing semicolon is removed
-    expect(request?.url).not.toContain("pw");
+    expect(request?.url).not.toContain(connection.password);
   });
 
   it("turns a ClickHouse error into ClickHouseQueryError with the server's message", async () => {

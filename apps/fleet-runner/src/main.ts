@@ -1,28 +1,30 @@
 import { randomUUID } from "node:crypto";
 import type { CollectedSession } from "@fleetscope/collector";
-import { pino } from "pino";
+import type { Engine } from "@fleetscope/schema";
+import { type Logger, pino } from "pino";
 import { loadConfig, type RunnerConfig } from "./config";
 import { DockerFleet } from "./docker";
 import { createInterruptHandler } from "./interrupt";
-import { parseRunArgs, USAGE, UsageError } from "./options";
+import { parseRunArgs, parseTrafficArgs, type RunOptions, USAGE, UsageError } from "./options";
 import { preflight } from "./preflight";
 import { createCollectors, runFleet } from "./run";
+import type { SessionResult } from "./session-runner";
 import { forceShutdown } from "./shutdown";
 import { formatSummary } from "./summary";
 
 const out = (text: string) => process.stdout.write(text);
 const err = (text: string) => process.stderr.write(text);
 
-/** Environment passed to every browser container. */
-function containerEnv(config: RunnerConfig): string[] {
+/** Environment of the forwarder sidecar. */
+function forwarderEnv(config: RunnerConfig): string[] {
   return config.demoSiteUpstream ? [`DEMO_SITE_UPSTREAM=${config.demoSiteUpstream}`] : [];
 }
 
 /** If the exit-now path itself takes longer than this, give up and exit. */
 const FORCE_EXIT_DEADLINE_MS = 6500;
 
-async function runCommand(args: string[]): Promise<number> {
-  const options = parseRunArgs(args);
+/** Everything `run` and `traffic` share: Docker fleets, collectors, Ctrl+C, preflight. */
+async function prepare(options: RunOptions, label: string) {
   const config = loadConfig();
   const logger = pino({ name: "fleet-runner", level: config.logLevel });
   // Marks this run's containers, so finishing (or Ctrl+C) never touches another run's.
@@ -30,9 +32,21 @@ async function runCommand(args: string[]): Promise<number> {
   const fleets = new Map(
     options.engines.map((engine) => [
       engine,
-      new DockerFleet(config.browserImage, engine, logger, { env: containerEnv(config), runId }),
+      new DockerFleet(config.browserImages[engine], engine, logger, {
+        runId,
+        forwarder: { image: config.forwarderImage, env: forwarderEnv(config) },
+      }),
     ]),
   );
+  if (process.env.FLEET_BROWSER_IMAGE?.trim()) {
+    logger.warn(
+      {
+        chromiumImage: config.browserImages.chromium,
+        setTo: process.env.FLEET_BROWSER_IMAGE.trim(),
+      },
+      "FLEET_BROWSER_IMAGE is the legacy name for the chromium image. If it points at a pre-M3 image (revision 1, with its own forwarder), chromium's memory includes the forwarder: use FLEET_BROWSER_IMAGE_CHROMIUM=fleetscope/playwright-chromium:1.64.1-2",
+    );
+  }
   const anyFleet = fleets.values().next().value as DockerFleet;
   const collectors = createCollectors(config, options, logger);
   const live = new Set<CollectedSession>();
@@ -66,15 +80,23 @@ async function runCommand(args: string[]): Promise<number> {
   process.on("SIGINT", () => handle("SIGINT"));
   process.on("SIGTERM", () => handle("SIGTERM"));
 
-  logger.info("preflight: checking the API, the demo site, Docker and the browser image");
+  logger.info(`${label} preflight: checking the API, the demo site, Docker and the images`);
   const aborted = new Promise<"aborted">((resolve) =>
     interrupt.signal.addEventListener("abort", () => resolve("aborted"), { once: true }),
   );
+  const [first, ...rest] = options.engines;
   const checked = await Promise.race([
     preflight({
       apiUrl: config.apiUrl,
       demoSiteUrl: config.demoSiteUrl,
-      browserImage: config.browserImage,
+      browserImage: config.browserImages[first as Engine],
+      otherImages: [
+        ...rest.map((engine) => ({
+          image: config.browserImages[engine],
+          what: "browser image" as const,
+        })),
+        { image: config.forwarderImage, what: "forwarder image" as const },
+      ],
       docker: anyFleet,
     }),
     aborted,
@@ -88,6 +110,25 @@ async function runCommand(args: string[]): Promise<number> {
     for (const problem of checked) err(`  - ${problem.message}\n`);
     return 1;
   }
+  return { config, logger, runId, fleets, collectors, live, interrupt };
+}
+
+/** Removes what a session did not clean up. Only this run's: another run keeps its containers. */
+async function sweep(
+  fleets: ReadonlyMap<Engine, DockerFleet>,
+  runId: string,
+  logger: Logger,
+): Promise<void> {
+  let leftovers = 0;
+  for (const fleet of fleets.values()) leftovers += await fleet.removeAllOwned({ runId });
+  if (leftovers > 0) logger.warn({ leftovers }, "removed containers a session had not cleaned up");
+}
+
+async function runCommand(args: string[]): Promise<number> {
+  const options = parseRunArgs(args);
+  const ready = await prepare(options, "run");
+  if (typeof ready === "number") return ready;
+  const { config, logger, runId, fleets, collectors, live, interrupt } = ready;
 
   logger.info(
     {
@@ -100,7 +141,8 @@ async function runCommand(args: string[]): Promise<number> {
       agent: options.agentId,
       api: config.apiUrl,
       demoSite: config.demoSiteUrl,
-      image: config.browserImage,
+      images: Object.fromEntries(options.engines.map((e) => [e, config.browserImages[e]])),
+      forwarder: config.forwarderImage,
     },
     `run starting (repeat it with --seed ${options.seed})`,
   );
@@ -115,11 +157,8 @@ async function runCommand(args: string[]): Promise<number> {
     live,
   });
 
-  // Belt and braces: every session removes its own container, this catches anything that slipped.
-  // Only this run's: another `pnpm fleet run` in a second terminal keeps its containers.
-  let leftovers = 0;
-  for (const fleet of fleets.values()) leftovers += await fleet.removeAllOwned({ runId });
-  if (leftovers > 0) logger.warn({ leftovers }, "removed containers a session had not cleaned up");
+  // Belt and braces: every session removes its own containers, this catches anything that slipped.
+  await sweep(fleets, runId, logger);
 
   out(`\n${formatSummary(run.results, run.delivery, run.elapsedMs, run.skipped)}`);
 
@@ -131,19 +170,118 @@ async function runCommand(args: string[]): Promise<number> {
   return infraErrors > 0 || run.delivery.dropped > 0 ? 1 : 0;
 }
 
+/** One line for a finished batch of the traffic loop. */
+export function batchLine(batch: number, results: readonly SessionResult[], ms: number): string {
+  const sessions = [...results]
+    .sort((a, b) => a.index - b.index)
+    .map((r) => `${r.engine}/${r.scenario}=${r.status}`)
+    .join(", ");
+  const first = results.length > 0 ? Math.min(...results.map((r) => r.index)) + 1 : 0;
+  const last = first + results.length - 1;
+  return `batch ${batch}: #${first}-#${last} ${sessions} (${(ms / 1000).toFixed(1)}s)\n`;
+}
+
+/** Waits `ms`, or less if the signal aborts. */
+function pause(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    signal.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      { once: true },
+    );
+  });
+}
+
+/**
+ * `fleet traffic`: keeps real sessions coming at `--rate` per minute, in batches of
+ * min(concurrency, rate) sessions. A batch starts when the previous period is over; if sessions take
+ * longer than the period the next batch starts at once (the rate is then lower than asked, which
+ * the batch duration on each line shows).
+ */
+async function trafficCommand(args: string[]): Promise<number> {
+  const options = parseTrafficArgs(args);
+  const ready = await prepare(options, "traffic");
+  if (typeof ready === "number") return ready;
+  const { config, logger, runId, fleets, collectors, live, interrupt } = ready;
+  const { signal } = interrupt;
+
+  const batchSize = Math.min(options.concurrency, options.ratePerMinute);
+  const periodMs = (batchSize * 60_000) / options.ratePerMinute;
+  const startedAt = Date.now();
+  const stopAt = options.durationMs === undefined ? Infinity : startedAt + options.durationMs;
+  logger.info(
+    {
+      runId,
+      engines: options.engines,
+      ratePerMinute: options.ratePerMinute,
+      concurrency: options.concurrency,
+      batchSize,
+      periodSeconds: Math.round(periodMs / 1000),
+      durationMs: options.durationMs,
+      scenario: options.scenario,
+      seed: options.seed,
+      agent: options.agentId,
+      api: config.apiUrl,
+    },
+    "traffic starting (Ctrl+C stops it)",
+  );
+
+  const results: SessionResult[] = [];
+  let index = 0;
+  let batch = 0;
+  while (!signal.aborted && Date.now() < stopAt) {
+    const batchStart = Date.now();
+    const run = await runFleet({
+      config,
+      options: { ...options, sessions: batchSize, concurrency: batchSize },
+      fleets,
+      collectors,
+      logger,
+      signal,
+      live,
+      firstIndex: index,
+      closeCollectors: false,
+    });
+    index += batchSize;
+    results.push(...run.results);
+    batch++;
+    out(batchLine(batch, run.results, run.elapsedMs));
+
+    const wait = Math.min(periodMs - (Date.now() - batchStart), stopAt - Date.now());
+    if (wait > 0 && !signal.aborted) await pause(wait, signal);
+  }
+
+  await Promise.all([...collectors.values()].map((collector) => collector.close()));
+  await sweep(fleets, runId, logger);
+  const delivery = { pushed: 0, sent: 0, duplicates: 0, dropped: 0, pending: 0 };
+  for (const collector of collectors.values()) {
+    const stats = collector.stats();
+    delivery.pushed += stats.pushed;
+    delivery.sent += stats.sent;
+    delivery.duplicates += stats.duplicates;
+    delivery.dropped += stats.dropped;
+    delivery.pending += stats.pending;
+  }
+  out(`\n${formatSummary(results, delivery, Date.now() - startedAt)}`);
+  if (signal.aborted) return 130;
+  return delivery.dropped > 0 ? 1 : 0;
+}
+
 async function cleanupCommand(): Promise<number> {
   const config = loadConfig();
   const logger = pino({ name: "fleet-runner", level: config.logLevel });
-  const fleet = new DockerFleet(config.browserImage, "chromium", logger, {
-    env: containerEnv(config),
-  });
+  const fleet = new DockerFleet(config.browserImage, "chromium", logger);
   try {
     await fleet.ping();
   } catch (error) {
     err(`Cannot reach Docker: ${error instanceof Error ? error.message : String(error)}\n`);
     return 1;
   }
-  // Every run's containers: this is the "something went wrong, clean it all up" command.
+  // Every run's containers (browsers and sidecars): this is the "something went wrong, clean it all up" command.
   const removed = await fleet.removeAllOwned();
   out(`Removed ${removed} container${removed === 1 ? "" : "s"} labelled fleetscope.session.\n`);
   return 0;
@@ -153,6 +291,7 @@ export async function main(): Promise<number> {
   const [command, ...rest] = process.argv.slice(2);
   try {
     if (command === "run") return await runCommand(rest);
+    if (command === "traffic") return await trafficCommand(rest);
     if (command === "cleanup") return await cleanupCommand();
     if (command === undefined || command === "help" || command === "--help" || command === "-h") {
       out(`${USAGE}\n`);

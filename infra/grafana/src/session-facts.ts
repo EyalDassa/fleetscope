@@ -8,7 +8,10 @@
 //
 // Comments, whitespace and the spacing around ( ) , are ignored; everything else must be equal. The one
 // allowed difference: on the Session dashboard `picked` selects one session, so its WHERE may be a
-// single `session_id = ...${session...}...` condition instead of the README's range filter.
+// single `session_id = ...${session...}...` condition instead of the README's range filter, and it has
+// no engine or source variable, so the two lines `AND engine IN (...)` / `AND source IN (...)` may be
+// left out of `issue_facts` and `action_facts` (and from nowhere else). packages/db/README.md
+// ("How the dashboards relate to these snippets") documents both exceptions.
 import { codeOnly, findClosingParen, skipQuoted, stripComments } from "./sql-text";
 
 const README_BLOCK = /```sql name=session-facts\r?\n([\s\S]*?)\r?\n```/;
@@ -82,6 +85,30 @@ function splitPickedFilter(normalized: string): [string, string, string] | undef
 /** On the Session dashboard `picked` may select the one session the page is about. */
 const ONE_SESSION_FILTER = /^session_id = .*\$\{session(?::\w+)?\}/;
 
+/** The two filter lines that Session detail may leave out (normalised, as they appear in the README). */
+const ENGINE_SOURCE_LINES =
+  "AND engine IN(${engine:singlequote})AND source IN(${source:singlequote})";
+/** The CTEs of the block that those lines may be left out of. */
+const ENGINE_SOURCE_OPTIONAL_IN = ["issue_facts", "action_facts"];
+
+/** The normalised block with the engine/source lines removed from `issue_facts` and `action_facts` only. */
+export function withoutEngineSourceLines(normalized: string): string {
+  let text = normalized;
+  for (const name of ENGINE_SOURCE_OPTIONAL_IN) {
+    const start = new RegExp(String.raw`\b${name} AS\(`, "i").exec(text);
+    if (!start) continue;
+    const open = start.index + start[0].length - 1;
+    const close = findClosingParen(text, open);
+    if (close === -1) continue;
+    const inside = text
+      .slice(open + 1, close)
+      .split(ENGINE_SOURCE_LINES)
+      .join("");
+    text = text.slice(0, open + 1) + inside + text.slice(close);
+  }
+  return text;
+}
+
 /** A short description of the first difference between two normalised texts, or undefined if equal. */
 export function describeDifference(expected: string, actual: string): string | undefined {
   if (expected === actual) return undefined;
@@ -133,6 +160,9 @@ export function sessionFactsProblems(
   for (const body of factsBodies(sql)) {
     let wanted = expected;
     let found = body;
+    // Texts the copy may equal. The README's own text always; on Session detail also the form
+    // without the engine/source lines.
+    let accepted = [expected];
     if (dashboardUid === "fleetscope-session") {
       const wantedParts = splitPickedFilter(expected);
       const foundParts = splitPickedFilter(body);
@@ -140,7 +170,11 @@ export function sessionFactsProblems(
         wanted = `${wantedParts[0]}<picked filter>${wantedParts[2]}`;
         found = `${foundParts[0]}<picked filter>${foundParts[2]}`;
       }
+      const stripped = withoutEngineSourceLines(wanted);
+      accepted = [wanted, stripped];
+      wanted = stripped; // the form Session detail uses is the one a mismatch is explained against
     }
+    if (accepted.includes(found)) continue;
     const difference = describeDifference(wanted, found);
     if (difference) {
       problems.push({

@@ -6,12 +6,12 @@ import { checkDashboards, makeVariableState } from "./check";
 import type { Fetch } from "./clickhouse-http";
 import type { VariableDefinition } from "./dashboards";
 import type { JsonObject } from "./json";
-import { CH, dashboardJson, statPanel } from "./test-fixtures";
+import { CH, dashboardJson, statPanel, testPassword } from "./test-fixtures";
 
 const connection = {
   url: "http://ch.test:8123",
   user: "grafana_ro",
-  password: "pw",
+  password: testPassword(),
   database: "fleetscope",
 };
 const now = new Date(Date.UTC(2024, 0, 1, 12, 0, 0));

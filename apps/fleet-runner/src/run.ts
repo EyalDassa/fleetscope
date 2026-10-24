@@ -1,11 +1,11 @@
 import { type CollectedSession, type Collector, createCollector } from "@fleetscope/collector";
 import type { Engine } from "@fleetscope/schema";
 import type { Logger } from "pino";
+import { assignSession } from "./assign";
 import type { RunnerConfig } from "./config";
 import type { DockerFleet } from "./docker";
 import type { RunOptions } from "./options";
 import { sessionSeed } from "./rng";
-import { scenarioFor } from "./scenarios";
 import { runSession, type SessionResult } from "./session-runner";
 
 export interface FleetRunResult {
@@ -28,6 +28,10 @@ export interface FleetRunDeps {
   signal: AbortSignal;
   /** Sessions that have started and not ended (see `SessionDeps.live`). */
   live?: Set<CollectedSession>;
+  /** Index of the first session (`fleet traffic` runs batches that continue one another). Default 0. */
+  firstIndex?: number;
+  /** Close the collectors when done (default). `fleet traffic` keeps them across batches. */
+  closeCollectors?: boolean;
   /** Test hook. */
   runSession?: typeof runSession;
 }
@@ -55,8 +59,7 @@ export function createCollectors(
 
 /**
  * Runs `options.sessions` sessions with at most `options.concurrency` browser containers alive at
- * once. Sessions take the engines in turn and the scenarios from `scenarioFor` (round-robin for
- * `mix`). Returns when every started session has ended and the collectors have flushed.
+ * once. Engine and scenario come from `assignSession` (every scenario on every engine). Returns when every started session has ended and the collectors have flushed.
  */
 export async function runFleet(deps: FleetRunDeps): Promise<FleetRunResult> {
   const { config, options, logger, signal, collectors } = deps;
@@ -67,9 +70,15 @@ export async function runFleet(deps: FleetRunDeps): Promise<FleetRunResult> {
 
   async function lane(): Promise<void> {
     while (!signal.aborted) {
-      const index = next++;
-      if (index >= options.sessions) return;
-      const engine = options.engines[index % options.engines.length] as Engine;
+      const n = next++;
+      if (n >= options.sessions) return;
+      const index = (deps.firstIndex ?? 0) + n;
+      const { engine, scenario } = assignSession(
+        options.engines,
+        options.scenario,
+        options.seed,
+        index,
+      );
       const fleet = deps.fleets.get(engine);
       const collector = collectors.get(engine);
       if (!fleet || !collector) throw new Error(`no browser fleet for engine ${engine}`);
@@ -87,7 +96,7 @@ export async function runFleet(deps: FleetRunDeps): Promise<FleetRunResult> {
           {
             index,
             engine,
-            scenario: scenarioFor(options.scenario, index, options.seed),
+            scenario,
             seed: sessionSeed(options.seed, index),
           },
         ),
@@ -99,7 +108,9 @@ export async function runFleet(deps: FleetRunDeps): Promise<FleetRunResult> {
     await Promise.all(Array.from({ length: options.concurrency }, lane));
   } finally {
     // Always flush and stop the collectors, even if a lane threw.
-    await Promise.all([...collectors.values()].map((collector) => collector.close()));
+    const done = (collector: Collector) =>
+      deps.closeCollectors === false ? collector.flush() : collector.close();
+    await Promise.all([...collectors.values()].map(done));
   }
 
   const delivery = { pushed: 0, sent: 0, duplicates: 0, dropped: 0, pending: 0 };

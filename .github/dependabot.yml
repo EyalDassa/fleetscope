@@ -29,3 +29,18 @@ updates:
       interval: weekly
     commit-message:
       prefix: "chore(infra)"
+
+  # The forwarder sidecar's base image (node:22-alpine). Major Node versions are a deliberate change,
+  # so only minor/patch updates are proposed. The Chromium image is not listed on purpose: its FROM
+  # line is built from ARG PLAYWRIGHT_VERSION, which must move together with the playwright-core pin
+  # in the runner (check-playwright-version.sh), so it is upgraded by hand. The upstream browser
+  # images (headless-shell, Lightpanda) are only named in config and docs, so are bumped by hand too.
+  - package-ecosystem: docker
+    directory: /infra/browsers/forwarder
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
+    commit-message:
+      prefix: "chore(infra)"

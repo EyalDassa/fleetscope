@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { isLoopbackHost } from "./hosts";
 import { buildDataSource, parseGrafanaUrl } from "./push";
+import { testPassword } from "./test-fixtures";
 
 describe("isLoopbackHost", () => {
   it("recognises every spelling of this machine", () => {
@@ -78,7 +79,7 @@ describe("the push rules that use it", () => {
   const env = (url: string): NodeJS.ProcessEnv => ({
     CLICKHOUSE_URL: url,
     CLICKHOUSE_GRAFANA_USER: "grafana_ro",
-    CLICKHOUSE_GRAFANA_PASSWORD: "a-read-only-password",
+    CLICKHOUSE_GRAFANA_PASSWORD: testPassword(),
   });
 
   it("refuses these ClickHouse addresses for a remote Grafana", () => {
