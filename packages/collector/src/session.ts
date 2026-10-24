@@ -12,7 +12,7 @@ import type { Page } from "playwright-core";
 import type { ErrorCode } from "./codes";
 import { CollectedPage, type PageConfig, type PageSink } from "./page";
 import type { EventQueue } from "./queue";
-import { clip } from "./text";
+import { assertSafeLabel, clip, safeLabel } from "./text";
 
 export interface StartSessionOptions {
   /** Defaults to a fresh UUID. */
@@ -72,15 +72,17 @@ export class CollectedSession implements PageSink {
     private readonly logger: Logger,
     options: StartSessionOptions,
   ) {
+    if (options.sessionId !== undefined) assertSafeLabel("sessionId", options.sessionId);
     this.sessionId = options.sessionId ?? crypto.randomUUID();
     this.envelope = { ...envelope, session_id: this.sessionId };
     this.emit(
       "session.started",
       {
+        // what a browser reports about itself is not ours to trust: make it a safe label
         engine_version:
-          options.engineVersion === null ? null : clip(options.engineVersion, MAX_LABEL),
-        scenario: clip(options.scenario, MAX_LABEL),
-        region: clip(options.region, MAX_LABEL),
+          options.engineVersion === null ? null : safeLabel(options.engineVersion, MAX_LABEL),
+        scenario: safeLabel(options.scenario, MAX_LABEL),
+        region: safeLabel(options.region, MAX_LABEL),
         startup_ms: wholeMs(options.startupMs),
         connect_ms: wholeMs(options.connectMs),
       },

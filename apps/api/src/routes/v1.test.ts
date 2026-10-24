@@ -91,9 +91,9 @@ describe("GET /v1/sessions/:id/trace", () => {
     const getSessionTimeline = vi.fn(async () => null);
     await app({ getSessionTimeline }).inject({
       method: "GET",
-      url: "/v1/sessions/a%20b%2Fc/trace",
+      url: "/v1/sessions/agent%40host%3A1/trace", // percent-encoded @ and :, both allowed in an id
     });
-    expect(getSessionTimeline).toHaveBeenCalledWith("a b/c");
+    expect(getSessionTimeline).toHaveBeenCalledWith("agent@host:1");
   });
 
   it("accepts an id of 128 characters (the longest the schema allows) and refuses one of 129", async () => {
@@ -194,36 +194,46 @@ describe("GET /v1/sessions/:id/perfetto", () => {
   });
 
   it("escapes everything that comes from the session", async () => {
+    // the id is a safe label (see SessionId), so the hostile text has to come from the other fields
     const hostile: TimelineSession = {
       ...session,
-      session_id: `x"><script>alert(1)</script>`,
+      engine: `x"><script>alert(1)</script>`,
+      engine_version: `<b>1</b>`,
       scenario: `<img src=x onerror=alert(1)>`,
       reason: `'; alert(2); '`,
     };
-    const res = await get(
-      `/v1/sessions/${encodeURIComponent(hostile.session_id)}/perfetto`,
-      app({ getSession: async () => hostile }),
-    );
+    const res = await get("/v1/sessions/sess-1/perfetto", app({ getSession: async () => hostile }));
     expect(res.statusCode).toBe(200);
     const body = res.body;
     expect(body).not.toContain("<script>alert(1)");
     expect(body).not.toContain("<img src=x");
+    expect(body).not.toContain("<b>1</b>");
     expect(body).toContain("x&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(body).toContain("&lt;img src=x onerror=alert(1)&gt;");
     // the only <script> element is ours
     expect(body.match(/<script\b/g)).toHaveLength(1);
-    // the download file name has only safe characters
-    expect(body).toContain('download="fleetscope-x___script_alert_1___script_.json"');
   });
 
-  it("returns a 404 page for an unknown session, and escapes the id in it", async () => {
-    const res = await get(`/v1/sessions/${encodeURIComponent("<b>nope</b>")}/perfetto`);
+  it("returns a 404 page for an unknown session", async () => {
+    const res = await get("/v1/sessions/nope@host/perfetto");
     expect(res.statusCode).toBe(404);
     expect(res.headers["content-type"]).toBe("text/html; charset=utf-8");
     expect(res.headers["cache-control"]).toBe("no-store");
     expect(res.body).toContain("Session not found");
-    expect(res.body).toContain("&lt;b&gt;nope&lt;/b&gt;");
-    expect(res.body).not.toContain("<b>nope");
+    expect(res.body).toContain("nope@host");
     expect(res.body).not.toContain("Open in Perfetto");
+  });
+
+  it("answers a hostile id with a 400 page that does not repeat it, without querying", async () => {
+    const getSession = vi.fn(async () => null);
+    const res = await get(
+      `/v1/sessions/${encodeURIComponent("<b>nope</b>' OR 1=1 --")}/perfetto`,
+      app({ getSession }),
+    );
+    expect(res.statusCode).toBe(400);
+    expect(res.body).toContain("Bad session id");
+    expect(res.body).not.toContain("nope");
+    expect(getSession).not.toHaveBeenCalled();
   });
 
   it("returns a 400 page for an invalid id", async () => {

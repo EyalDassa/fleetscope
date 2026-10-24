@@ -165,3 +165,65 @@ describe("checkBatch", () => {
     });
   });
 });
+
+describe("checkBatch: the labels that dashboards put into SQL", () => {
+  const started = (over: Record<string, unknown>) => ({
+    ...newEvent(
+      "session.started",
+      ctx,
+      {
+        engine_version: "156.0.8078.4",
+        scenario: "checkout-form",
+        region: "local",
+        startup_ms: 1,
+        connect_ms: 1,
+      },
+      NOW,
+    ),
+    ...over,
+  });
+
+  it.each([
+    ["agent_id", "x' OR '1'='1"],
+    ["session_id", "back\\slash"],
+    ["provider", "local docker"],
+    ["scenario", "café"],
+    ["region", "\\' OR 1=1 --"],
+    ["engine_version", "1.0; DROP TABLE sessions"],
+  ])(
+    "answers 400 for a %s such as %j, names the field, and does not repeat the value",
+    (field, value) => {
+      const result = checkBatch([issue(), started({ [field]: value })], NOW);
+      expect(result).toMatchObject({ ok: false, status: 400 });
+      if (result.ok) return;
+      expect(result.body.issues).toEqual([
+        {
+          path: [1, field],
+          message: "must be 1 to 128 characters from A-Z a-z 0-9 . _ : @ / + -",
+        },
+      ]);
+      expect(JSON.stringify(result.body)).not.toContain(value);
+    },
+  );
+
+  it("answers 400 for an error_code that is not a safe label", () => {
+    const bad = newEvent(
+      "action",
+      ctx,
+      { seq: 0, action_type: "goto", target: "x", duration_ms: 1, ok: false, error_code: "it's" },
+      NOW,
+    );
+    expect(checkBatch([bad], NOW)).toMatchObject({ ok: false, status: 400 });
+  });
+
+  it("accepts what the real producers send", () => {
+    const events = [
+      started({
+        agent_id: "fleet-runner@LAPTOP-G1JS2HFL",
+        session_id: "7f0c8b0e-2c1a-4a43-9c52-0b1e3d9f5a11",
+        provider: "local-docker",
+      }),
+    ];
+    expect(checkBatch(events, NOW).ok).toBe(true);
+  });
+});

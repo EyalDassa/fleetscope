@@ -1,6 +1,6 @@
 import { hostname } from "node:os";
 import { parseArgs } from "node:util";
-import { ENGINES, type Engine } from "@fleetscope/schema";
+import { ENGINES, type Engine, SAFE_LABEL_PATTERN } from "@fleetscope/schema";
 import { SCENARIO_NAMES, type ScenarioName } from "./scenarios";
 
 /** Engines the runner can drive today. M3 adds the other two. */
@@ -39,6 +39,15 @@ Options for "run":
   --session-timeout <sec>   cut off a session that runs longer, default 120
 
 Environment: FLEETSCOPE_API_URL, DEMO_SITE_URL, FLEET_BROWSER_IMAGE, DOCKER_HOST, LOG_LEVEL`;
+
+/**
+ * `fleet-runner@<host name>`, with every character the schema does not allow in an agent id replaced
+ * by `_`. A host name is whatever the machine owner typed (underscores, accents, ...), and an agent
+ * id the API refuses would make it reject every batch of the run.
+ */
+export function defaultAgentId(host: string = hostname()): string {
+  return `fleet-runner@${host.replace(/[^A-Za-z0-9._:@/+-]/g, "_")}`.slice(0, 128);
+}
 
 function positiveInt(name: string, raw: string | undefined, fallback: number, max: number): number {
   if (raw === undefined) return fallback;
@@ -104,8 +113,12 @@ export function parseRunArgs(
   if (values.seed !== undefined && !/^\d{1,10}$/.test(values.seed)) {
     throw new UsageError(`--seed must be a non-negative whole number, got "${values.seed}"`);
   }
-  const agentId = values.agent?.trim() || `fleet-runner@${hostname()}`;
-  if (agentId.length > 128) throw new UsageError("--agent must be at most 128 characters");
+  const agentId = values.agent?.trim() || defaultAgentId();
+  if (!SAFE_LABEL_PATTERN.test(agentId)) {
+    throw new UsageError(
+      "--agent must be 1 to 128 characters from A-Z a-z 0-9 . _ : @ / + - (dashboards put it into SQL)",
+    );
+  }
 
   const sessions = positiveInt("sessions", values.sessions, 10, 100_000);
   return {

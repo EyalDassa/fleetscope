@@ -13,7 +13,9 @@ import {
   SessionStartedEvent,
 } from "./index";
 
-// Lone UTF-16 surrogates: free text is repaired, ids are rejected (see the comment in events.ts).
+// Lone UTF-16 surrogates: free text is repaired; the safe labels that dashboards put into SQL are
+// rejected, like everything else outside their ASCII charset (see the comments in events.ts and
+// labels.test.ts).
 
 const ctx: EventEnvelope = {
   session_id: "s1",
@@ -69,22 +71,10 @@ describe("free text with a lone surrogate is repaired", () => {
     const bad = `a${HIGH}`;
     const fixed = "a�";
     expect(
-      SessionStartedEvent.parse({
-        ...newEvent("session.started", ctx, {
-          engine_version: bad,
-          scenario: bad,
-          region: bad,
-          startup_ms: 1,
-          connect_ms: 1,
-        }),
-      }),
-    ).toMatchObject({ engine_version: fixed, scenario: fixed, region: fixed });
-    expect(
       SessionEndedEvent.parse(
         newEvent("session.ended", ctx, { status: "failed", reason: bad, duration_ms: 1 }),
       ).reason,
     ).toBe(fixed);
-    expect(ActionEvent.parse(action({ error_code: bad, ok: false })).error_code).toBe(fixed);
     expect(
       NetworkRequestEvent.parse(
         newEvent("network.request", ctx, {
@@ -100,12 +90,28 @@ describe("free text with a lone surrogate is repaired", () => {
       ScreenshotEvent.parse(newEvent("screenshot", ctx, { action_seq: 0, url: `file:///${bad}` }))
         .url,
     ).toBe("file:///a�");
-    expect(
-      FleetEvent.parse({
+  });
+
+  it("does not repair the labels that go into SQL: it rejects them (a repaired value would be a different one)", () => {
+    const bad = `a${HIGH}`;
+    for (const result of [
+      SessionStartedEvent.safeParse(
+        newEvent("session.started", ctx, {
+          engine_version: bad,
+          scenario: "ok",
+          region: "ok",
+          startup_ms: 1,
+          connect_ms: 1,
+        }),
+      ),
+      ActionEvent.safeParse(action({ error_code: bad, ok: false })),
+      FleetEvent.safeParse({
         ...newEvent("session.ended", ctx, { status: "failed", reason: null, duration_ms: 1 }),
         provider: bad,
-      }).provider,
-    ).toBe(fixed);
+      }),
+    ]) {
+      expect(result.success).toBe(false);
+    }
   });
 
   it("keeps null and optional fields as they are", () => {
@@ -137,10 +143,9 @@ describe("ids with a lone surrogate are rejected", () => {
     expect(result.success).toBe(false);
     if (result.success) return;
     expect(result.error.issues[0]?.path).toEqual([field]);
-    expect(result.error.issues[0]?.message).toContain("surrogate");
   });
 
-  it("accepts an id with a proper pair", () => {
-    expect(ActionEvent.safeParse(action({ session_id: "s-😀" })).success).toBe(true);
+  it("rejects an id with a proper pair too: ids are ASCII (see labels.test.ts)", () => {
+    expect(ActionEvent.safeParse(action({ session_id: "s-😀" })).success).toBe(false);
   });
 });

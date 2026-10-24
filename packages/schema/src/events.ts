@@ -88,23 +88,39 @@ export type IssueKind = z.infer<typeof IssueKind>;
  *  - free text (labels, targets, messages, urls) is repaired: each lone surrogate becomes U+FFFD,
  *    the length stays the same, and the event is kept, because text that a page produced should not
  *    sink a whole batch;
- *  - ids (session_id, agent_id) are rejected instead, because a changed id would silently split or
- *    merge sessions.
+ *  - the values that dashboards turn into SQL (below) are rejected instead of repaired.
  * `toWellFormed` is in Node 20+ and every current browser, but not in the ES2023 lib that
  * tsconfig.base.json uses, hence the small typed wrapper.
  */
 type WithWellFormed = { isWellFormed(): boolean; toWellFormed(): string };
-const isWellFormed = (value: string): boolean =>
-  (value as unknown as WithWellFormed).isWellFormed();
 const wellFormed = (value: string): string => (value as unknown as WithWellFormed).toWellFormed();
 
-const id = z
-  .string()
-  .min(1)
-  .max(128)
-  .refine(isWellFormed, { error: "must not contain an unpaired UTF-16 surrogate" });
+/**
+ * The characters of a "safe label": letters, digits and `. _ : @ / + -`, 1 to 128 of them. No quote,
+ * backslash, space, control character or non-ASCII character, so a value can never break out of an
+ * SQL string or a URL, and is always well-formed UTF-16.
+ *
+ * WHY. The Grafana dashboards put stored values into SQL: `agent_id` and `scenario` through
+ * multi-select variables (`${agent:singlequote}`), `session_id` through the link to Session detail,
+ * and `error_code` through the failure cause (the `cause` variable). Grafana's `singlequote` turns
+ * `'` into `\'` and leaves a backslash alone, so a stored value with `\` or `'` could end the string
+ * early, and ingest has no authentication. The read-only ClickHouse user bounds the damage; this
+ * closes the hole at the source, where it costs nothing: real values are names such as
+ * `fleet-runner@<hostname>`, `local-docker`, `checkout-form`, `eu-west`, a UUID, `156.0.8078.4`.
+ *
+ * Producers must conform. The API answers 400 for the whole batch, and the collector drops a
+ * rejected batch for good, so the fleet runner and the collector normalise what they take from the
+ * outside (a host name, a browser's version string) before it gets here.
+ */
+export const SAFE_LABEL_PATTERN = /^[A-Za-z0-9._:@/+-]{1,128}$/;
+const safeLabel = z.string().regex(SAFE_LABEL_PATTERN, {
+  error: "must be 1 to 128 characters from A-Z a-z 0-9 . _ : @ / + -",
+});
+
 /** A session id as it appears in events and in URLs (`/v1/sessions/:id/trace`). */
-export const SessionId = id;
+export const SessionId = safeLabel;
+const id = safeLabel;
+/** Free text with a limit of 128 characters (domains, resource types): displayed, never put into SQL. */
 const label = z.string().min(1).max(128).transform(wellFormed);
 const text = z.string().max(2000).transform(wellFormed);
 /*
@@ -137,8 +153,8 @@ const envelope = {
   source: Source,
   agent_id: id,
   engine: Engine,
-  /** Where the browser runs, e.g. "local-docker". Free text so new providers need no release. */
-  provider: label,
+  /** Where the browser runs, e.g. "local-docker". A safe label, but any one, so new providers need no release. */
+  provider: safeLabel,
 };
 
 // Events ----------------------------------------------------------------------------------
@@ -147,9 +163,9 @@ export const SessionStartedEvent = z.object({
   ...envelope,
   type: z.literal("session.started"),
   /** `null` when the engine does not report its version. */
-  engine_version: label.nullable(),
-  scenario: label,
-  region: label,
+  engine_version: safeLabel.nullable(),
+  scenario: safeLabel,
+  region: safeLabel,
   /**
    * From creating the container until the engine's endpoint answers (the server is ready to take a
    * client). For a Playwright server (Chromium) no browser exists yet at this point: it is launched
@@ -190,7 +206,8 @@ export const ActionEvent = z.object({
   duration_ms: uint32,
   ok: z.boolean(),
   /** `null` when `ok` is true. */
-  error_code: label.nullable(),
+  /** A short code such as `timeout`: it can become a failure cause, which dashboards put into SQL. */
+  error_code: safeLabel.nullable(),
 });
 export type ActionEvent = z.infer<typeof ActionEvent>;
 

@@ -97,6 +97,23 @@ Rules for every panel:
   somewhere would be about 5% off.
 - **CPU is a percentage of one core** (`cpu_pct`, as Docker reports it; it can pass 100 on a
   multi-core container).
+- **Values that dashboards turn into SQL are restricted at ingest.** `session_id`, `agent_id`,
+  `provider`, `scenario`, `region`, `engine_version` and `error_code` accept only the characters
+  `A-Z a-z 0-9 . _ : @ / + -`, 1 to 128 of them (`SAFE_LABEL_PATTERN` in `packages/schema`). Anything
+  else, a quote, a backslash, a space, an accent or an emoji, gets a `400` that names the field.
+  Why: dashboards put these stored values into SQL: `agent_id` and `scenario` through multi-select
+  variables (`${agent:singlequote}`), `session_id` through the link to Session detail, and
+  `error_code` through the failure cause (the `cause` filter). Grafana's `singlequote` turns `'` into
+  `\'` and leaves a backslash alone, so a stored value with `\` or `'` could end the string early
+  and add SQL of its own, and ingest has no authentication. The read-only user limits what such a
+  query can do; the restricted charset removes the problem at the source, and nothing real is
+  lost: the values are names such as `fleet-runner@<hostname>`, `local-docker`, `checkout-form`,
+  `eu-west`, a UUID or `156.0.8078.4`. Free text (`reason`, `message`, `target`, `domain`,
+  `resource_type`) is not restricted because it is only displayed. **Keep it that way: a new
+  dashboard variable, link or filter may only be filled from a restricted field.** Producers conform
+  instead of being rejected, because the collector drops a refused batch for good: the fleet runner
+  replaces odd characters in a host name, the collector turns a browser's version string, a scenario
+  and a region into safe labels, and both refuse an agent id, provider or session id they cannot send.
 
 ### The rollup `fleet_minute`
 

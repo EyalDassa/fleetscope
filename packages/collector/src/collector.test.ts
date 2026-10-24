@@ -1,6 +1,7 @@
 import { EventBatch, type FleetEvent } from "@fleetscope/schema";
 import { describe, expect, it } from "vitest";
 import { BlockedError, CollectedError } from "./errors";
+import type { StartSessionOptions } from "./session";
 import {
   FakePage,
   fakeRequest,
@@ -60,7 +61,7 @@ describe("session lifecycle", () => {
       agent_id: "fleet-runner@box",
       engine: "chromium",
       provider: "local-docker",
-      engine_version: "chromium 150.0",
+      engine_version: "chromium_150.0", // the space is not allowed in a safe label
       scenario: "login-and-search",
       region: "local",
       startup_ms: 900,
@@ -528,5 +529,52 @@ describe("transport outcomes", () => {
     await session.endSession("success");
     await collector.close();
     expect(collector.stats()).toMatchObject({ pushed: 2, sent: 0, dropped: 2 });
+  });
+});
+
+describe("values that dashboards put into SQL (the schema's safe labels)", () => {
+  const startedOf = async (options: Partial<StartSessionOptions>) => {
+    const { collector, sink } = makeCollector();
+    collector.startSession({ ...sessionOptions, ...options });
+    await collector.flush();
+    const started = ofType(sink.events, "session.started")[0];
+    await collector.close();
+    return { started, events: sink.events };
+  };
+
+  it("turns a browser's version string into a safe label instead of getting the batch refused", async () => {
+    const { started, events } = await startedOf({
+      engineVersion: "Lightpanda 0.2.5 (git 'abc\\def') \u{1F680}",
+    });
+    expect(started?.engine_version).toBe("Lightpanda_0.2.5__git__abc_def____");
+    expect(EventBatch.safeParse(events).success).toBe(true);
+  });
+
+  it("keeps a null version null and a normal one as it is", async () => {
+    expect((await startedOf({ engineVersion: null })).started?.engine_version).toBeNull();
+    expect((await startedOf({ engineVersion: "156.0.8078.4" })).started?.engine_version).toBe(
+      "156.0.8078.4",
+    );
+  });
+
+  it("normalises scenario and region the same way, and cuts them at 128 characters", async () => {
+    const { started } = await startedOf({ scenario: "my scenario", region: "x".repeat(300) });
+    expect(started?.scenario).toBe("my_scenario");
+    expect(started?.region).toBe("x".repeat(128));
+  });
+
+  it("fails early, with a clear message, for an agent id or provider it cannot send", () => {
+    expect(() => makeCollector({ agentId: "agent with space" })).toThrow(/agentId must be/);
+    expect(() => makeCollector({ agentId: "it's" })).toThrow(/agentId must be/);
+    expect(() => makeCollector({ provider: "local docker" })).toThrow(/provider must be/);
+    expect(() => makeCollector({ agentId: "" })).toThrow(/agentId must be/);
+  });
+
+  it("fails early for a session id it cannot send, and still makes its own", () => {
+    const { collector } = makeCollector();
+    expect(() => collector.startSession({ ...sessionOptions, sessionId: "a b" })).toThrow(
+      /sessionId must be/,
+    );
+    expect(collector.startSession(sessionOptions).sessionId).toMatch(/^[0-9a-f-]{36}$/);
   });
 });

@@ -218,14 +218,20 @@ describe("GET /v1/sessions/:id/trace (real ClickHouse)", () => {
     expect(process?.args.name).toBe(`${SIM_ID} · lightpanda · SIM · Running`);
   });
 
-  it("returns 404 for an unknown session and treats a hostile id as plain data", async () => {
+  it("returns 404 for an unknown session, and 400 (never a query) for an id that is not a safe label", async () => {
     const instance = app();
-    for (const id of ["nope", "x' OR 1=1 --", "trace-int-%"]) {
-      const res = await instance.inject({
-        method: "GET",
-        url: `/v1/sessions/${encodeURIComponent(id)}/trace`,
-      });
-      expect(res.statusCode, id).toBe(404);
+    const status = async (id: string) =>
+      (
+        await instance.inject({
+          method: "GET",
+          url: `/v1/sessions/${encodeURIComponent(id)}/trace`,
+        })
+      ).statusCode;
+    for (const id of ["nope", "trace-int-1x", "agent@host:1"])
+      expect(await status(id), id).toBe(404);
+    // a stored id can only contain A-Z a-z 0-9 . _ : @ / + -, so these cannot exist, and are not looked up
+    for (const id of ["x' OR 1=1 --", "trace-int-%", "a b", "back\\slash"]) {
+      expect(await status(id), id).toBe(400);
     }
   });
 });
