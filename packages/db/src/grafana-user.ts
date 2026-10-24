@@ -7,7 +7,8 @@ import { ConfigError, identifierSchema, parseEnv } from "./config";
  *
  * Grafana runs whatever SQL a dashboard contains, so the user must not be able to change anything,
  * even if someone pastes a `DROP TABLE` into a panel. Two layers:
- *  - the grants: `SELECT` on the Fleetscope database and nothing else;
+ *  - the grants: `SELECT` on the Fleetscope database, plus `SELECT` on two system tables for the
+ *    Capacity dashboard (see CAPACITY_SYSTEM_TABLES), and nothing else;
  *  - `readonly = 1`: ClickHouse refuses every statement that is not a read, whatever the grants.
  *
  * Why `readonly = 1` and not `readonly = 2`. With `readonly = 2` a client may change settings per
@@ -39,6 +40,16 @@ import { ConfigError, identifierSchema, parseEnv } from "./config";
  * text, and ClickHouse does not write it to `system.query_log`. It also works on ClickHouse Cloud,
  * which supports SQL-driven users and settings constraints (not tested against Cloud here).
  */
+
+/**
+ * The two system tables the Capacity dashboard reads (packages/db/README.md, "Capacity"):
+ * `part_log` (what ClickHouse wrote) and `asynchronous_metric_log` (its memory and CPU against the
+ * limits). These are whole-table grants, because ClickHouse cannot grant part of a system table: the
+ * user can see the table names and row counts of every database's parts in `part_log`, which is
+ * why the grant stops at these two. NOT granted: `READ ON REMOTE`, which `clusterAllReplicas` needs and
+ * which would let the user read from any server the cluster functions reach.
+ */
+export const CAPACITY_SYSTEM_TABLES = ["asynchronous_metric_log", "part_log"] as const;
 
 export const GRAFANA_MAX_EXECUTION_SECONDS = 300;
 export const GRAFANA_DEFAULT_EXECUTION_SECONDS = 60;
@@ -149,7 +160,8 @@ const USER_CLAUSES = `IDENTIFIED WITH sha256_password BY {password:String}
 
 /**
  * Creates the user, or updates the password and the settings of an existing one, and grants it
- * SELECT on the database. Safe to run again at any time, and the way to rotate the password.
+ * SELECT on the database and on the two system tables of CAPACITY_SYSTEM_TABLES. Safe to run again
+ * at any time (a GRANT that already holds changes nothing), and the way to rotate the password.
  *
  * `admin` is a connection of a user that may manage users (the one in CLICKHOUSE_USER). Errors
  * come back without the password even if ClickHouse echoes it.
@@ -173,6 +185,9 @@ export async function ensureGrafanaUser(
     `CREATE USER IF NOT EXISTS {user:Identifier} ${USER_CLAUSES}`,
     `ALTER USER {user:Identifier} ${USER_CLAUSES}`,
     `GRANT SELECT ON \`${options.database}\`.* TO \`${options.user}\``,
+    ...CAPACITY_SYSTEM_TABLES.map(
+      (table) => `GRANT SELECT ON system.\`${table}\` TO \`${options.user}\``,
+    ),
   ];
   try {
     for (const query of statements) {

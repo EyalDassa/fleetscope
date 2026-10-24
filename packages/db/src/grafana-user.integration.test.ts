@@ -195,6 +195,32 @@ describe("the read-only Grafana user", () => {
     ).not.toBe("ok");
   });
 
+  it("may read the two system tables of the Capacity dashboard, and no other system table", async () => {
+    const reader = readerClient();
+    const read = (query: string) =>
+      outcome(() => reader.query({ query, format: "JSONEachRow" }).then((r) => r.json()));
+    expect(await read("SELECT count() FROM system.asynchronous_metric_log")).toBe("ok");
+    expect(await read("SELECT count() FROM system.part_log")).toBe("ok");
+    for (const table of ["query_log", "metric_log", "processes", "text_log", "grants"]) {
+      expect(await read(`SELECT count() FROM system.${table}`), table).toBe("ACCESS_DENIED");
+    }
+    // the cluster functions need READ ON REMOTE, which is deliberately not granted
+    expect(
+      await read("SELECT count() FROM clusterAllReplicas(default, system.asynchronous_metric_log)"),
+    ).toBe("ACCESS_DENIED");
+    const grants = await db.client.query({
+      query:
+        "SELECT access_type, database, `table` FROM system.grants WHERE user_name = {user:String} ORDER BY database, `table`",
+      query_params: { user },
+      format: "JSONEachRow",
+    });
+    expect(await grants.json()).toEqual([
+      { access_type: "SELECT", database: db.config.database, table: null },
+      { access_type: "SELECT", database: "system", table: "asynchronous_metric_log" },
+      { access_type: "SELECT", database: "system", table: "part_log" },
+    ]);
+  });
+
   it("is safe to run again, and running it again with a new password rotates it", async () => {
     await ensureGrafanaUser(db.client, { user, password, database: db.config.database });
     expect(

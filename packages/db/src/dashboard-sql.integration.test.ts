@@ -374,7 +374,7 @@ afterAll(async () => {
 });
 
 describe("README snippets", () => {
-  it("are all covered by this file, and none needs a SETTINGS clause", async () => {
+  it("are all covered by this file (the capacity-* ones by capacity.integration.test.ts), and none needs a SETTINGS clause", async () => {
     const snippets = await readmeSnippets();
     expect([...snippets.keys()].sort()).toEqual(
       [
@@ -383,6 +383,15 @@ describe("README snippets", () => {
         "actions-per-minute",
         "active-sessions",
         "browser-hours-and-cost",
+        "capacity-alerts-cpu-pct",
+        "capacity-alerts-limits-changed",
+        "capacity-alerts-load-mismatch-pct",
+        "capacity-alerts-mem-pct",
+        "capacity-alerts-minutes-since-write",
+        "capacity-limit-changes",
+        "capacity-load",
+        "capacity-replicas",
+        "capacity-utilization",
         "compatibility-matrix",
         "cpu-mem-per-container",
         "engine-comparison",
