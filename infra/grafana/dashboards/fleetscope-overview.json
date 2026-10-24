@@ -1,0 +1,2806 @@
+{
+  "uid": "fleetscope-overview",
+  "title": "Fleetscope / Overview",
+  "description": "Is the browser fleet healthy right now? Verdict first, then the numbers behind it. Every panel marked with an arrow opens the sessions behind its numbers.",
+  "tags": [
+    "fleetscope"
+  ],
+  "style": "dark",
+  "timezone": "browser",
+  "editable": true,
+  "graphTooltip": 1,
+  "refresh": "30s",
+  "schemaVersion": 41,
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "links": [
+    {
+      "type": "dashboards",
+      "title": "Fleetscope",
+      "tags": [
+        "fleetscope"
+      ],
+      "asDropdown": false,
+      "includeVars": true,
+      "keepTime": true,
+      "icon": "external link",
+      "targetBlank": false,
+      "tooltip": "",
+      "url": ""
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "type": "custom",
+        "name": "engine",
+        "label": "Engine",
+        "query": "chromium,chrome-headless-shell,lightpanda",
+        "multi": true,
+        "includeAll": true,
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": [
+          {
+            "text": "All",
+            "value": "$__all",
+            "selected": true
+          },
+          {
+            "text": "chromium",
+            "value": "chromium",
+            "selected": false
+          },
+          {
+            "text": "chrome-headless-shell",
+            "value": "chrome-headless-shell",
+            "selected": false
+          },
+          {
+            "text": "lightpanda",
+            "value": "lightpanda",
+            "selected": false
+          }
+        ],
+        "hide": 0
+      },
+      {
+        "type": "custom",
+        "name": "source",
+        "label": "Source",
+        "query": "real,sim",
+        "multi": false,
+        "includeAll": true,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "options": [
+          {
+            "text": "All",
+            "value": "$__all",
+            "selected": true
+          },
+          {
+            "text": "real",
+            "value": "real",
+            "selected": false
+          },
+          {
+            "text": "sim",
+            "value": "sim",
+            "selected": false
+          }
+        ],
+        "hide": 0
+      },
+      {
+        "type": "constant",
+        "name": "api_url",
+        "label": "API URL",
+        "query": "http://localhost:4000",
+        "current": {
+          "text": "http://localhost:4000",
+          "value": "http://localhost:4000"
+        },
+        "options": [
+          {
+            "text": "http://localhost:4000",
+            "value": "http://localhost:4000",
+            "selected": true
+          }
+        ],
+        "hide": 2
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Fleet verdict ↗",
+      "description": "Success rate over the range through the thresholds: 95% or more is healthy, 90 to 95% degraded, below 90% failed. Running and interrupted sessions are not counted; blocked counts against the rate. Click to open the failed and blocked sessions.",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 6,
+        "h": 5
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "-- Fleet verdict = the success rate of the sessions that ended in the range, through the thresholds:\n-- 95% or more is healthy, 90% or more degraded, below that failed. no_data when no session ended.\n-- Interrupted (Ctrl+C) sessions are not counted; blocked counts against the rate.\nWITH facts AS\n(\n    WITH\n        picked AS\n        (\n            SELECT *\n            FROM sessions FINAL\n            WHERE engine IN (${engine:singlequote})\n              AND source IN (${source:singlequote})\n              AND started_at <= $__toTime\n              AND (ended_at IS NULL OR ended_at >= $__fromTime)\n        ),\n        issue_facts AS\n        (\n            SELECT session_id, count() AS issue_count, toString(argMin(kind, ts)) AS first_issue\n            FROM issues\n            WHERE session_id IN (SELECT session_id FROM picked)\n              AND ts >= (SELECT min(started_at) FROM picked)\n            GROUP BY session_id\n        ),\n        action_facts AS\n        (\n            SELECT\n                session_id,\n                count() AS actions,\n                countIf(NOT ok) AS failed_actions,\n                ifNull(argMinIf(error_code, seq, NOT ok), '') AS first_failed_code\n            FROM actions\n            WHERE session_id IN (SELECT session_id FROM picked)\n              AND ts >= (SELECT min(started_at) FROM picked)\n            GROUP BY session_id\n        )\n    SELECT\n        p.session_id AS session_id,\n        p.agent_id AS agent_id,\n        p.source AS source,\n        p.engine AS engine,\n        p.engine_version AS engine_version,\n        p.provider AS provider,\n        p.scenario AS scenario,\n        p.started_at AS started_at,\n        p.ended_at AS ended_at,\n        p.status AS status,\n        p.reason AS reason,\n        p.duration_ms AS duration_ms,\n        p.startup_ms + p.connect_ms AS time_to_browser_ms,\n        (p.status = 'failed' AND ifNull(p.reason, '') = 'interrupted') AS is_interrupted,\n        a.actions AS actions,\n        a.failed_actions AS failed_actions,\n        i.issue_count AS issue_count,\n        multiIf(\n            p.status = 'running', 'running',\n            is_interrupted, 'interrupted',\n            p.status = 'success' AND a.failed_actions = 0 AND i.issue_count = 0, 'healthy',\n            p.status = 'success', 'degraded',\n            p.status = 'blocked', 'blocked',\n            'failed') AS display_status,\n        if(p.status NOT IN ('running', 'success') AND NOT is_interrupted,\n            multiIf(i.first_issue != '', i.first_issue, a.first_failed_code != '', a.first_failed_code, p.status),\n            NULL) AS cause,\n        if(cause IS NULL, NULL,\n            multiIf(i.first_issue != '', 'issue', a.first_failed_code != '', 'action', 'status')) AS cause_from,\n        (toUInt64(p.startup_ms) + p.connect_ms\n            + ifNull(p.duration_ms, dateDiff('millisecond', p.started_at, now64(3)))) / 3.6e6 AS browser_hours,\n        if(price.provider = '', NULL, browser_hours * price.usd_per_browser_hour) AS est_cost_usd\n    FROM picked AS p\n    LEFT JOIN issue_facts AS i ON i.session_id = p.session_id\n    LEFT JOIN action_facts AS a ON a.session_id = p.session_id\n    LEFT JOIN pricing_current AS price ON price.engine = p.engine AND price.provider = p.provider\n)\nSELECT\n    countIf(NOT is_interrupted) AS ended,\n    if(ended = 0, NULL, 100 * countIf(display_status IN ('healthy', 'degraded')) / ended) AS success_rate,\n    multiIf(success_rate IS NULL, 'no_data', success_rate >= 95, 'healthy', success_rate >= 90, 'degraded', 'failed') AS verdict\nFROM facts\nWHERE ended_at IS NOT NULL AND $__timeFilter(ended_at)\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "healthy": {
+                  "index": 0,
+                  "text": "✓ Healthy",
+                  "color": "#6EE7A8"
+                },
+                "degraded": {
+                  "index": 1,
+                  "text": "▲ Degraded",
+                  "color": "#FFD95A"
+                },
+                "failed": {
+                  "index": 2,
+                  "text": "✕ Failed",
+                  "color": "#FF7B7B"
+                },
+                "blocked": {
+                  "index": 3,
+                  "text": "⊘ Blocked",
+                  "color": "#D9CCFF"
+                },
+                "running": {
+                  "index": 4,
+                  "text": "○ Running",
+                  "color": "#9AA9BB"
+                },
+                "interrupted": {
+                  "index": 5,
+                  "text": "■ Interrupted",
+                  "color": "#7D8DA1"
+                },
+                "no_data": {
+                  "index": 6,
+                  "text": "No ended sessions",
+                  "color": "#9AA9BB"
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "No ended sessions",
+          "links": [
+            {
+              "title": "Failed and blocked sessions",
+              "url": "/d/fleetscope-sessions?${__url_time_range}&${engine:queryparam}&${source:queryparam}&var-status=failed&var-status=blocked",
+              "targetBlank": false
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/^verdict$/",
+          "values": false
+        },
+        "colorMode": "background_solid",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false
+      }
+    },
+    {
+      "id": 2,
+      "type": "bargauge",
+      "title": "Outcomes ↗",
+      "description": "Sessions started in the range, by display status. Degraded is a success with a failed action or an issue. Running and interrupted sessions are not outcomes. Click a bar to open those sessions.",
+      "gridPos": {
+        "x": 6,
+        "y": 0,
+        "w": 12,
+        "h": 5
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "-- Sessions that ended in the range, by display status. Degraded = success with a failed action or an issue.\n-- Interrupted sessions are not outcomes (see the Interrupted panel).\nWITH facts AS\n(\n    WITH\n        picked AS\n        (\n            SELECT *\n            FROM sessions FINAL\n            WHERE engine IN (${engine:singlequote})\n              AND source IN (${source:singlequote})\n              AND started_at <= $__toTime\n              AND (ended_at IS NULL OR ended_at >= $__fromTime)\n        ),\n        issue_facts AS\n        (\n            SELECT session_id, count() AS issue_count, toString(argMin(kind, ts)) AS first_issue\n            FROM issues\n            WHERE session_id IN (SELECT session_id FROM picked)\n              AND ts >= (SELECT min(started_at) FROM picked)\n            GROUP BY session_id\n        ),\n        action_facts AS\n        (\n            SELECT\n                session_id,\n                count() AS actions,\n                countIf(NOT ok) AS failed_actions,\n                ifNull(argMinIf(error_code, seq, NOT ok), '') AS first_failed_code\n            FROM actions\n            WHERE session_id IN (SELECT session_id FROM picked)\n              AND ts >= (SELECT min(started_at) FROM picked)\n            GROUP BY session_id\n        )\n    SELECT\n        p.session_id AS session_id,\n        p.agent_id AS agent_id,\n        p.source AS source,\n        p.engine AS engine,\n        p.engine_version AS engine_version,\n        p.provider AS provider,\n        p.scenario AS scenario,\n        p.started_at AS started_at,\n        p.ended_at AS ended_at,\n        p.status AS status,\n        p.reason AS reason,\n        p.duration_ms AS duration_ms,\n        p.startup_ms + p.connect_ms AS time_to_browser_ms,\n        (p.status = 'failed' AND ifNull(p.reason, '') = 'interrupted') AS is_interrupted,\n        a.actions AS actions,\n        a.failed_actions AS failed_actions,\n        i.issue_count AS issue_count,\n        multiIf(\n            p.status = 'running', 'running',\n            is_interrupted, 'interrupted',\n            p.status = 'success' AND a.failed_actions = 0 AND i.issue_count = 0, 'healthy',\n            p.status = 'success', 'degraded',\n            p.status = 'blocked', 'blocked',\n            'failed') AS display_status,\n        if(p.status NOT IN ('running', 'success') AND NOT is_interrupted,\n            multiIf(i.first_issue != '', i.first_issue, a.first_failed_code != '', a.first_failed_code, p.status),\n            NULL) AS cause,\n        if(cause IS NULL, NULL,\n            multiIf(i.first_issue != '', 'issue', a.first_failed_code != '', 'action', 'status')) AS cause_from,\n        (toUInt64(p.startup_ms) + p.connect_ms\n            + ifNull(p.duration_ms, dateDiff('millisecond', p.started_at, now64(3)))) / 3.6e6 AS browser_hours,\n        if(price.provider = '', NULL, browser_hours * price.usd_per_browser_hour) AS est_cost_usd\n    FROM picked AS p\n    LEFT JOIN issue_facts AS i ON i.session_id = p.session_id\n    LEFT JOIN action_facts AS a ON a.session_id = p.session_id\n    LEFT JOIN pricing_current AS price ON price.engine = p.engine AND price.provider = p.provider\n)\nSELECT\n    countIf(display_status = 'healthy') AS healthy,\n    countIf(display_status = 'degraded') AS degraded,\n    countIf(display_status = 'failed') AS failed,\n    countIf(display_status = 'blocked') AS blocked\nFROM facts\nWHERE ended_at IS NOT NULL AND $__timeFilter(ended_at)\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#5B7491"
+          },
+          "unit": "locale",
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "min": 0,
+          "noValue": "0",
+          "links": [
+            {
+              "title": "Sessions with this status",
+              "url": "/d/fleetscope-sessions?${__url_time_range}&${engine:queryparam}&${source:queryparam}&var-status=${__field.name}",
+              "targetBlank": false
+            }
+          ]
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "healthy"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "✓ Healthy"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#6EE7A8"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "degraded"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "▲ Degraded"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#FFD95A"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "failed"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "✕ Failed"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#FF7B7B"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "blocked"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "⊘ Blocked"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#D9CCFF"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "valueMode": "text",
+        "namePlacement": "left",
+        "showUnfilled": true,
+        "sizing": "auto",
+        "minVizHeight": 16,
+        "minVizWidth": 8,
+        "maxVizHeight": 300,
+        "legend": {
+          "showLegend": false,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Simulated share ↗",
+      "description": "Simulated sessions as a share of all sessions started in the range. Simulated data is generated by the simulator (source = sim). Click to open the simulated sessions.",
+      "gridPos": {
+        "x": 18,
+        "y": 0,
+        "w": 6,
+        "h": 5
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "-- Share of simulated sessions among the sessions that started in the range (follows the engine and source filters).\nWITH facts AS\n(\n    WITH\n        picked AS\n        (\n            SELECT *\n            FROM sessions FINAL\n            WHERE engine IN (${engine:singlequote})\n              AND source IN (${source:singlequote})\n              AND started_at <= $__toTime\n              AND (ended_at IS NULL OR ended_at >= $__fromTime)\n        ),\n        issue_facts AS\n        (\n            SELECT session_id, count() AS issue_count, toString(argMin(kind, ts)) AS first_issue\n            FROM issues\n            WHERE session_id IN (SELECT session_id FROM picked)\n              AND ts >= (SELECT min(started_at) FROM picked)\n            GROUP BY session_id\n        ),\n        action_facts AS\n        (\n            SELECT\n                session_id,\n                count() AS actions,\n                countIf(NOT ok) AS failed_actions,\n                ifNull(argMinIf(error_code, seq, NOT ok), '') AS first_failed_code\n            FROM actions\n            WHERE session_id IN (SELECT session_id FROM picked)\n              AND ts >= (SELECT min(started_at) FROM picked)\n            GROUP BY session_id\n        )\n    SELECT\n        p.session_id AS session_id,\n        p.agent_id AS agent_id,\n        p.source AS source,\n        p.engine AS engine,\n        p.engine_version AS engine_version,\n        p.provider AS provider,\n        p.scenario AS scenario,\n        p.started_at AS started_at,\n        p.ended_at AS ended_at,\n        p.status AS status,\n        p.reason AS reason,\n        p.duration_ms AS duration_ms,\n        p.startup_ms + p.connect_ms AS time_to_browser_ms,\n        (p.status = 'failed' AND ifNull(p.reason, '') = 'interrupted') AS is_interrupted,\n        a.actions AS actions,\n        a.failed_actions AS failed_actions,\n        i.issue_count AS issue_count,\n        multiIf(\n            p.status = 'running', 'running',\n            is_interrupted, 'interrupted',\n            p.status = 'success' AND a.failed_actions = 0 AND i.issue_count = 0, 'healthy',\n            p.status = 'success', 'degraded',\n            p.status = 'blocked', 'blocked',\n            'failed') AS display_status,\n        if(p.status NOT IN ('running', 'success') AND NOT is_interrupted,\n            multiIf(i.first_issue != '', i.first_issue, a.first_failed_code != '', a.first_failed_code, p.status),\n            NULL) AS cause,\n        if(cause IS NULL, NULL,\n            multiIf(i.first_issue != '', 'issue', a.first_failed_code != '', 'action', 'status')) AS cause_from,\n        (toUInt64(p.startup_ms) + p.connect_ms\n            + ifNull(p.duration_ms, dateDiff('millisecond', p.started_at, now64(3)))) / 3.6e6 AS browser_hours,\n        if(price.provider = '', NULL, browser_hours * price.usd_per_browser_hour) AS est_cost_usd\n    FROM picked AS p\n    LEFT JOIN issue_facts AS i ON i.session_id = p.session_id\n    LEFT JOIN action_facts AS a ON a.session_id = p.session_id\n    LEFT JOIN pricing_current AS price ON price.engine = p.engine AND price.provider = p.provider\n)\nSELECT\n    if(count() = 0, NULL, 100 * countIf(source = 'sim') / count()) AS simulated_share\nFROM facts\nWHERE $__timeFilter(started_at)\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "index": 0,
+                  "text": "0% · all real"
+                },
+                "100": {
+                  "index": 1,
+                  "text": "100% · all simulated"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "—",
+                  "index": 2
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "—",
+                  "index": 3
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "—",
+          "unit": "percent",
+          "decimals": 0,
+          "links": [
+            {
+              "title": "Simulated sessions",
+              "url": "/d/fleetscope-sessions?${__url_time_range}&${engine:queryparam}&var-source=sim",
+              "targetBlank": false
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Active now ↗",
+      "description": "Running sessions with a container sample in the last 30 seconds. Ignores the time range.",
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 6,
+        "h": 3
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "-- Running sessions whose container sent a sample in the last 30 seconds. Ignores the time range.\nSELECT count() AS active_sessions\nFROM\n(\n    SELECT\n        session_id,\n        argMax(toFloat64(assumeNotNull(cpu_pct)), ts) AS latest_cpu_pct,\n        argMax(toFloat64(assumeNotNull(mem_mb)), ts) AS latest_mem_mib\n    FROM resource_samples\n    WHERE origin = 'container'\n      AND cpu_pct IS NOT NULL\n      AND mem_mb IS NOT NULL\n      AND ts >= now() - INTERVAL 30 SECOND\n      AND engine IN (${engine:singlequote})\n      AND source IN (${source:singlequote})\n      AND session_id IN (SELECT session_id FROM sessions FINAL WHERE status = 'running')\n    GROUP BY session_id\n)\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "0",
+          "unit": "locale",
+          "decimals": 0,
+          "links": [
+            {
+              "title": "Running sessions",
+              "url": "/d/fleetscope-sessions?from=now-15m&to=now&${engine:queryparam}&${source:queryparam}&var-status=running",
+              "targetBlank": false
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "text": {
+          "valueSize": 22
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Sessions ↗",
+      "description": "Sessions started in the range, any status. Click to open them.",
+      "gridPos": {
+        "x": 6,
+        "y": 5,
+        "w": 6,
+        "h": 3
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "-- Sessions that started in the range, any status.\nWITH facts AS\n(\n    WITH\n        picked AS\n        (\n            SELECT *\n            FROM sessions FINAL\n            WHERE engine IN (${engine:singlequote})\n              AND source IN (${source:singlequote})\n              AND started_at <= $__toTime\n              AND (ended_at IS NULL OR ended_at >= $__fromTime)\n        ),\n        issue_facts AS\n        (\n            SELECT session_id, count() AS issue_count, toString(argMin(kind, ts)) AS first_issue\n            FROM issues\n            WHERE session_id IN (SELECT session_id FROM picked)\n              AND ts >= (SELECT min(started_at) FROM picked)\n            GROUP BY session_id\n        ),\n        action_facts AS\n        (\n            SELECT\n                session_id,\n                count() AS actions,\n                countIf(NOT ok) AS failed_actions,\n                ifNull(argMinIf(error_code, seq, NOT ok), '') AS first_failed_code\n            FROM actions\n            WHERE session_id IN (SELECT session_id FROM picked)\n              AND ts >= (SELECT min(started_at) FROM picked)\n            GROUP BY session_id\n        )\n    SELECT\n        p.session_id AS session_id,\n        p.agent_id AS agent_id,\n        p.source AS source,\n        p.engine AS engine,\n        p.engine_version AS engine_version,\n        p.provider AS provider,\n        p.scenario AS scenario,\n        p.started_at AS started_at,\n        p.ended_at AS ended_at,\n        p.status AS status,\n        p.reason AS reason,\n        p.duration_ms AS duration_ms,\n        p.startup_ms + p.connect_ms AS time_to_browser_ms,\n        (p.status = 'failed' AND ifNull(p.reason, '') = 'interrupted') AS is_interrupted,\n        a.actions AS actions,\n        a.failed_actions AS failed_actions,\n        i.issue_count AS issue_count,\n        multiIf(\n            p.status = 'running', 'running',\n            is_interrupted, 'interrupted',\n            p.status = 'success' AND a.failed_actions = 0 AND i.issue_count = 0, 'healthy',\n            p.status = 'success', 'degraded',\n            p.status = 'blocked', 'blocked',\n            'failed') AS display_status,\n        if(p.status NOT IN ('running', 'success') AND NOT is_interrupted,\n            multiIf(i.first_issue != '', i.first_issue, a.first_failed_code != '', a.first_failed_code, p.status),\n            NULL) AS cause,\n        if(cause IS NULL, NULL,\n            multiIf(i.first_issue != '', 'issue', a.first_failed_code != '', 'action', 'status')) AS cause_from,\n        (toUInt64(p.startup_ms) + p.connect_ms\n            + ifNull(p.duration_ms, dateDiff('millisecond', p.started_at, now64(3)))) / 3.6e6 AS browser_hours,\n        if(price.provider = '', NULL, browser_hours * price.usd_per_browser_hour) AS est_cost_usd\n    FROM picked AS p\n    LEFT JOIN issue_facts AS i ON i.session_id = p.session_id\n    LEFT JOIN action_facts AS a ON a.session_id = p.session_id\n    LEFT JOIN pricing_current AS price ON price.engine = p.engine AND price.provider = p.provider\n)\nSELECT count() AS sessions\nFROM facts\nWHERE $__timeFilter(started_at)\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "0",
+          "unit": "locale",
+          "decimals": 0,
+          "links": [
+            {
+              "title": "Sessions in this range",
+              "url": "/d/fleetscope-sessions?${__url_time_range}&${engine:queryparam}&${source:queryparam}",
+              "targetBlank": false
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "text": {
+          "valueSize": 22
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Success rate ↗",
+      "description": "Success divided by ended sessions. Running and interrupted sessions are left out; blocked counts against it. 95% or more is healthy, 90 to 95% degraded, below 90% failed. Click to open the failed and blocked sessions.",
+      "gridPos": {
+        "x": 12,
+        "y": 5,
+        "w": 6,
+        "h": 3
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "-- Success rate = (healthy + degraded) / sessions that ended in the range. Interrupted ones are left out; blocked counts against it.\nWITH facts AS\n(\n    WITH\n        picked AS\n        (\n            SELECT *\n            FROM sessions FINAL\n            WHERE engine IN (${engine:singlequote})\n              AND source IN (${source:singlequote})\n              AND started_at <= $__toTime\n              AND (ended_at IS NULL OR ended_at >= $__fromTime)\n        ),\n        issue_facts AS\n        (\n            SELECT session_id, count() AS issue_count, toString(argMin(kind, ts)) AS first_issue\n            FROM issues\n            WHERE session_id IN (SELECT session_id FROM picked)\n              AND ts >= (SELECT min(started_at) FROM picked)\n            GROUP BY session_id\n        ),\n        action_facts AS\n        (\n            SELECT\n                session_id,\n                count() AS actions,\n                countIf(NOT ok) AS failed_actions,\n                ifNull(argMinIf(error_code, seq, NOT ok), '') AS first_failed_code\n            FROM actions\n            WHERE session_id IN (SELECT session_id FROM picked)\n              AND ts >= (SELECT min(started_at) FROM picked)\n            GROUP BY session_id\n        )\n    SELECT\n        p.session_id AS session_id,\n        p.agent_id AS agent_id,\n        p.source AS source,\n        p.engine AS engine,\n        p.engine_version AS engine_version,\n        p.provider AS provider,\n        p.scenario AS scenario,\n        p.started_at AS started_at,\n        p.ended_at AS ended_at,\n        p.status AS status,\n        p.reason AS reason,\n        p.duration_ms AS duration_ms,\n        p.startup_ms + p.connect_ms AS time_to_browser_ms,\n        (p.status = 'failed' AND ifNull(p.reason, '') = 'interrupted') AS is_interrupted,\n        a.actions AS actions,\n        a.failed_actions AS failed_actions,\n        i.issue_count AS issue_count,\n        multiIf(\n            p.status = 'running', 'running',\n            is_interrupted, 'interrupted',\n            p.status = 'success' AND a.failed_actions = 0 AND i.issue_count = 0, 'healthy',\n            p.status = 'success', 'degraded',\n            p.status = 'blocked', 'blocked',\n            'failed') AS display_status,\n        if(p.status NOT IN ('running', 'success') AND NOT is_interrupted,\n            multiIf(i.first_issue != '', i.first_issue, a.first_failed_code != '', a.first_failed_code, p.status),\n            NULL) AS cause,\n        if(cause IS NULL, NULL,\n            multiIf(i.first_issue != '', 'issue', a.first_failed_code != '', 'action', 'status')) AS cause_from,\n        (toUInt64(p.startup_ms) + p.connect_ms\n            + ifNull(p.duration_ms, dateDiff('millisecond', p.started_at, now64(3)))) / 3.6e6 AS browser_hours,\n        if(price.provider = '', NULL, browser_hours * price.usd_per_browser_hour) AS est_cost_usd\n    FROM picked AS p\n    LEFT JOIN issue_facts AS i ON i.session_id = p.session_id\n    LEFT JOIN action_facts AS a ON a.session_id = p.session_id\n    LEFT JOIN pricing_current AS price ON price.engine = p.engine AND price.provider = p.provider\n)\nSELECT\n    if(ended = 0, NULL, 100 * succeeded / ended) AS success_rate\nFROM\n(\n    SELECT\n        countIf(NOT is_interrupted) AS ended,\n        countIf(display_status IN ('healthy', 'degraded')) AS succeeded\n    FROM facts\n    WHERE ended_at IS NOT NULL AND $__timeFilter(ended_at)\n)\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "—",
+                  "index": 0,
+                  "color": "#9AA9BB"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "—",
+                  "index": 1,
+                  "color": "#9AA9BB"
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#FF7B7B",
+                "value": null
+              },
+              {
+                "color": "#FFD95A",
+                "value": 90
+              },
+              {
+                "color": "#6EE7A8",
+                "value": 95
+              }
+            ]
+          },
+          "noValue": "—",
+          "unit": "percent",
+          "decimals": 1,
+          "links": [
+            {
+              "title": "Failed and blocked sessions",
+              "url": "/d/fleetscope-sessions?${__url_time_range}&${engine:queryparam}&${source:queryparam}&var-status=failed&var-status=blocked",
+              "targetBlank": false
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "text": {
+          "valueSize": 22
+        }
+      }
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "p95 action latency ↗",
+      "description": "95th percentile of action duration over the range, merged from the per-minute rollup. Click to open the sessions.",
+      "gridPos": {
+        "x": 18,
+        "y": 5,
+        "w": 6,
+        "h": 3
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "-- p95 action latency over the range, merged from the per-minute rollup (never an average of p95s).\nSELECT\n    if(countMerge(actions) = 0, NULL, quantilesMerge(0.5, 0.95)(action_ms)[2]) AS p95_ms\nFROM fleet_minute\nWHERE $__timeFilter(minute)\n  AND engine IN (${engine:singlequote})\n  AND source IN (${source:singlequote})\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "—",
+                  "index": 0
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "—",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "—",
+          "unit": "ms",
+          "links": [
+            {
+              "title": "Sessions in this range",
+              "url": "/d/fleetscope-sessions?${__url_time_range}&${engine:queryparam}&${source:queryparam}",
+              "targetBlank": false
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "text": {
+          "valueSize": 22
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "stat",
+      "title": "CPU in use ↗",
+      "description": "Sum of the latest CPU sample of every running session (Docker stats, 100% = one core). Ignores the time range.",
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 6,
+        "h": 3
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "-- CPU in use now: the latest container sample of each running session, summed (Docker stats: 100% = one core).\n-- Ignores the time range. No running session = 0.\nSELECT sum(latest_cpu_pct) / 100 AS cpu_cores\nFROM\n(\n    SELECT\n        session_id,\n        argMax(toFloat64(assumeNotNull(cpu_pct)), ts) AS latest_cpu_pct,\n        argMax(toFloat64(assumeNotNull(mem_mb)), ts) AS latest_mem_mib\n    FROM resource_samples\n    WHERE origin = 'container'\n      AND cpu_pct IS NOT NULL\n      AND mem_mb IS NOT NULL\n      AND ts >= now() - INTERVAL 30 SECOND\n      AND engine IN (${engine:singlequote})\n      AND source IN (${source:singlequote})\n      AND session_id IN (SELECT session_id FROM sessions FINAL WHERE status = 'running')\n    GROUP BY session_id\n)\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "0",
+          "unit": "suffix: cores",
+          "decimals": 1,
+          "links": [
+            {
+              "title": "Running sessions",
+              "url": "/d/fleetscope-sessions?from=now-15m&to=now&${engine:queryparam}&${source:queryparam}&var-status=running",
+              "targetBlank": false
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "text": {
+          "valueSize": 22
+        }
+      }
+    },
+    {
+      "id": 9,
+      "type": "stat",
+      "title": "Memory in use ↗",
+      "description": "Sum of the latest memory sample of every running session (Docker stats, MiB). Ignores the time range.",
+      "gridPos": {
+        "x": 6,
+        "y": 8,
+        "w": 6,
+        "h": 3
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "-- Memory in use now: the latest container sample of each running session, summed (MiB).\n-- Ignores the time range. No running session = 0.\nSELECT sum(latest_mem_mib) AS memory_mib\nFROM\n(\n    SELECT\n        session_id,\n        argMax(toFloat64(assumeNotNull(cpu_pct)), ts) AS latest_cpu_pct,\n        argMax(toFloat64(assumeNotNull(mem_mb)), ts) AS latest_mem_mib\n    FROM resource_samples\n    WHERE origin = 'container'\n      AND cpu_pct IS NOT NULL\n      AND mem_mb IS NOT NULL\n      AND ts >= now() - INTERVAL 30 SECOND\n      AND engine IN (${engine:singlequote})\n      AND source IN (${source:singlequote})\n      AND session_id IN (SELECT session_id FROM sessions FINAL WHERE status = 'running')\n    GROUP BY session_id\n)\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "0",
+          "unit": "mbytes",
+          "decimals": 1,
+          "links": [
+            {
+              "title": "Running sessions",
+              "url": "/d/fleetscope-sessions?from=now-15m&to=now&${engine:queryparam}&${source:queryparam}&var-status=running",
+              "targetBlank": false
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "text": {
+          "valueSize": 22
+        }
+      }
+    },
+    {
+      "id": 10,
+      "type": "stat",
+      "title": "Estimated cost ↗",
+      "description": "Browser-hours × $0.10 per browser-hour (Browserbase's published price, from the `pricing` table). An estimate, not a bill. Not available when a session has no price. Click to open the sessions.",
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 6,
+        "h": 3
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "-- ESTIMATED cost of the sessions that started in the range: browser-hours x reference price (pricing_current).\n-- Browser-hours = (startup + connect + duration) / 3.6e6; a running session counts until now. Not a bill.\n-- Null (shown as Not available) when a session has no price.\nWITH facts AS\n(\n    WITH\n        picked AS\n        (\n            SELECT *\n            FROM sessions FINAL\n            WHERE engine IN (${engine:singlequote})\n              AND source IN (${source:singlequote})\n              AND started_at <= $__toTime\n              AND (ended_at IS NULL OR ended_at >= $__fromTime)\n        ),\n        issue_facts AS\n        (\n            SELECT session_id, count() AS issue_count, toString(argMin(kind, ts)) AS first_issue\n            FROM issues\n            WHERE session_id IN (SELECT session_id FROM picked)\n              AND ts >= (SELECT min(started_at) FROM picked)\n            GROUP BY session_id\n        ),\n        action_facts AS\n        (\n            SELECT\n                session_id,\n                count() AS actions,\n                countIf(NOT ok) AS failed_actions,\n                ifNull(argMinIf(error_code, seq, NOT ok), '') AS first_failed_code\n            FROM actions\n            WHERE session_id IN (SELECT session_id FROM picked)\n              AND ts >= (SELECT min(started_at) FROM picked)\n            GROUP BY session_id\n        )\n    SELECT\n        p.session_id AS session_id,\n        p.agent_id AS agent_id,\n        p.source AS source,\n        p.engine AS engine,\n        p.engine_version AS engine_version,\n        p.provider AS provider,\n        p.scenario AS scenario,\n        p.started_at AS started_at,\n        p.ended_at AS ended_at,\n        p.status AS status,\n        p.reason AS reason,\n        p.duration_ms AS duration_ms,\n        p.startup_ms + p.connect_ms AS time_to_browser_ms,\n        (p.status = 'failed' AND ifNull(p.reason, '') = 'interrupted') AS is_interrupted,\n        a.actions AS actions,\n        a.failed_actions AS failed_actions,\n        i.issue_count AS issue_count,\n        multiIf(\n            p.status = 'running', 'running',\n            is_interrupted, 'interrupted',\n            p.status = 'success' AND a.failed_actions = 0 AND i.issue_count = 0, 'healthy',\n            p.status = 'success', 'degraded',\n            p.status = 'blocked', 'blocked',\n            'failed') AS display_status,\n        if(p.status NOT IN ('running', 'success') AND NOT is_interrupted,\n            multiIf(i.first_issue != '', i.first_issue, a.first_failed_code != '', a.first_failed_code, p.status),\n            NULL) AS cause,\n        if(cause IS NULL, NULL,\n            multiIf(i.first_issue != '', 'issue', a.first_failed_code != '', 'action', 'status')) AS cause_from,\n        (toUInt64(p.startup_ms) + p.connect_ms\n            + ifNull(p.duration_ms, dateDiff('millisecond', p.started_at, now64(3)))) / 3.6e6 AS browser_hours,\n        if(price.provider = '', NULL, browser_hours * price.usd_per_browser_hour) AS est_cost_usd\n    FROM picked AS p\n    LEFT JOIN issue_facts AS i ON i.session_id = p.session_id\n    LEFT JOIN action_facts AS a ON a.session_id = p.session_id\n    LEFT JOIN pricing_current AS price ON price.engine = p.engine AND price.provider = p.provider\n)\nSELECT\n    multiIf(count() = 0, 0, countIf(est_cost_usd IS NULL) > 0, NULL, sum(est_cost_usd)) AS estimated_cost_usd\nFROM facts\nWHERE $__timeFilter(started_at)\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "Not available",
+                  "index": 0
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "Not available",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "—",
+          "unit": "currencyUSD",
+          "decimals": 2,
+          "links": [
+            {
+              "title": "Sessions in this range",
+              "url": "/d/fleetscope-sessions?${__url_time_range}&${engine:queryparam}&${source:queryparam}",
+              "targetBlank": false
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "text": {
+          "valueSize": 22
+        }
+      }
+    },
+    {
+      "id": 11,
+      "type": "stat",
+      "title": "Interrupted ↗",
+      "description": "Sessions the runner ended on Ctrl+C (reason = interrupted). They are not failures and are in no rate. Click to open them.",
+      "gridPos": {
+        "x": 18,
+        "y": 8,
+        "w": 6,
+        "h": 3
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "-- Sessions the runner ended on Ctrl+C. They are not failures: counted here and in no rate.\nWITH facts AS\n(\n    WITH\n        picked AS\n        (\n            SELECT *\n            FROM sessions FINAL\n            WHERE engine IN (${engine:singlequote})\n              AND source IN (${source:singlequote})\n              AND started_at <= $__toTime\n              AND (ended_at IS NULL OR ended_at >= $__fromTime)\n        ),\n        issue_facts AS\n        (\n            SELECT session_id, count() AS issue_count, toString(argMin(kind, ts)) AS first_issue\n            FROM issues\n            WHERE session_id IN (SELECT session_id FROM picked)\n              AND ts >= (SELECT min(started_at) FROM picked)\n            GROUP BY session_id\n        ),\n        action_facts AS\n        (\n            SELECT\n                session_id,\n                count() AS actions,\n                countIf(NOT ok) AS failed_actions,\n                ifNull(argMinIf(error_code, seq, NOT ok), '') AS first_failed_code\n            FROM actions\n            WHERE session_id IN (SELECT session_id FROM picked)\n              AND ts >= (SELECT min(started_at) FROM picked)\n            GROUP BY session_id\n        )\n    SELECT\n        p.session_id AS session_id,\n        p.agent_id AS agent_id,\n        p.source AS source,\n        p.engine AS engine,\n        p.engine_version AS engine_version,\n        p.provider AS provider,\n        p.scenario AS scenario,\n        p.started_at AS started_at,\n        p.ended_at AS ended_at,\n        p.status AS status,\n        p.reason AS reason,\n        p.duration_ms AS duration_ms,\n        p.startup_ms + p.connect_ms AS time_to_browser_ms,\n        (p.status = 'failed' AND ifNull(p.reason, '') = 'interrupted') AS is_interrupted,\n        a.actions AS actions,\n        a.failed_actions AS failed_actions,\n        i.issue_count AS issue_count,\n        multiIf(\n            p.status = 'running', 'running',\n            is_interrupted, 'interrupted',\n            p.status = 'success' AND a.failed_actions = 0 AND i.issue_count = 0, 'healthy',\n            p.status = 'success', 'degraded',\n            p.status = 'blocked', 'blocked',\n            'failed') AS display_status,\n        if(p.status NOT IN ('running', 'success') AND NOT is_interrupted,\n            multiIf(i.first_issue != '', i.first_issue, a.first_failed_code != '', a.first_failed_code, p.status),\n            NULL) AS cause,\n        if(cause IS NULL, NULL,\n            multiIf(i.first_issue != '', 'issue', a.first_failed_code != '', 'action', 'status')) AS cause_from,\n        (toUInt64(p.startup_ms) + p.connect_ms\n            + ifNull(p.duration_ms, dateDiff('millisecond', p.started_at, now64(3)))) / 3.6e6 AS browser_hours,\n        if(price.provider = '', NULL, browser_hours * price.usd_per_browser_hour) AS est_cost_usd\n    FROM picked AS p\n    LEFT JOIN issue_facts AS i ON i.session_id = p.session_id\n    LEFT JOIN action_facts AS a ON a.session_id = p.session_id\n    LEFT JOIN pricing_current AS price ON price.engine = p.engine AND price.provider = p.provider\n)\nSELECT countIf(is_interrupted) AS interrupted\nFROM facts\nWHERE ended_at IS NOT NULL AND $__timeFilter(ended_at)\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "0",
+          "unit": "locale",
+          "decimals": 0,
+          "links": [
+            {
+              "title": "Interrupted sessions",
+              "url": "/d/fleetscope-sessions?${__url_time_range}&${engine:queryparam}&${source:queryparam}&var-status=interrupted",
+              "targetBlank": false
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "text": {
+          "valueSize": 22
+        }
+      }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Error rate by engine ↗",
+      "description": "Error rate = 100 minus the success rate, per bucket of ended_at: sessions that did not succeed, interrupted ones left out. Shaded areas: 5% degraded, 10% failed. Click a line to open its sessions. The link carries the whole panel range, not the clicked minute: drag across a spike to zoom, then click.",
+      "gridPos": {
+        "x": 0,
+        "y": 11,
+        "w": 24,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "interval": "5m",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "timeseries",
+          "rawSql": "-- Error rate = 100 - success rate, per engine and per bucket of ended_at. Per session, not per action;\n-- interrupted sessions are left out, so the chart agrees with the verdict.\nWITH facts AS\n(\n    WITH\n        picked AS\n        (\n            SELECT *\n            FROM sessions FINAL\n            WHERE engine IN (${engine:singlequote})\n              AND source IN (${source:singlequote})\n              AND started_at <= $__toTime\n              AND (ended_at IS NULL OR ended_at >= $__fromTime)\n        ),\n        issue_facts AS\n        (\n            SELECT session_id, count() AS issue_count, toString(argMin(kind, ts)) AS first_issue\n            FROM issues\n            WHERE session_id IN (SELECT session_id FROM picked)\n              AND ts >= (SELECT min(started_at) FROM picked)\n            GROUP BY session_id\n        ),\n        action_facts AS\n        (\n            SELECT\n                session_id,\n                count() AS actions,\n                countIf(NOT ok) AS failed_actions,\n                ifNull(argMinIf(error_code, seq, NOT ok), '') AS first_failed_code\n            FROM actions\n            WHERE session_id IN (SELECT session_id FROM picked)\n              AND ts >= (SELECT min(started_at) FROM picked)\n            GROUP BY session_id\n        )\n    SELECT\n        p.session_id AS session_id,\n        p.agent_id AS agent_id,\n        p.source AS source,\n        p.engine AS engine,\n        p.engine_version AS engine_version,\n        p.provider AS provider,\n        p.scenario AS scenario,\n        p.started_at AS started_at,\n        p.ended_at AS ended_at,\n        p.status AS status,\n        p.reason AS reason,\n        p.duration_ms AS duration_ms,\n        p.startup_ms + p.connect_ms AS time_to_browser_ms,\n        (p.status = 'failed' AND ifNull(p.reason, '') = 'interrupted') AS is_interrupted,\n        a.actions AS actions,\n        a.failed_actions AS failed_actions,\n        i.issue_count AS issue_count,\n        multiIf(\n            p.status = 'running', 'running',\n            is_interrupted, 'interrupted',\n            p.status = 'success' AND a.failed_actions = 0 AND i.issue_count = 0, 'healthy',\n            p.status = 'success', 'degraded',\n            p.status = 'blocked', 'blocked',\n            'failed') AS display_status,\n        if(p.status NOT IN ('running', 'success') AND NOT is_interrupted,\n            multiIf(i.first_issue != '', i.first_issue, a.first_failed_code != '', a.first_failed_code, p.status),\n            NULL) AS cause,\n        if(cause IS NULL, NULL,\n            multiIf(i.first_issue != '', 'issue', a.first_failed_code != '', 'action', 'status')) AS cause_from,\n        (toUInt64(p.startup_ms) + p.connect_ms\n            + ifNull(p.duration_ms, dateDiff('millisecond', p.started_at, now64(3)))) / 3.6e6 AS browser_hours,\n        if(price.provider = '', NULL, browser_hours * price.usd_per_browser_hour) AS est_cost_usd\n    FROM picked AS p\n    LEFT JOIN issue_facts AS i ON i.session_id = p.session_id\n    LEFT JOIN action_facts AS a ON a.session_id = p.session_id\n    LEFT JOIN pricing_current AS price ON price.engine = p.engine AND price.provider = p.provider\n)\nSELECT\n    $__timeInterval(ended_at) AS time,\n    engine,\n    if(countIf(NOT is_interrupted) = 0, NULL,\n        100 * countIf(NOT is_interrupted AND status != 'success') / countIf(NOT is_interrupted)) AS error_rate\nFROM facts\nWHERE ended_at IS NOT NULL AND $__timeFilter(ended_at)\nGROUP BY time, engine\nORDER BY time\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#9AA9BB"
+          },
+          "displayName": "${__field.labels.engine}",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "lineInterpolation": "linear",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "showPoints": "auto",
+            "pointSize": 5,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisPlacement": "auto",
+            "axisBorderShow": false,
+            "axisSoftMin": 0,
+            "thresholdsStyle": {
+              "mode": "area"
+            }
+          },
+          "unit": "percent",
+          "decimals": 1,
+          "min": 0,
+          "noValue": "No sessions ended in this range",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              },
+              {
+                "color": "#FFD95A",
+                "value": 5
+              },
+              {
+                "color": "#FF7B7B",
+                "value": 10
+              }
+            ]
+          },
+          "links": [
+            {
+              "title": "Failed sessions of ${__field.labels.engine}",
+              "url": "/d/fleetscope-sessions?${__url_time_range}&var-engine=${__field.labels.engine}&${source:queryparam}&var-status=failed&var-status=blocked",
+              "targetBlank": false
+            }
+          ]
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/chromium/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#56B4E9"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "solid"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/chrome-headless-shell/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#E69F00"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/lightpanda/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#CC79A7"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dot",
+                  "dash": [
+                    0,
+                    10
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc",
+          "hideZeros": false
+        }
+      }
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Active sessions by engine ↗",
+      "description": "Sessions running in each bucket, counted from the sessions table at query time. Click a line to open its sessions. The link carries the whole panel range, not the clicked minute: drag across a spike to zoom, then click.",
+      "gridPos": {
+        "x": 0,
+        "y": 19,
+        "w": 12,
+        "h": 7
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "interval": "1m",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "timeseries",
+          "rawSql": "-- Sessions running in each bucket, per engine: a session counts in every minute from its start to its end\n-- (until now if it has not ended). Comes from the sessions table at query time, not from the rollup.\nSELECT\n    $__timeInterval(minute) AS time,\n    engine,\n    uniq(session_id) AS active_sessions\nFROM\n(\n    SELECT\n        session_id,\n        engine,\n        arrayJoin(range(\n            greatest(toUInt32(toStartOfMinute(started_at)), toUInt32(toStartOfMinute($__fromTime))),\n            least(toUInt32(toStartOfMinute(coalesce(ended_at, now64(3)))), toUInt32($__toTime)) + 1,\n            60)) AS minute_epoch,\n        toDateTime(minute_epoch, 'UTC') AS minute\n    FROM sessions FINAL\n    WHERE engine IN (${engine:singlequote})\n      AND source IN (${source:singlequote})\n      AND started_at <= $__toTime\n      AND coalesce(ended_at, now64(3)) >= $__fromTime\n)\nGROUP BY time, engine\nORDER BY time\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#9AA9BB"
+          },
+          "displayName": "${__field.labels.engine}",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "lineInterpolation": "linear",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "showPoints": "auto",
+            "pointSize": 5,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisPlacement": "auto",
+            "axisBorderShow": false,
+            "axisSoftMin": 0,
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "unit": "locale",
+          "decimals": 0,
+          "min": 0,
+          "noValue": "No sessions in this range",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "links": [
+            {
+              "title": "Sessions of ${__field.labels.engine}",
+              "url": "/d/fleetscope-sessions?${__url_time_range}&var-engine=${__field.labels.engine}&${source:queryparam}",
+              "targetBlank": false
+            }
+          ]
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/chromium/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#56B4E9"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "solid"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/chrome-headless-shell/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#E69F00"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/lightpanda/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#CC79A7"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dot",
+                  "dash": [
+                    0,
+                    10
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc",
+          "hideZeros": false
+        }
+      }
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Actions per minute by engine ↗",
+      "description": "Browser actions per minute from the per-minute rollup (fleet_minute), divided by the bucket length. Click a line to open its sessions. The link carries the whole panel range, not the clicked minute: drag across a spike to zoom, then click.",
+      "gridPos": {
+        "x": 12,
+        "y": 19,
+        "w": 12,
+        "h": 7
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "interval": "1m",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "timeseries",
+          "rawSql": "-- Actions per minute, per engine, from the per-minute rollup (buckets wider than a minute are divided down).\nSELECT\n    $__timeInterval(minute) AS time,\n    engine,\n    countMerge(actions) / (greatest($__interval_s, 60) / 60) AS actions_per_min\nFROM fleet_minute\nWHERE $__timeFilter(minute)\n  AND engine IN (${engine:singlequote})\n  AND source IN (${source:singlequote})\nGROUP BY time, engine\nORDER BY time\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#9AA9BB"
+          },
+          "displayName": "${__field.labels.engine}",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "lineInterpolation": "linear",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "showPoints": "auto",
+            "pointSize": 5,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisPlacement": "auto",
+            "axisBorderShow": false,
+            "axisSoftMin": 0,
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "unit": "suffix: /min",
+          "decimals": 0,
+          "min": 0,
+          "noValue": "No actions in this range",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "links": [
+            {
+              "title": "Sessions of ${__field.labels.engine}",
+              "url": "/d/fleetscope-sessions?${__url_time_range}&var-engine=${__field.labels.engine}&${source:queryparam}",
+              "targetBlank": false
+            }
+          ]
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/chromium/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#56B4E9"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "solid"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/chrome-headless-shell/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#E69F00"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/lightpanda/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#CC79A7"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dot",
+                  "dash": [
+                    0,
+                    10
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc",
+          "hideZeros": false
+        }
+      }
+    },
+    {
+      "id": 15,
+      "type": "table",
+      "title": "By engine ↗",
+      "description": "Sessions started in the range, per engine. Success rate leaves running and interrupted sessions out. CPU is the average of container samples (% of one core), Memory the average of each session's peak. Cost: Browser-hours × $0.10 per browser-hour (Browserbase's published price, from the `pricing` table). An estimate, not a bill. Click an engine to open its sessions.",
+      "gridPos": {
+        "x": 0,
+        "y": 26,
+        "w": 24,
+        "h": 6
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "-- One row per engine. No totals row: the KPI row is the total (a footer would average the rates).\n-- Sessions = started in the range; success rate and top cause = ended in the range (interrupted left out).\n-- p95 and CPU come from the per-minute rollup; Memory is the average of each session's peak; cost is an estimate.\nWITH facts AS\n(\n    WITH\n        picked AS\n        (\n            SELECT *\n            FROM sessions FINAL\n            WHERE engine IN (${engine:singlequote})\n              AND source IN (${source:singlequote})\n              AND started_at <= $__toTime\n              AND (ended_at IS NULL OR ended_at >= $__fromTime)\n        ),\n        issue_facts AS\n        (\n            SELECT session_id, count() AS issue_count, toString(argMin(kind, ts)) AS first_issue\n            FROM issues\n            WHERE session_id IN (SELECT session_id FROM picked)\n              AND ts >= (SELECT min(started_at) FROM picked)\n            GROUP BY session_id\n        ),\n        action_facts AS\n        (\n            SELECT\n                session_id,\n                count() AS actions,\n                countIf(NOT ok) AS failed_actions,\n                ifNull(argMinIf(error_code, seq, NOT ok), '') AS first_failed_code\n            FROM actions\n            WHERE session_id IN (SELECT session_id FROM picked)\n              AND ts >= (SELECT min(started_at) FROM picked)\n            GROUP BY session_id\n        )\n    SELECT\n        p.session_id AS session_id,\n        p.agent_id AS agent_id,\n        p.source AS source,\n        p.engine AS engine,\n        p.engine_version AS engine_version,\n        p.provider AS provider,\n        p.scenario AS scenario,\n        p.started_at AS started_at,\n        p.ended_at AS ended_at,\n        p.status AS status,\n        p.reason AS reason,\n        p.duration_ms AS duration_ms,\n        p.startup_ms + p.connect_ms AS time_to_browser_ms,\n        (p.status = 'failed' AND ifNull(p.reason, '') = 'interrupted') AS is_interrupted,\n        a.actions AS actions,\n        a.failed_actions AS failed_actions,\n        i.issue_count AS issue_count,\n        multiIf(\n            p.status = 'running', 'running',\n            is_interrupted, 'interrupted',\n            p.status = 'success' AND a.failed_actions = 0 AND i.issue_count = 0, 'healthy',\n            p.status = 'success', 'degraded',\n            p.status = 'blocked', 'blocked',\n            'failed') AS display_status,\n        if(p.status NOT IN ('running', 'success') AND NOT is_interrupted,\n            multiIf(i.first_issue != '', i.first_issue, a.first_failed_code != '', a.first_failed_code, p.status),\n            NULL) AS cause,\n        if(cause IS NULL, NULL,\n            multiIf(i.first_issue != '', 'issue', a.first_failed_code != '', 'action', 'status')) AS cause_from,\n        (toUInt64(p.startup_ms) + p.connect_ms\n            + ifNull(p.duration_ms, dateDiff('millisecond', p.started_at, now64(3)))) / 3.6e6 AS browser_hours,\n        if(price.provider = '', NULL, browser_hours * price.usd_per_browser_hour) AS est_cost_usd\n    FROM picked AS p\n    LEFT JOIN issue_facts AS i ON i.session_id = p.session_id\n    LEFT JOIN action_facts AS a ON a.session_id = p.session_id\n    LEFT JOIN pricing_current AS price ON price.engine = p.engine AND price.provider = p.provider\n),\n    per_engine AS\n    (\n        SELECT\n            engine,\n            argMax(engine_version, started_at) AS version,\n            countIf($__timeFilter(started_at)) AS sessions,\n            countIf(ended_at IS NOT NULL AND $__timeFilter(ended_at) AND NOT is_interrupted) AS ended,\n            countIf(ended_at IS NOT NULL AND $__timeFilter(ended_at) AND display_status IN ('healthy', 'degraded')) AS succeeded,\n            if(ended = 0, NULL, 100 * succeeded / ended) AS success_rate,\n            if(countIf($__timeFilter(started_at) AND est_cost_usd IS NULL) > 0, NULL, sumIf(est_cost_usd, $__timeFilter(started_at))) AS estimated_cost_usd\n        FROM facts\n        GROUP BY engine\n    ),\n    running AS\n    (\n        SELECT engine, uniq(session_id) AS active_now\n        FROM resource_samples\n        WHERE origin = 'container'\n          AND ts >= now() - INTERVAL 30 SECOND\n          AND engine IN (${engine:singlequote})\n          AND source IN (${source:singlequote})\n          AND session_id IN (SELECT session_id FROM sessions FINAL WHERE status = 'running')\n        GROUP BY engine\n    ),\n    rollup AS\n    (\n        SELECT\n            engine,\n            countMerge(actions) AS action_count,\n            quantilesMerge(0.5, 0.95)(action_ms)[2] AS p95_ms,\n            if(countMerge(samples) = 0, NULL, sumMerge(cpu_pct_sum) / countMerge(samples)) AS cpu_pct\n        FROM fleet_minute\n        WHERE $__timeFilter(minute)\n          AND engine IN (${engine:singlequote})\n          AND source IN (${source:singlequote})\n        GROUP BY engine\n    ),\n    peaks AS\n    (\n        SELECT engine, avgOrNull(peak_mib) AS avg_peak_mib\n        FROM\n        (\n            SELECT engine, session_id, maxOrNull(mem_mb) AS peak_mib\n            FROM resource_samples\n            WHERE origin = 'container'\n              AND ts >= $__fromTime\n              AND session_id IN (SELECT session_id FROM facts WHERE $__timeFilter(started_at))\n            GROUP BY engine, session_id\n        )\n        GROUP BY engine\n    ),\n    causes AS\n    (\n        SELECT engine, argMax(cause, n) AS top_cause, max(n) AS top_n\n        FROM\n        (\n            SELECT engine, cause, count() AS n\n            FROM facts\n            WHERE ended_at IS NOT NULL AND $__timeFilter(ended_at) AND cause IS NOT NULL\n            GROUP BY engine, cause\n        )\n        GROUP BY engine\n    )\nSELECT\n    e.engine AS engine,\n    e.version AS version,\n    multiIf(e.success_rate IS NULL, NULL, e.success_rate >= 95, 'healthy', e.success_rate >= 90, 'degraded', 'failed') AS status,\n    r.active_now AS active_now,\n    e.sessions AS sessions,\n    e.success_rate AS success_rate,\n    if(ro.action_count = 0, NULL, ro.p95_ms) AS p95_ms,\n    ro.cpu_pct AS cpu_pct,\n    p.avg_peak_mib AS avg_peak_mib,\n    e.estimated_cost_usd AS estimated_cost_usd,\n    if(c.top_n = 0, NULL, concat(c.top_cause, ' ×', toString(c.top_n))) AS top_cause\nFROM per_engine AS e\nLEFT JOIN running AS r ON r.engine = e.engine\nLEFT JOIN rollup AS ro ON ro.engine = e.engine\nLEFT JOIN peaks AS p ON p.engine = e.engine\nLEFT JOIN causes AS c ON c.engine = e.engine\nORDER BY e.engine\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false,
+            "filterable": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "No sessions in this range"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "engine"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Engine"
+              },
+              {
+                "id": "custom.width",
+                "value": 210
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Sessions of this engine",
+                    "url": "/d/fleetscope-sessions?${__url_time_range}&var-engine=${__data.fields.engine}&${source:queryparam}",
+                    "targetBlank": false
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "version"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Version"
+              },
+              {
+                "id": "custom.width",
+                "value": 110
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "not reported",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "not reported",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "status"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Status"
+              },
+              {
+                "id": "custom.width",
+                "value": 130
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "healthy": {
+                        "index": 0,
+                        "text": "✓ Healthy",
+                        "color": "#6EE7A8"
+                      },
+                      "degraded": {
+                        "index": 1,
+                        "text": "▲ Degraded",
+                        "color": "#FFD95A"
+                      },
+                      "failed": {
+                        "index": 2,
+                        "text": "✕ Failed",
+                        "color": "#FF7B7B"
+                      },
+                      "blocked": {
+                        "index": 3,
+                        "text": "⊘ Blocked",
+                        "color": "#D9CCFF"
+                      },
+                      "running": {
+                        "index": 4,
+                        "text": "○ Running",
+                        "color": "#9AA9BB"
+                      },
+                      "interrupted": {
+                        "index": 5,
+                        "text": "■ Interrupted",
+                        "color": "#7D8DA1"
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "—",
+                        "index": 6
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "—",
+                        "index": 7
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "active_now"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Active now"
+              },
+              {
+                "id": "custom.width",
+                "value": 105
+              },
+              {
+                "id": "unit",
+                "value": "locale"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "sessions"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Sessions"
+              },
+              {
+                "id": "custom.width",
+                "value": 100
+              },
+              {
+                "id": "unit",
+                "value": "locale"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "success_rate"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Success rate"
+              },
+              {
+                "id": "custom.width",
+                "value": 120
+              },
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "—",
+                        "index": 0,
+                        "color": "#9AA9BB"
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "—",
+                        "index": 1,
+                        "color": "#9AA9BB"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "#FF7B7B",
+                      "value": null
+                    },
+                    {
+                      "color": "#FFD95A",
+                      "value": 90
+                    },
+                    {
+                      "color": "#6EE7A8",
+                      "value": 95
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p95_ms"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "p95 latency"
+              },
+              {
+                "id": "custom.width",
+                "value": 110
+              },
+              {
+                "id": "unit",
+                "value": "ms"
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "—",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "—",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cpu_pct"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "CPU"
+              },
+              {
+                "id": "custom.width",
+                "value": 90
+              },
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "Not available",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "Not available",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "avg_peak_mib"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Memory"
+              },
+              {
+                "id": "custom.width",
+                "value": 100
+              },
+              {
+                "id": "unit",
+                "value": "mbytes"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "Not available",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "Not available",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "estimated_cost_usd"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Est. cost"
+              },
+              {
+                "id": "custom.width",
+                "value": 100
+              },
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "decimals",
+                "value": 2
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "Not available",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "Not available",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "top_cause"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Top cause"
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "—",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "—",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "enablePagination": false,
+        "footer": {
+          "show": false,
+          "reducer": [
+            "count"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      }
+    },
+    {
+      "id": 16,
+      "type": "table",
+      "title": "Recent failures ↗",
+      "description": "The 15 newest sessions that did not succeed (failed, timeout, crashed or blocked), started in the range. Interrupted sessions are left out. Session shows the first 8 characters of the id. Cause is the code and message. Click a status or a session to open it.",
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 14,
+        "h": 9
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "-- The 15 newest sessions that ended in the range without success (interrupted left out), with their cause.\n-- Cause = \"code: reason\". Session shows the first 8 characters of a UUID; session_id, from_ms and to_ms (hidden)\n-- feed the Session detail link: the range is start - 5 s ... end + 5 s.\nWITH facts AS\n(\n    WITH\n        picked AS\n        (\n            SELECT *\n            FROM sessions FINAL\n            WHERE engine IN (${engine:singlequote})\n              AND source IN (${source:singlequote})\n              AND started_at <= $__toTime\n              AND (ended_at IS NULL OR ended_at >= $__fromTime)\n        ),\n        issue_facts AS\n        (\n            SELECT session_id, count() AS issue_count, toString(argMin(kind, ts)) AS first_issue\n            FROM issues\n            WHERE session_id IN (SELECT session_id FROM picked)\n              AND ts >= (SELECT min(started_at) FROM picked)\n            GROUP BY session_id\n        ),\n        action_facts AS\n        (\n            SELECT\n                session_id,\n                count() AS actions,\n                countIf(NOT ok) AS failed_actions,\n                ifNull(argMinIf(error_code, seq, NOT ok), '') AS first_failed_code\n            FROM actions\n            WHERE session_id IN (SELECT session_id FROM picked)\n              AND ts >= (SELECT min(started_at) FROM picked)\n            GROUP BY session_id\n        )\n    SELECT\n        p.session_id AS session_id,\n        p.agent_id AS agent_id,\n        p.source AS source,\n        p.engine AS engine,\n        p.engine_version AS engine_version,\n        p.provider AS provider,\n        p.scenario AS scenario,\n        p.started_at AS started_at,\n        p.ended_at AS ended_at,\n        p.status AS status,\n        p.reason AS reason,\n        p.duration_ms AS duration_ms,\n        p.startup_ms + p.connect_ms AS time_to_browser_ms,\n        (p.status = 'failed' AND ifNull(p.reason, '') = 'interrupted') AS is_interrupted,\n        a.actions AS actions,\n        a.failed_actions AS failed_actions,\n        i.issue_count AS issue_count,\n        multiIf(\n            p.status = 'running', 'running',\n            is_interrupted, 'interrupted',\n            p.status = 'success' AND a.failed_actions = 0 AND i.issue_count = 0, 'healthy',\n            p.status = 'success', 'degraded',\n            p.status = 'blocked', 'blocked',\n            'failed') AS display_status,\n        if(p.status NOT IN ('running', 'success') AND NOT is_interrupted,\n            multiIf(i.first_issue != '', i.first_issue, a.first_failed_code != '', a.first_failed_code, p.status),\n            NULL) AS cause,\n        if(cause IS NULL, NULL,\n            multiIf(i.first_issue != '', 'issue', a.first_failed_code != '', 'action', 'status')) AS cause_from,\n        (toUInt64(p.startup_ms) + p.connect_ms\n            + ifNull(p.duration_ms, dateDiff('millisecond', p.started_at, now64(3)))) / 3.6e6 AS browser_hours,\n        if(price.provider = '', NULL, browser_hours * price.usd_per_browser_hour) AS est_cost_usd\n    FROM picked AS p\n    LEFT JOIN issue_facts AS i ON i.session_id = p.session_id\n    LEFT JOIN action_facts AS a ON a.session_id = p.session_id\n    LEFT JOIN pricing_current AS price ON price.engine = p.engine AND price.provider = p.provider\n)\nSELECT\n    ended_at AS time,\n    display_status AS status,\n    if(match(session_id, '^[0-9a-f]{8}-[0-9a-f]{4}-'), substring(session_id, 1, 8), session_id) AS session,\n    engine,\n    scenario,\n    if(ifNull(reason, '') = '', cause, concat(cause, ': ', reason)) AS cause_text,\n    source,\n    session_id,\n    toUnixTimestamp64Milli(started_at) - 5000 AS from_ms,\n    toUnixTimestamp64Milli(ended_at) + 5000 AS to_ms\nFROM facts\nWHERE ended_at IS NOT NULL AND $__timeFilter(ended_at) AND cause IS NOT NULL\nORDER BY ended_at DESC\nLIMIT 15\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false,
+            "filterable": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "No failures in this range"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "time"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Time"
+              },
+              {
+                "id": "custom.width",
+                "value": 95
+              },
+              {
+                "id": "unit",
+                "value": "dateTimeAsLocalNoDateIfToday"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "status"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Status"
+              },
+              {
+                "id": "custom.width",
+                "value": 105
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "healthy": {
+                        "index": 0,
+                        "text": "✓ Healthy",
+                        "color": "#6EE7A8"
+                      },
+                      "degraded": {
+                        "index": 1,
+                        "text": "▲ Degraded",
+                        "color": "#FFD95A"
+                      },
+                      "failed": {
+                        "index": 2,
+                        "text": "✕ Failed",
+                        "color": "#FF7B7B"
+                      },
+                      "blocked": {
+                        "index": 3,
+                        "text": "⊘ Blocked",
+                        "color": "#D9CCFF"
+                      },
+                      "running": {
+                        "index": 4,
+                        "text": "○ Running",
+                        "color": "#9AA9BB"
+                      },
+                      "interrupted": {
+                        "index": 5,
+                        "text": "■ Interrupted",
+                        "color": "#7D8DA1"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Open session",
+                    "url": "/d/fleetscope-session?var-session=${__data.fields.session_id}&from=${__data.fields.from_ms}&to=${__data.fields.to_ms}",
+                    "targetBlank": false
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "session"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Session"
+              },
+              {
+                "id": "custom.width",
+                "value": 125
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Open session",
+                    "url": "/d/fleetscope-session?var-session=${__data.fields.session_id}&from=${__data.fields.from_ms}&to=${__data.fields.to_ms}",
+                    "targetBlank": false
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "engine"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Engine"
+              },
+              {
+                "id": "custom.width",
+                "value": 175
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "scenario"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Scenario"
+              },
+              {
+                "id": "custom.width",
+                "value": 125
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cause_text"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Cause"
+              },
+              {
+                "id": "custom.inspect",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "session_id"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "source"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Source"
+              },
+              {
+                "id": "custom.width",
+                "value": 80
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "real": {
+                        "index": 0,
+                        "text": "REAL"
+                      },
+                      "sim": {
+                        "index": 1,
+                        "text": "SIM"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "from_ms"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "to_ms"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "enablePagination": false,
+        "footer": {
+          "show": false,
+          "reducer": [
+            "count"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      }
+    },
+    {
+      "id": 17,
+      "type": "table",
+      "title": "Top failure causes ↗",
+      "description": "The 10 most common causes among sessions that did not succeed in the range (interrupted left out). Cause is the kind of the first issue (from issue), else the error_code of the first failed action (from action), else the status (from status). Click a cause for two links: its latest session, or all failed and blocked sessions in the range.",
+      "gridPos": {
+        "x": 14,
+        "y": 32,
+        "w": 10,
+        "h": 9
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "-- Why sessions fail: the cause of each session that ended in the range without success (interrupted left out).\n-- Cause = kind of the first issue (from issue), else error_code of the first failed action (action), else the status (status).\n-- session_id, from_ms and to_ms (hidden) belong to the latest session with that cause, for the \"Latest session\" link.\nWITH facts AS\n(\n    WITH\n        picked AS\n        (\n            SELECT *\n            FROM sessions FINAL\n            WHERE engine IN (${engine:singlequote})\n              AND source IN (${source:singlequote})\n              AND started_at <= $__toTime\n              AND (ended_at IS NULL OR ended_at >= $__fromTime)\n        ),\n        issue_facts AS\n        (\n            SELECT session_id, count() AS issue_count, toString(argMin(kind, ts)) AS first_issue\n            FROM issues\n            WHERE session_id IN (SELECT session_id FROM picked)\n              AND ts >= (SELECT min(started_at) FROM picked)\n            GROUP BY session_id\n        ),\n        action_facts AS\n        (\n            SELECT\n                session_id,\n                count() AS actions,\n                countIf(NOT ok) AS failed_actions,\n                ifNull(argMinIf(error_code, seq, NOT ok), '') AS first_failed_code\n            FROM actions\n            WHERE session_id IN (SELECT session_id FROM picked)\n              AND ts >= (SELECT min(started_at) FROM picked)\n            GROUP BY session_id\n        )\n    SELECT\n        p.session_id AS session_id,\n        p.agent_id AS agent_id,\n        p.source AS source,\n        p.engine AS engine,\n        p.engine_version AS engine_version,\n        p.provider AS provider,\n        p.scenario AS scenario,\n        p.started_at AS started_at,\n        p.ended_at AS ended_at,\n        p.status AS status,\n        p.reason AS reason,\n        p.duration_ms AS duration_ms,\n        p.startup_ms + p.connect_ms AS time_to_browser_ms,\n        (p.status = 'failed' AND ifNull(p.reason, '') = 'interrupted') AS is_interrupted,\n        a.actions AS actions,\n        a.failed_actions AS failed_actions,\n        i.issue_count AS issue_count,\n        multiIf(\n            p.status = 'running', 'running',\n            is_interrupted, 'interrupted',\n            p.status = 'success' AND a.failed_actions = 0 AND i.issue_count = 0, 'healthy',\n            p.status = 'success', 'degraded',\n            p.status = 'blocked', 'blocked',\n            'failed') AS display_status,\n        if(p.status NOT IN ('running', 'success') AND NOT is_interrupted,\n            multiIf(i.first_issue != '', i.first_issue, a.first_failed_code != '', a.first_failed_code, p.status),\n            NULL) AS cause,\n        if(cause IS NULL, NULL,\n            multiIf(i.first_issue != '', 'issue', a.first_failed_code != '', 'action', 'status')) AS cause_from,\n        (toUInt64(p.startup_ms) + p.connect_ms\n            + ifNull(p.duration_ms, dateDiff('millisecond', p.started_at, now64(3)))) / 3.6e6 AS browser_hours,\n        if(price.provider = '', NULL, browser_hours * price.usd_per_browser_hour) AS est_cost_usd\n    FROM picked AS p\n    LEFT JOIN issue_facts AS i ON i.session_id = p.session_id\n    LEFT JOIN action_facts AS a ON a.session_id = p.session_id\n    LEFT JOIN pricing_current AS price ON price.engine = p.engine AND price.provider = p.provider\n)\nSELECT\n    cause,\n    cause_from,\n    sum(n) AS sessions,\n    arrayStringConcat(\n        arrayMap(x -> concat(x.1, ' ', toString(x.2)), arrayReverseSort(x -> x.2, groupArray((engine, n)))),\n        ', ') AS engines,\n    argMax(latest_session, latest_ended) AS session_id,\n    argMax(latest_from_ms, latest_ended) AS from_ms,\n    argMax(latest_to_ms, latest_ended) AS to_ms\nFROM\n(\n    SELECT\n        cause,\n        cause_from,\n        engine,\n        count() AS n,\n        max(ended_at) AS latest_ended,\n        argMax(session_id, ended_at) AS latest_session,\n        argMax(toUnixTimestamp64Milli(started_at) - 5000, ended_at) AS latest_from_ms,\n        argMax(toUnixTimestamp64Milli(ended_at) + 5000, ended_at) AS latest_to_ms\n    FROM facts\n    WHERE ended_at IS NOT NULL AND $__timeFilter(ended_at) AND cause IS NOT NULL\n    GROUP BY cause, cause_from, engine\n)\nGROUP BY cause, cause_from\nORDER BY sessions DESC, cause\nLIMIT 10\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false,
+            "filterable": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "No failures in this range"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cause"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Cause"
+              },
+              {
+                "id": "custom.width",
+                "value": 150
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Latest session with this cause",
+                    "url": "/d/fleetscope-session?var-session=${__data.fields.session_id}&from=${__data.fields.from_ms}&to=${__data.fields.to_ms}",
+                    "targetBlank": false
+                  },
+                  {
+                    "title": "Failed and blocked sessions in range",
+                    "url": "/d/fleetscope-sessions?${__url_time_range}&${engine:queryparam}&${source:queryparam}&var-status=failed&var-status=blocked&var-cause=${__data.fields.cause}",
+                    "targetBlank": false
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cause_from"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "From"
+              },
+              {
+                "id": "custom.width",
+                "value": 80
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "sessions"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Sessions"
+              },
+              {
+                "id": "custom.width",
+                "value": 140
+              },
+              {
+                "id": "unit",
+                "value": "locale"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "gauge",
+                  "mode": "basic",
+                  "valueDisplayMode": "text"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#5B7491"
+                }
+              },
+              {
+                "id": "min",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "engines"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Engines"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "session_id"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "from_ms"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "to_ms"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "enablePagination": false,
+        "footer": {
+          "show": false,
+          "reducer": [
+            "count"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      }
+    }
+  ]
+}
