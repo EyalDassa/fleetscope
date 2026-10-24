@@ -688,8 +688,9 @@ ended session in the range have no row.
 | `success_rate` | 0 to 100, `status = 'success'` over `sessions` (a degraded session is a success, as everywhere) |
 | `time_to_browser_p50_ms`, `_p95_ms` | `startup_ms + connect_ms`: from "no container" to "a browser I can drive". The two parts mean different things per engine (Chromium launches its browser inside `connect_ms`), so only the sum compares |
 | `peak_mem_mib_p50` | per session the **maximum** of its container samples (MiB), then the **median across sessions**. NULL when no session of the engine has a container sample. Sessions with no sample are left out of the median, not counted as 0 |
-| `action_p95_ms` | p95 of all actions of the engine in the range, merged from `fleet_minute` (never an average of per-minute p95s). NULL with no actions. It is the one number that is not per ended session: the rollup counts actions when they arrive, so it includes the actions of interrupted sessions |
+| `action_p95_ms` | p95 of all actions of the engine in the range, merged from `fleet_minute` (never an average of per-minute p95s). NULL with no actions. It is the one number that is not per ended session: the rollup counts actions when they arrive, so it includes the actions of interrupted sessions. **It also includes failed actions.** A failure can be instant (Lightpanda answers an unsupported CDP method with -32601 in a few ms) and a failed session stops before its heavy steps, so an engine that fails a lot can show a *better* p95 than its real page speed. Read it next to `success_rate`, never alone. (A p95 over `ok` actions only needs a rollup column: M4) |
 | `cost_per_1k_sessions_usd` | estimated cost of the sessions above (browser-hours x price, as in `session-facts`) divided by `sessions`, times 1000. **NULL when any of them has no price**, never a partial sum. It differs from the cost panels, which attribute by `started_at` and include interrupted and running sessions |
+| `sim_share` | 0 to 100: the percentage of the `sessions` above that have `source = 'sim'`. 0 when the source filter is `real`. A dashboard shows it next to the numbers so that a mixed selection is never read as real |
 | `js_heap_available` | 1 when at least one session of the engine has a non-null `cdp` heap sample, else 0 (Lightpanda has no `Performance.getMetrics`). "0" means "the engine cannot say", never "0 MiB" |
 
 `LEFT JOIN` gives an unmatched row `0`, not NULL (`join_use_nulls = 0`), so every joined value is
@@ -729,7 +730,8 @@ WITH
             if(countIf(s.container_samples > 0) = 0, NULL,
                 quantileIf(0.5)(s.peak_mib, s.container_samples > 0)) AS peak_mem_mib_p50,
             if(countIf(d.est_cost_usd IS NULL) > 0, NULL, 1000 * sum(d.est_cost_usd) / count()) AS cost_per_1k_sessions_usd,
-            countIf(s.heap_samples > 0) > 0 AS js_heap_available
+            countIf(s.heap_samples > 0) > 0 AS js_heap_available,
+            100 * countIf(d.source = 'sim') / count() AS sim_share
         FROM done AS d
         LEFT JOIN samples AS s ON s.session_id = d.session_id
         GROUP BY engine
@@ -755,7 +757,8 @@ SELECT
     p.peak_mem_mib_p50 AS peak_mem_mib_p50,
     if(l.action_count = 0, NULL, l.p95_ms) AS action_p95_ms,
     p.cost_per_1k_sessions_usd AS cost_per_1k_sessions_usd,
-    p.js_heap_available AS js_heap_available
+    p.js_heap_available AS js_heap_available,
+    p.sim_share AS sim_share
 FROM per_engine AS p
 LEFT JOIN latency AS l ON l.engine = p.engine
 ORDER BY engine
@@ -763,7 +766,8 @@ ORDER BY engine
 
 The compatibility matrix: one row per scenario and engine, same sessions as above (ended, not
 interrupted). `top_cause` is the most frequent failure cause of the cell, a tie broken by the cause
-name (as in `top-cause-per-engine`), NULL when the cell has no failure.
+name (as in `top-cause-per-engine`), NULL when the cell has no failure. `sim_share` (0 to 100) is the
+percentage of the cell's sessions that are `source = 'sim'`, as in `engine-comparison`.
 
 ```sql name=compatibility-matrix
 WITH
@@ -791,7 +795,8 @@ SELECT
     d.engine AS engine,
     count() AS sessions,
     100 * countIf(d.status = 'success') / count() AS success_rate,
-    nullIf(any(c.top_cause), '') AS top_cause
+    nullIf(any(c.top_cause), '') AS top_cause,
+    100 * countIf(d.source = 'sim') / count() AS sim_share
 FROM done AS d
 LEFT JOIN causes AS c ON c.scenario = d.scenario AND c.engine = d.engine
 GROUP BY scenario, engine

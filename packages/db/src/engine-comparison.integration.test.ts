@@ -43,6 +43,7 @@ interface Spec {
   /** a cdp sample whose heap is null (the engine cannot say) */
   nullHeap?: boolean;
   issue?: IssueKind;
+  source?: "real" | "sim";
 }
 
 const SPECS: Spec[] = [
@@ -172,6 +173,18 @@ const SPECS: Spec[] = [
     mem: [10],
     nullHeap: true,
   },
+  // a simulated session, invisible to the source = real tests
+  {
+    id: "ls1",
+    engine: "lightpanda",
+    scenario: "login",
+    status: "success",
+    source: "sim",
+    startMin: 6,
+    startupMs: 100,
+    connectMs: 100,
+    durationMs: 4000,
+  },
   // headless-shell: one session whose provider has no price, no samples, no actions
   {
     id: "h1",
@@ -189,7 +202,7 @@ const SPECS: Spec[] = [
 function eventsOf(spec: Spec): FleetEvent[] {
   const ctx: EventEnvelope = {
     session_id: spec.id,
-    source: "real",
+    source: spec.source ?? "real",
     agent_id: "cmp-test",
     engine: spec.engine,
     provider: spec.provider ?? "local-docker",
@@ -278,7 +291,13 @@ async function snippet(name: string): Promise<string> {
 }
 
 const sec = (ms: number) => Math.floor(ms / 1000);
-function expand(sql: string, engines: string[], from: number, to: number): string {
+function expand(
+  sql: string,
+  engines: string[],
+  from: number,
+  to: number,
+  sources: string[] = ["real"],
+): string {
   const q = (v: string[]) => v.map((x) => `'${x}'`).join(",");
   return sql
     .replace(
@@ -288,7 +307,7 @@ function expand(sql: string, engines: string[], from: number, to: number): strin
     .replace(/\$__fromTime/g, `toDateTime(${sec(from)})`)
     .replace(/\$__toTime/g, `toDateTime(${sec(to)})`)
     .replace(/\$\{engine:singlequote\}/g, q(engines))
-    .replace(/\$\{source:singlequote\}/g, q(["real"]));
+    .replace(/\$\{source:singlequote\}/g, q(sources));
 }
 
 const ALL = ["chromium", "chrome-headless-shell", "lightpanda"];
@@ -297,8 +316,9 @@ async function run<T>(
   engines = ALL,
   from = T0 - 5 * MIN,
   to = Date.now() + MIN,
+  sources = ["real"],
 ): Promise<T[]> {
-  const query = expand(await snippet(name), engines, from, to);
+  const query = expand(await snippet(name), engines, from, to, sources);
   return (await reader.query({ query, format: "JSONEachRow" })).json<T>();
 }
 
@@ -326,6 +346,7 @@ type Cmp = {
   action_p95_ms: number | null;
   cost_per_1k_sessions_usd: number | null;
   js_heap_available: number;
+  sim_share: number;
 };
 
 describe("engine-comparison", () => {
@@ -375,6 +396,18 @@ describe("engine-comparison", () => {
     expect(h.time_to_browser_p50_ms).toBe(1000);
   });
 
+  it("sim_share is the percentage of simulated sessions: 0 for real only, 20 when 1 of 5 is sim", async () => {
+    const real = await run<Cmp>("engine-comparison");
+    expect(real.map((r) => Number(r.sim_share))).toEqual([0, 0, 0]);
+    const both = await run<Cmp>("engine-comparison", ALL, undefined, undefined, ["real", "sim"]);
+    const l = both.find((r) => r.engine === "lightpanda") as Cmp;
+    expect(Number(l.sessions)).toBe(5);
+    expect(l.sim_share).toBeCloseTo(20, 9);
+    expect(both.find((r) => r.engine === "chromium")?.sim_share).toBe(0);
+    const sim = await run<Cmp>("engine-comparison", ALL, undefined, undefined, ["sim"]);
+    expect(sim.map((r) => [r.engine, r.sim_share])).toEqual([["lightpanda", 100]]);
+  });
+
   it("filters by engine and returns nothing for a range in which nothing ended", async () => {
     expect((await run<Cmp>("engine-comparison", ["lightpanda"])).map((r) => r.engine)).toEqual([
       "lightpanda",
@@ -390,6 +423,7 @@ describe("compatibility-matrix", () => {
     sessions: number;
     success_rate: number;
     top_cause: string | null;
+    sim_share: number;
   };
 
   it("has one cell per scenario and engine, with the most frequent cause (ties by name)", async () => {
@@ -406,6 +440,20 @@ describe("compatibility-matrix", () => {
       ["login", "chromium", 3, (100 * 2) / 3, "timeout"],
       ["login", "lightpanda", 1, 100, null],
     ]);
+  });
+});
+
+describe("compatibility-matrix sim_share", () => {
+  it("is 0 for real data and 50 for a cell with one real and one simulated session", async () => {
+    type Cell = { scenario: string; engine: string; sim_share: number };
+    const real = await run<Cell>("compatibility-matrix");
+    expect(real.every((c) => c.sim_share === 0)).toBe(true);
+    const both = await run<Cell>("compatibility-matrix", ALL, undefined, undefined, [
+      "real",
+      "sim",
+    ]);
+    const cell = both.find((c) => c.scenario === "login" && c.engine === "lightpanda");
+    expect(cell?.sim_share).toBe(50);
   });
 });
 
