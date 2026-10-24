@@ -3,9 +3,17 @@ import type { JsonObject } from "./json";
 
 export const CH = { type: "grafana-clickhouse-datasource", uid: "fleetscope-clickhouse" };
 
+// Grafana wants unique panel ids within a dashboard, and the check enforces it, so every panel the
+// builders make gets its own id (a test can still pass `id` in `extra`).
+let lastPanelId = 1000;
+const nextPanelId = (): number => {
+  lastPanelId += 1;
+  return lastPanelId;
+};
+
 export function statPanel(title: string, rawSql: string, extra: JsonObject = {}): JsonObject {
   return {
-    id: 1,
+    id: nextPanelId(),
     type: "stat",
     title,
     datasource: CH,
@@ -25,7 +33,7 @@ export function timeSeriesPanel(title: string, rawSql: string): JsonObject {
     ],
   });
   return {
-    id: 2,
+    id: nextPanelId(),
     type: "timeseries",
     title,
     datasource: CH,
@@ -42,6 +50,28 @@ export function timeSeriesPanel(title: string, rawSql: string): JsonObject {
         engine("lightpanda", "#CC79A7", "dot"),
       ],
     },
+  };
+}
+
+export const DASHBOARD_DS = { type: "datasource", uid: "-- Dashboard --" };
+
+/** A stat that shows one field of another panel's query (Grafana's Dashboard data source). */
+export function readerPanel(
+  id: number,
+  title: string,
+  sourcePanelId: number,
+  fields: string,
+  extra: JsonObject = {},
+): JsonObject {
+  return {
+    id,
+    type: "stat",
+    title,
+    datasource: DASHBOARD_DS,
+    targets: [{ datasource: DASHBOARD_DS, panelId: sourcePanelId, refId: "A" }],
+    options: { reduceOptions: { fields, calcs: ["lastNotNull"] } },
+    fieldConfig: { defaults: { noValue: "0" }, overrides: [] },
+    ...extra,
   };
 }
 

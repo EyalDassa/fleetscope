@@ -10,6 +10,7 @@ import {
   checkDashboardLinks,
   checkStructure,
   type Dashboard,
+  type DashboardRead,
   extractQueries,
   loadDashboardFiles,
   type Problem,
@@ -27,6 +28,7 @@ import {
   type VariableState,
 } from "./interpolate";
 import { formatInterval } from "./macros";
+import { unmatchedFieldReferences } from "./panel-fields";
 import { panelIntervalMs, parseIntervalMs, resolveTimeRange, type TimeRange } from "./time";
 
 export interface CheckOptions {
@@ -160,6 +162,7 @@ function clickHouseMessage(error: unknown, connection: ClickHouseConnection): st
 async function checkDashboardQueries(
   dashboard: Dashboard,
   queries: QueryItem[],
+  reads: DashboardRead[],
   options: CheckOptions & { connection: ClickHouseConnection },
   report: FileReport,
 ): Promise<void> {
@@ -174,10 +177,18 @@ async function checkDashboardQueries(
   );
   const definitions = variableDefinitions(dashboard.json);
 
+  // The columns each panel's query returned, for the panels that show its result (R-M2-01).
+  const columnsByPanel = new Map<number, Set<string>>();
+
   const run = async (item: QueryItem, sql: string, note: string): Promise<boolean> => {
     try {
       const result = await runQuery(connection, sql, fetchImpl);
       report.ran.push({ where: item.where, rows: result.rows.length, note });
+      if (item.panelId !== undefined) {
+        const known = columnsByPanel.get(item.panelId) ?? new Set<string>();
+        for (const column of result.columns) known.add(column);
+        columnsByPanel.set(item.panelId, known);
+      }
       return true;
     } catch (error) {
       report.problems.push({
@@ -267,6 +278,32 @@ async function checkDashboardQueries(
     }
   }
 
+  // Panels that show another panel's result (Dashboard data source): the fields they select must
+  // exist in that result. The source's own query was run above, so a failing source is already a problem.
+  for (const read of reads) {
+    if (read.skipFields) {
+      report.warnings.push({
+        where: read.where,
+        message: "has transformations, so the field names it selects are not checked",
+      });
+      continue;
+    }
+    const sources = read.sourcePanelIds.map((id) => ({
+      id,
+      columns: columnsByPanel.get(id),
+      label: queries.find((q) => q.panelId === id)?.where ?? `panel ${id}`,
+    }));
+    if (sources.some((source) => !source.columns || source.columns.size === 0)) continue;
+    const columns = [...new Set(sources.flatMap((source) => [...(source.columns ?? [])]))];
+    for (const message of unmatchedFieldReferences(read.panel, columns)) {
+      report.problems.push({
+        where: read.where,
+        message,
+        detail: `It shows the result of ${sources.map((source) => source.label).join(" and ")}`,
+      });
+    }
+  }
+
   const totalRows = report.ran.reduce((sum, r) => sum + r.rows, 0);
   if (report.ran.length > 0 && totalRows === 0) {
     report.warnings.push({
@@ -311,6 +348,7 @@ export async function checkDashboards(options: CheckOptions): Promise<CheckRepor
       await checkDashboardQueries(
         dashboard,
         extracted.queries,
+        extracted.dashboardReads,
         { ...options, connection: options.connection },
         report,
       );

@@ -4,9 +4,12 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { asArray, asString, isObject, type JsonObject } from "./json";
+import { hasTransformations } from "./panel-fields";
 
 export const CLICKHOUSE_DATASOURCE_UID = "fleetscope-clickhouse";
 export const FOLDER_UID = "fleetscope";
+/** Grafana's "Dashboard" data source: a panel that shows the result of another panel's query. */
+export const DASHBOARD_DATASOURCE_UID = "-- Dashboard --";
 
 /** Grafana's built-in data sources: they need no SQL and no ClickHouse. */
 const BUILT_IN_DATASOURCE_UIDS = new Set(["grafana", "-- Grafana --", "-- Dashboard --"]);
@@ -204,20 +207,115 @@ export interface QueryItem {
   /** Panel query options that change $__interval. */
   maxDataPoints: number | undefined;
   minInterval: string | undefined;
+  /** The `id` of the panel that owns the query (panels only); other panels may read its result. */
+  panelId?: number;
+}
+
+/**
+ * A panel that shows the result of another panel's query (Grafana's "Dashboard" data source,
+ * R-M2-01). It has no SQL of its own, so the check looks at the source panel's query instead.
+ */
+export interface DashboardRead {
+  where: string;
+  panel: JsonObject;
+  /** The ids of the panels it reads (usually one). */
+  sourcePanelIds: number[];
+  /** True when transformations may rename or drop fields, so the field names cannot be checked. */
+  skipFields: boolean;
+}
+
+/**
+ * Checks one query of a panel that uses the Dashboard data source: the panel it reads must exist in
+ * this dashboard, must not be itself, and must hold ClickHouse SQL (so that the query is one we run).
+ */
+function readsAnotherPanel(input: {
+  panel: JsonObject;
+  target: JsonObject;
+  where: string;
+  byId: Map<number, PanelRef>;
+}): { problems: Problem[]; sourcePanelId: number | undefined; skipFields: boolean } {
+  const { panel, target, where, byId } = input;
+  const fail = (message: string) => ({
+    problems: [{ where, message }],
+    sourcePanelId: undefined,
+    skipFields: false,
+  });
+  const id = target.panelId;
+  if (typeof id !== "number") {
+    return fail(
+      'uses the Dashboard data source but has no numeric "panelId", so it shows the result of no panel',
+    );
+  }
+  const source = byId.get(id);
+  if (!source) {
+    const known = [...byId.keys()].sort((a, b) => a - b).join(", ");
+    return fail(`reads panel ${id}, which does not exist in this dashboard (panel ids: ${known})`);
+  }
+  if (source.panel === panel) return fail(`reads itself (panelId ${id})`);
+  if (!hasOwnSql(source.panel)) {
+    return fail(
+      `reads panel ${id} ("${source.title}"), which has no ClickHouse SQL of its own. Point it at the panel that holds the query: a Dashboard-data-source panel cannot read another one`,
+    );
+  }
+  const refId = asString(target.panelRefId);
+  const refIds = asArray(source.panel.targets)
+    .filter(isObject)
+    .map((t) => asString(t.refId));
+  if (refId && !refIds.includes(refId)) {
+    return fail(
+      `reads query ${refId} of panel ${id} ("${source.title}"), which has only: ${refIds.join(", ")}`,
+    );
+  }
+  const skipFields =
+    hasTransformations(panel) ||
+    (target.withTransforms === true && hasTransformations(source.panel));
+  return { problems: [], sourcePanelId: id, skipFields };
 }
 
 export interface Extracted {
   queries: QueryItem[];
   problems: Problem[];
   warnings: Problem[];
+  dashboardReads: DashboardRead[];
+}
+
+/** Does a panel hold a ClickHouse query with SQL of its own? */
+function hasOwnSql(panel: JsonObject): boolean {
+  const panelDs = datasourceUid(panel);
+  return asArray(panel.targets)
+    .filter(isObject)
+    .some((target) => {
+      const own = datasourceUid(target);
+      const effective = own.present ? own : panelDs;
+      return (
+        effective.uid === CLICKHOUSE_DATASOURCE_UID && Boolean(asString(target.rawSql)?.trim())
+      );
+    });
 }
 
 export function extractQueries(dashboard: JsonObject): Extracted {
   const queries: QueryItem[] = [];
   const problems: Problem[] = [];
   const warnings: Problem[] = [];
+  const dashboardReads = new Map<JsonObject, DashboardRead>();
 
-  for (const { panel, title } of collectPanels(dashboard)) {
+  const allPanels = collectPanels(dashboard);
+  const byId = new Map<number, PanelRef>();
+  for (const found of allPanels) {
+    const id = found.panel.id;
+    if (typeof id !== "number") continue;
+    const same = byId.get(id);
+    if (same) {
+      problems.push({
+        where: `panel "${found.title}"`,
+        message: `has the same id (${id}) as panel "${same.title}". Panel ids must be unique: the Dashboard data source and links refer to panels by id`,
+      });
+    } else {
+      byId.set(id, found);
+    }
+  }
+
+  for (const { panel, title } of allPanels) {
     const type = asString(panel.type) ?? "";
     if (panel.libraryPanel !== undefined) {
       warnings.push({
@@ -246,7 +344,23 @@ export function extractQueries(dashboard: JsonObject): Extracted {
         problems.push(problem);
         continue;
       }
-      if (effective.uid !== CLICKHOUSE_DATASOURCE_UID) continue; // a built-in data source: nothing to run
+      if (effective.uid === DASHBOARD_DATASOURCE_UID) {
+        const read = readsAnotherPanel({ panel, target, where, byId });
+        problems.push(...read.problems);
+        if (read.sourcePanelId !== undefined) {
+          const known = dashboardReads.get(panel) ?? {
+            where: `panel "${title}"`,
+            panel,
+            sourcePanelIds: [],
+            skipFields: false,
+          };
+          known.sourcePanelIds.push(read.sourcePanelId);
+          known.skipFields = known.skipFields || read.skipFields;
+          dashboardReads.set(panel, known);
+        }
+        continue;
+      }
+      if (effective.uid !== CLICKHOUSE_DATASOURCE_UID) continue; // another built-in data source: nothing to run
       const sql = asString(target.rawSql);
       if (!sql || sql.trim() === "") {
         problems.push({
@@ -264,6 +378,7 @@ export function extractQueries(dashboard: JsonObject): Extracted {
         sql,
         maxDataPoints: typeof panel.maxDataPoints === "number" ? panel.maxDataPoints : undefined,
         minInterval: asString(target.interval) ?? asString(panel.interval),
+        panelId: typeof panel.id === "number" ? panel.id : undefined,
       });
     }
   }
@@ -319,7 +434,7 @@ export function extractQueries(dashboard: JsonObject): Extracted {
     });
   }
 
-  return { queries, problems, warnings };
+  return { queries, problems, warnings, dashboardReads: [...dashboardReads.values()] };
 }
 
 /** The SQL of a query variable. The ClickHouse plugin stores it as `query.rawSql`; old files use a string. */

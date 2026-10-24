@@ -98,7 +98,16 @@ For every `dashboards/*.json` it:
 
 1. checks the JSON parses, has a `uid` and `title`, and that UIDs and titles are unique;
 2. checks every panel, query variable and annotation uses data source UID `fleetscope-clickhouse`
-   (or Grafana's built-in `-- Grafana --`, and text panels);
+   (or Grafana's built-in `-- Grafana --`, and text panels), and that panel ids are unique;
+2a. **panels that read another panel's query** (Grafana's `-- Dashboard --` data source, used by the
+   Overview's single-number panels and two Session panels, so one summary query feeds many panels):
+   the `panelId` must exist in the same dashboard, must not be the panel itself, and must be a panel
+   that holds ClickHouse SQL of its own (not another reader). That source query is run like any other.
+   Then every field the reading panel names (`options.reduceOptions.fields`, `byName` / `byRegexp`
+   overrides, `${__data.fields.x}` in data links) must exist in the columns the source query returned,
+   counting `displayName` overrides (a panel can select `✓ Healthy` for the column `healthy`); a list
+   such as `/^(a|b|c)$/` must find every name. A panel with transformations is skipped with a warning,
+   because transformations can rename or drop fields;
 3. checks links like `/d/<uid>` point at a dashboard in the folder;
 4. applies the dashboard rules of `design/DESIGN.md` section 9: only palette colours, `noValue` on
    every stat and table, `spanNulls: false` plus the three engine overrides on every time series,
