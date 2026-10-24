@@ -267,6 +267,8 @@ export interface SessionSpec {
   startupMs: number;
   connectMs: number;
   engineVersion?: string | null;
+  /** The engine the assignment chose before the fleet routed the session to `engine` (ADR 0005). */
+  routedFrom?: (typeof ENGINES)[number] | null;
   scenario?: string;
   agent?: string;
   /** One entry per action: [duration_ms, error_code or null]. seq 0 is a goto, the rest are clicks. */
@@ -299,6 +301,7 @@ export function eventsOf(spec: SessionSpec): FleetEvent[] {
         region: "local",
         startup_ms: spec.startupMs,
         connect_ms: spec.connectMs,
+        ...(spec.routedFrom === undefined ? {} : { routed_from: spec.routedFrom }),
       },
       start,
     ),
