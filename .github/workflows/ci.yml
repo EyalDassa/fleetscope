@@ -24,7 +24,7 @@ jobs:
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
-      - run: pnpm build # next build (web) and the esbuild bundle (api)
+      - run: pnpm build # esbuild bundles of the api and the demo site
       - name: ClickHouse image tag in CI matches docker-compose
         run: bash .github/scripts/check-clickhouse-tag.sh
       - name: Playwright client and browser image versions match
@@ -60,12 +60,25 @@ jobs:
       CLICKHOUSE_USER: fleetscope
       CLICKHOUSE_PASSWORD: fleetscope_dev_password
       CLICKHOUSE_DATABASE: fleetscope
+      # The read-only user the dashboards run as (created below, like on a real deployment).
+      CLICKHOUSE_GRAFANA_USER: grafana_ro
+      CLICKHOUSE_GRAFANA_PASSWORD: grafana_ro_dev_password
       LOG_LEVEL: warn
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
       - run: pnpm db:migrate
       - run: pnpm test:integration
+
+      # Dashboards are code: every query in infra/grafana/dashboards/*.json must run against the
+      # real schema, as the read-only Grafana user, with the ClickHouse plugin's macros expanded.
+      # No Grafana is started; the check expands the macros itself (infra/grafana/README.md).
+      - name: Create the read-only Grafana user
+        run: pnpm db:grafana-user
+      - name: Seed the database
+        run: pnpm db:seed
+      - name: Dashboards - structure, design rules, and every SQL query against ClickHouse
+        run: pnpm grafana:check
 
   # End-to-end check of the M1 pipeline: real Chromium containers -> collector -> API -> ClickHouse.
   # No LLM calls and nothing from outside the repo except the Playwright base image from MCR.

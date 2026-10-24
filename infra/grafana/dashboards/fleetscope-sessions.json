@@ -1,0 +1,866 @@
+{
+  "uid": "fleetscope-sessions",
+  "title": "Fleetscope / Sessions",
+  "description": "Every session in the time range, newest first. Click a status or a session id to open it.",
+  "tags": [
+    "fleetscope"
+  ],
+  "style": "dark",
+  "timezone": "browser",
+  "editable": true,
+  "graphTooltip": 1,
+  "refresh": "30s",
+  "schemaVersion": 41,
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "links": [
+    {
+      "type": "dashboards",
+      "title": "Fleetscope",
+      "tags": [
+        "fleetscope"
+      ],
+      "asDropdown": false,
+      "includeVars": true,
+      "keepTime": true,
+      "icon": "external link",
+      "targetBlank": false,
+      "tooltip": "",
+      "url": ""
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "type": "custom",
+        "name": "engine",
+        "label": "Engine",
+        "query": "chromium,chrome-headless-shell,lightpanda",
+        "multi": true,
+        "includeAll": true,
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": [
+          {
+            "text": "All",
+            "value": "$__all",
+            "selected": true
+          },
+          {
+            "text": "chromium",
+            "value": "chromium",
+            "selected": false
+          },
+          {
+            "text": "chrome-headless-shell",
+            "value": "chrome-headless-shell",
+            "selected": false
+          },
+          {
+            "text": "lightpanda",
+            "value": "lightpanda",
+            "selected": false
+          }
+        ],
+        "hide": 0
+      },
+      {
+        "type": "custom",
+        "name": "source",
+        "label": "Source",
+        "query": "real,sim",
+        "multi": false,
+        "includeAll": true,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "options": [
+          {
+            "text": "All",
+            "value": "$__all",
+            "selected": true
+          },
+          {
+            "text": "real",
+            "value": "real",
+            "selected": false
+          },
+          {
+            "text": "sim",
+            "value": "sim",
+            "selected": false
+          }
+        ],
+        "hide": 0
+      },
+      {
+        "type": "custom",
+        "name": "status",
+        "label": "Status",
+        "query": "Healthy : healthy, Degraded : degraded, Failed : failed, Blocked : blocked, Running : running, Interrupted : interrupted",
+        "multi": true,
+        "includeAll": true,
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": [
+          {
+            "text": "All",
+            "value": "$__all",
+            "selected": true
+          },
+          {
+            "text": "Healthy",
+            "value": "healthy",
+            "selected": false
+          },
+          {
+            "text": "Degraded",
+            "value": "degraded",
+            "selected": false
+          },
+          {
+            "text": "Failed",
+            "value": "failed",
+            "selected": false
+          },
+          {
+            "text": "Blocked",
+            "value": "blocked",
+            "selected": false
+          },
+          {
+            "text": "Running",
+            "value": "running",
+            "selected": false
+          },
+          {
+            "text": "Interrupted",
+            "value": "interrupted",
+            "selected": false
+          }
+        ],
+        "hide": 0
+      },
+      {
+        "type": "query",
+        "name": "agent",
+        "label": "Agent",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "fleetscope-clickhouse"
+        },
+        "query": "SELECT DISTINCT agent_id FROM sessions FINAL WHERE $__timeFilter(started_at) ORDER BY agent_id",
+        "definition": "SELECT DISTINCT agent_id FROM sessions FINAL WHERE $__timeFilter(started_at) ORDER BY agent_id",
+        "multi": true,
+        "includeAll": true,
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "refresh": 2,
+        "sort": 0,
+        "options": [],
+        "hide": 0
+      },
+      {
+        "type": "query",
+        "name": "scenario",
+        "label": "Scenario",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "fleetscope-clickhouse"
+        },
+        "query": "SELECT DISTINCT scenario FROM sessions FINAL WHERE $__timeFilter(started_at) ORDER BY scenario",
+        "definition": "SELECT DISTINCT scenario FROM sessions FINAL WHERE $__timeFilter(started_at) ORDER BY scenario",
+        "multi": true,
+        "includeAll": true,
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "refresh": 2,
+        "sort": 0,
+        "options": [],
+        "hide": 0
+      },
+      {
+        "type": "textbox",
+        "name": "cause",
+        "label": "Cause",
+        "query": "",
+        "current": {
+          "text": "",
+          "value": ""
+        },
+        "options": [
+          {
+            "text": "",
+            "value": "",
+            "selected": true
+          }
+        ],
+        "hide": 2
+      },
+      {
+        "type": "constant",
+        "name": "api_url",
+        "label": "API URL",
+        "query": "http://localhost:4000",
+        "current": {
+          "text": "http://localhost:4000",
+          "value": "http://localhost:4000"
+        },
+        "options": [
+          {
+            "text": "http://localhost:4000",
+            "value": "http://localhost:4000",
+            "selected": true
+          }
+        ],
+        "hide": 2
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "table",
+      "title": "Sessions ↗",
+      "description": "The latest 1,000 sessions that started in the range, newest first (the footer counts the rows shown). Status: healthy, degraded (success with a failed action or an issue), failed (failed, timeout or crashed), blocked, running, interrupted (Ctrl+C, not a failure). Cause is the code and message of the first issue, else of the first failed action. Peak memory is the container's. Est. cost: Browser-hours × $0.10 per browser-hour (Browserbase's published price, from the `pricing` table). An estimate, not a bill. Session shows the first 8 characters of the id. Click a status or a session to open it.",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 22
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "-- One row per session (FROM sessions FINAL) that started in the time range, newest first, at most 1000 rows.\n-- display_status: healthy | degraded (success with a failed action or an issue) | failed (failed, timeout, crashed)\n--   | blocked | running | interrupted (Ctrl+C, not a failure). Cause = first issue kind, else error_code of the\n--   first failed action, else the status, shown as \"cause: reason\"; the \"cause\" variable (set by the Top\n--   failure causes links) filters on the code. Est. cost: pricing_current x browser-hours (running ones count until now).\n-- from_ms / to_ms (hidden) set the time range of the Session detail link: start - 5 s ... end (or now) + 5 s.\nWITH facts AS\n(\n    WITH\n        picked AS\n        (\n            SELECT *\n            FROM sessions FINAL\n            WHERE engine IN (${engine:singlequote})\n              AND source IN (${source:singlequote})\n              AND started_at <= $__toTime\n              AND (ended_at IS NULL OR ended_at >= $__fromTime)\n        ),\n        issue_facts AS\n        (\n            SELECT session_id, count() AS issue_count, toString(argMin(kind, ts)) AS first_issue\n            FROM issues\n            WHERE session_id IN (SELECT session_id FROM picked)\n              AND ts >= (SELECT min(started_at) FROM picked)\n            GROUP BY session_id\n        ),\n        action_facts AS\n        (\n            SELECT\n                session_id,\n                count() AS actions,\n                countIf(NOT ok) AS failed_actions,\n                ifNull(argMinIf(error_code, seq, NOT ok), '') AS first_failed_code\n            FROM actions\n            WHERE session_id IN (SELECT session_id FROM picked)\n              AND ts >= (SELECT min(started_at) FROM picked)\n            GROUP BY session_id\n        )\n    SELECT\n        p.session_id AS session_id,\n        p.agent_id AS agent_id,\n        p.source AS source,\n        p.engine AS engine,\n        p.engine_version AS engine_version,\n        p.provider AS provider,\n        p.scenario AS scenario,\n        p.started_at AS started_at,\n        p.ended_at AS ended_at,\n        p.status AS status,\n        p.reason AS reason,\n        p.duration_ms AS duration_ms,\n        p.startup_ms + p.connect_ms AS time_to_browser_ms,\n        (p.status = 'failed' AND ifNull(p.reason, '') = 'interrupted') AS is_interrupted,\n        a.actions AS actions,\n        a.failed_actions AS failed_actions,\n        i.issue_count AS issue_count,\n        multiIf(\n            p.status = 'running', 'running',\n            is_interrupted, 'interrupted',\n            p.status = 'success' AND a.failed_actions = 0 AND i.issue_count = 0, 'healthy',\n            p.status = 'success', 'degraded',\n            p.status = 'blocked', 'blocked',\n            'failed') AS display_status,\n        if(p.status NOT IN ('running', 'success') AND NOT is_interrupted,\n            multiIf(i.first_issue != '', i.first_issue, a.first_failed_code != '', a.first_failed_code, p.status),\n            NULL) AS cause,\n        if(cause IS NULL, NULL,\n            multiIf(i.first_issue != '', 'issue', a.first_failed_code != '', 'action', 'status')) AS cause_from,\n        (toUInt64(p.startup_ms) + p.connect_ms\n            + ifNull(p.duration_ms, dateDiff('millisecond', p.started_at, now64(3)))) / 3.6e6 AS browser_hours,\n        if(price.provider = '', NULL, browser_hours * price.usd_per_browser_hour) AS est_cost_usd\n    FROM picked AS p\n    LEFT JOIN issue_facts AS i ON i.session_id = p.session_id\n    LEFT JOIN action_facts AS a ON a.session_id = p.session_id\n    LEFT JOIN pricing_current AS price ON price.engine = p.engine AND price.provider = p.provider\n),\n    peaks AS\n    (\n        SELECT session_id AS peak_session_id, maxOrNull(mem_mb) AS peak_mib\n        FROM resource_samples\n        WHERE origin = 'container'\n          AND ts >= $__fromTime\n          AND session_id IN (SELECT session_id FROM facts WHERE $__timeFilter(started_at))\n        GROUP BY peak_session_id\n    )\nSELECT\n    f.display_status AS status,\n    if(match(f.session_id, '^[0-9a-f]{8}-[0-9a-f]{4}-'), substring(f.session_id, 1, 8), f.session_id) AS session,\n    f.started_at AS started,\n    f.engine AS engine,\n    f.engine_version AS version,\n    f.scenario AS scenario,\n    f.agent_id AS agent,\n    f.duration_ms AS duration_ms,\n    f.time_to_browser_ms AS time_to_browser_ms,\n    f.actions AS actions,\n    f.failed_actions AS failed_actions,\n    p.peak_mib AS peak_memory_mib,\n    f.est_cost_usd AS estimated_cost_usd,\n    if(f.cause IS NULL, NULL, if(ifNull(f.reason, '') = '', f.cause, concat(f.cause, ': ', f.reason))) AS cause,\n    f.source AS source,\n    f.session_id AS session_id,\n    toUnixTimestamp64Milli(f.started_at) - 5000 AS from_ms,\n    toUnixTimestamp64Milli(coalesce(f.ended_at, now64(3))) + 5000 AS to_ms\nFROM facts AS f\nLEFT JOIN peaks AS p ON p.peak_session_id = f.session_id\nWHERE $__timeFilter(f.started_at)\n  AND $__conditionalAll(f.display_status IN (${status:singlequote}), $status)\n  AND $__conditionalAll(f.agent_id IN (${agent:singlequote}), $agent)\n  AND $__conditionalAll(f.scenario IN (${scenario:singlequote}), $scenario)\n  AND $__conditionalAll(f.cause = ${cause:singlequote}, $cause)\nORDER BY f.started_at DESC\nLIMIT 1000\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false,
+            "filterable": true
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "No sessions match these filters in this range"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "status"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Status"
+              },
+              {
+                "id": "custom.width",
+                "value": 120
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "healthy": {
+                        "index": 0,
+                        "text": "✓ Healthy",
+                        "color": "#6EE7A8"
+                      },
+                      "degraded": {
+                        "index": 1,
+                        "text": "▲ Degraded",
+                        "color": "#FFD95A"
+                      },
+                      "failed": {
+                        "index": 2,
+                        "text": "✕ Failed",
+                        "color": "#FF7B7B"
+                      },
+                      "blocked": {
+                        "index": 3,
+                        "text": "⊘ Blocked",
+                        "color": "#D9CCFF"
+                      },
+                      "running": {
+                        "index": 4,
+                        "text": "○ Running",
+                        "color": "#9AA9BB"
+                      },
+                      "interrupted": {
+                        "index": 5,
+                        "text": "■ Interrupted",
+                        "color": "#7D8DA1"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Open session",
+                    "url": "/d/fleetscope-session?var-session=${__data.fields.session_id}&from=${__data.fields.from_ms}&to=${__data.fields.to_ms}",
+                    "targetBlank": false
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "session"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Session"
+              },
+              {
+                "id": "custom.width",
+                "value": 140
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Open session",
+                    "url": "/d/fleetscope-session?var-session=${__data.fields.session_id}&from=${__data.fields.from_ms}&to=${__data.fields.to_ms}",
+                    "targetBlank": false
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "started"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Started"
+              },
+              {
+                "id": "custom.width",
+                "value": 100
+              },
+              {
+                "id": "unit",
+                "value": "dateTimeAsLocalNoDateIfToday"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "engine"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Engine"
+              },
+              {
+                "id": "custom.width",
+                "value": 175
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "version"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Version"
+              },
+              {
+                "id": "custom.width",
+                "value": 100
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "not reported",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "not reported",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "scenario"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Scenario"
+              },
+              {
+                "id": "custom.width",
+                "value": 140
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "agent"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Agent"
+              },
+              {
+                "id": "custom.width",
+                "value": 180
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "duration_ms"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Duration"
+              },
+              {
+                "id": "custom.width",
+                "value": 95
+              },
+              {
+                "id": "unit",
+                "value": "ms"
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "running",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "running",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "time_to_browser_ms"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Time to browser"
+              },
+              {
+                "id": "custom.width",
+                "value": 125
+              },
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "actions"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Actions"
+              },
+              {
+                "id": "custom.width",
+                "value": 85
+              },
+              {
+                "id": "unit",
+                "value": "locale"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "failed_actions"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Failed actions"
+              },
+              {
+                "id": "custom.width",
+                "value": 115
+              },
+              {
+                "id": "unit",
+                "value": "locale"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "text",
+                      "value": null
+                    },
+                    {
+                      "color": "#FF7B7B",
+                      "value": 1
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "peak_memory_mib"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Peak memory"
+              },
+              {
+                "id": "custom.width",
+                "value": 115
+              },
+              {
+                "id": "unit",
+                "value": "mbytes"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "Not available",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "Not available",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "estimated_cost_usd"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Est. cost"
+              },
+              {
+                "id": "custom.width",
+                "value": 95
+              },
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "decimals",
+                "value": 4
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "Not available",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "Not available",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cause"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Cause"
+              },
+              {
+                "id": "custom.width",
+                "value": 320
+              },
+              {
+                "id": "custom.inspect",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "source"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Source"
+              },
+              {
+                "id": "custom.width",
+                "value": 80
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "real": {
+                        "index": 0,
+                        "text": "REAL"
+                      },
+                      "sim": {
+                        "index": 1,
+                        "text": "SIM"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "session_id"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "from_ms"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "to_ms"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "enablePagination": true,
+        "footer": {
+          "show": true,
+          "reducer": [
+            "count"
+          ],
+          "countRows": true,
+          "fields": ""
+        },
+        "sortBy": [
+          {
+            "displayName": "Started",
+            "desc": true
+          }
+        ]
+      }
+    }
+  ]
+}

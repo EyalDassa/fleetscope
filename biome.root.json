@@ -10,7 +10,8 @@
       "!**/.turbo",
       "!pnpm-lock.yaml",
       "!.claude",
-      "!design"
+      "!design",
+      "!infra/grafana/dashboards"
     ]
   }
 }

@@ -1,467 +1,260 @@
-# Fleetscope design system (DESIGN.md)
+# Fleetscope dashboard spec (DESIGN.md)
 
-Status: **approved by Eyal on 2026-10-22**, with the design lead's defaults for all open questions (`DECISIONS.md` section 5). This file is the source of truth for the UI (CLAUDE.md).
-Decisions and scores: `design/DECISIONS.md`. Visual reference mockups (open them in a browser):
+Status: Grafana spec derived from the design approved by Eyal on 2026-10-22; adjustments for Grafana by the design lead on 2026-10-24.
 
-| What to look at | Mockup |
-|---|---|
-| Overview layout, verdict banner, KPI strip, top bar, sidebar | `design/proposals/promax/v2/overview.html` |
-| Chart cards (lines with dash per engine, source strip, compact plots), By engine table, failure rows | `design/proposals/taste/v2/overview.html` |
-| Session page: banner, waterfall, shared axis, resource charts, side column | `design/proposals/promax/v2/session.html` |
-| Session stat strip and Issues panel content | `design/proposals/taste/v2/session.html` |
+The UI is Grafana (ADR 0003). This spec is for the engineer who builds `infra/grafana/dashboards/*.json`: colours, units, thresholds, panel order and drill-down links. The earlier shadcn/Recharts spec is in git history, and `design/DECISIONS.md` and `design/proposals/` record how it was decided; where they disagree with this file, this file wins. Every panel uses the ClickHouse data source with UID `fleetscope-clickhouse`. Browsers, Usage and Insights (M3/M4) follow the same rules.
 
-Where a mockup and this file disagree, **this file wins**. Example: promax's mockup still shows stripes on failed bars, a "Timeout" badge and a "Raw events" tab, and this file removes all three.
+## 1. Principles that survive
 
-Stack: Next.js App Router, Tailwind **v4** (CSS-first config, already set up in `apps/web/app/globals.css`), shadcn/ui, Recharts, lucide-react icons, `next-themes`.
+1. **Verdict first.** Overview opens with the fleet verdict in one word, and Session detail opens with the session status and one sentence about what happened. Evidence sits beside the verdict, and the charts come after it.
+2. **Every number drills down to sessions.** Every stat, table row and chart point has a Grafana **data link** to the sessions behind it (link patterns in 4.1). A panel whose values are links ends its title with `↗`, so the link is visible without hovering.
+3. **Honest data.** A count with no events prints `0`. A ratio with no denominator prints `—`. A metric the engine can't provide (`null`) prints `Not available`: never drawn as 0, never interpolated. Simulated data is always labelled (`SIM` in session tables, the Simulated share stat, the Perfetto process name).
+4. **Never colour alone.** A status is shown as a value mapping with glyph + word + colour. An engine is shown with its name (legend, tooltip) + line style + colour.
 
----
+**One meaning per pattern.** Violet means blocked. Engine colours never mean a status, and status colours never mean an engine. A filled panel means a verdict: only the two verdict stats are filled.
 
-## 1. Principles
+## 2. Colours
 
-1. **Verdict first, evidence second.** Overview opens with one word (Healthy / Degraded / Failed) and one sentence of evidence. A session opens with its root cause before its timeline.
-2. **Chrome is neutral, colour is data.** Backgrounds, borders, buttons and the primary action are greys. Hue is spent only on **status** and **engine**.
-3. **Never colour alone.** Status = colour + icon + word. Engine = colour + marker shape + line style + name. Real/sim = chip style + dot shape + word, and hatch for sim in charts.
-4. **Every number is a door.** KPI cells, chart points, table rows, issue codes and counts link to the sessions behind them (a pre-filtered `/sessions?...` URL). The door is visible without hovering (`↗` or `→`).
-5. **Honest data.** Simulated data is always labelled. Zero prints `0`. A ratio with no denominator prints `—`. A metric the engine can't provide is "Not available" with the reason. Never estimate it, never draw it as zero.
+Grafana's theme supplies every neutral (canvas, panels, text, grid). Hue is used only for status and engine, taken from the approved, measured palette.
 
-**One meaning per pattern:** **hatch = simulated**, and nothing else is hatched or striped. A **dashed frame = not available.** **Violet = blocked.** Engine colours never mean status, and status colours never mean an engine.
-
----
-
-## 2. Color tokens
-
-Every value below was measured by the render helper (`design/proposals/promax/v2/render-check.md`): 26/26 token pairs pass, and 0 rendered text nodes are below AA in either theme. **Do not change a value without re-running the contrast and CVD check** (section 9).
-
-### 2.1 Neutrals
-
-| Token | shadcn variable | Dark | Light | Use |
-|---|---|---|---|---|
-| `bg` | `--background` | `#0B0F14` | `#F4F6F9` | page, sidebar, top bar |
-| `surface` | `--card`, `--popover` (light) | `#111821` | `#FFFFFF` | cards, tables |
-| `surface-2` | `--muted`, `--accent`, `--secondary`, `--popover` (dark) | `#17212C` | `#F0F3F7` | hover row, active nav pill, selected segment bg, kbd |
-| `line` | `--border` | `#243142` | `#DDE3EA` | decorative card/row edges, grid lines |
-| `line-strong` | `--input` | `#5B6B80` | `#7A889B` | control outlines (≥ 3:1) |
-| `fg` | `--foreground`, `--ring` | `#E6EDF5` | `#0F1722` | primary text, focus ring |
-| `fg-muted` | `--muted-foreground` | `#9AA9BB` | `#475569` | labels, secondary text, units |
-| `fg-subtle` | `--subtle` (custom) | `#7D8DA1` | `#5F6E82` | axis ticks, meta, captions |
-| `ink` | `--primary` | `#E6EDF5` | `#0F1722` | primary button fill, selected segment |
-| `on-ink` | `--primary-foreground` | `#0B0F14` | `#FFFFFF` | text on `ink` |
-
-Measured text contrast (dark / light): `fg` ≥ 13.8 / 16.2 on every surface. `fg-muted` ≥ 6.8 / 6.8. `fg-subtle`: 5.7 / 4.8 on `bg`, 5.3 / 5.2 on `surface`, 4.8 / 4.67 on `surface-2` (the lowest pair in the system). `line-strong` ≥ 3.28 / 3.33.
-**Rule:** `fg-subtle` is never placed on a status tint or a chart area fill. Use `fg-muted` there.
-
-### 2.2 Status
-
-| State | Maps from (schema, PLAN section 5) | Icon (lucide) | Dark fg / bg | Light fg / bg |
-|---|---|---|---|---|
-| Healthy | `session.ended.status = success`, no retry, no slow action, no issue | `CircleCheck` | `#6EE7A8` / `#10281C` | `#0B6B39` / `#DDF5E7` |
-| Degraded | `success` with a retry, an action over its p95, or any `issue` | `TriangleAlert` | `#FFD95A` / `#2E2410` | `#6B4400` / `#FDF1D3` |
-| Failed | `failed`, `timeout`, `crashed` | `CircleX` | `#FF7B7B` / `#33191B` | `#B42318` / `#FDE4E1` |
-| Blocked | `blocked` (bot wall, CAPTCHA) | `Ban` | `#D9CCFF` / `#2B2159` | `#3D2A9E` / `#ECE7FB` |
-| Running | no `session.ended` yet | pulsing dot | `fg-muted`, no fill | `fg-muted`, no fill |
-
-Measured: `-fg` on its own `-bg` ≥ 6.5 dark / 5.4 light. `-fg` on `surface` ≥ 7.1 / 6.6.
-- Exactly **four status words** (plus Running). `timeout` and `crashed` are **Failed** with the reason code beside the badge in mono. They are never their own badge.
-- Fleet and engine thresholds (open question 1 for Eyal, these are the defaults): success ≥ 95% Healthy, 90 to 95% Degraded, < 90% Failed. Success rate = (healthy + degraded) / ended sessions. The fleet verdict is the **worst** of: success rate, error rate above the 10% alert line, and capacity above 90%.
-- Healthy (green) and Degraded (yellow) are close under deutan vision. The icon (check vs triangle) and the word separate them, which is why badge icons are 14px, not 12px.
-
-### 2.3 Engines
-
-Okabe-Ito colour-blind-safe hues. Each engine always has the same colour, marker and line style, everywhere.
-
-| Engine (API name) | Label in UI | Marker | Line (`strokeDasharray`) | Dark | Light |
-|---|---|---|---|---|---|
-| `chromium` | Chromium | circle | solid | `#56B4E9` | `#0072B2` |
-| `chrome-headless-shell` | chrome-headless-shell | rounded square | `7 4` | `#E69F00` | `#B86E00` |
-| `lightpanda` | Lightpanda | diamond | `9 3 2 3` (dash-dot) | `#CC79A7` | `#B0457F` |
-
-Measured non-text contrast on `surface` (dark / light): 7.74 / 5.19, 7.93 / 3.99, 5.83 / 5.25. On a hovered `surface-2` row the light values are about 4.5 / 3.6 / 4.6 (lead estimate; QA confirms in the token test).
-
-- **Engine colours are never text colours.** Names and versions are `fg` / `fg-muted`.
-- Always write the full API name `chrome-headless-shell`, with `white-space: nowrap`, and size columns so it fits. The UI uses the same names as the API and MCP.
-- CVD (measured, CIEDE2000 under Machado 2009 simulation): every engine-vs-engine protanopia/deuteranopia pair is ≥ 11.0. Accepted flags, all covered by shape + word:
-  - dark Chromium vs Blocked, protan 8.75
-  - dark headless vs Failed, tritan 8.69
-  - dark Lightpanda vs Failed, tritan 8.27
-  - light headless vs Lightpanda, tritan 9.59
-
-  Engine and status never share a mark type (marker vs badge), and no status is plotted as a series inside an engine chart.
-
-### 2.4 Chart-only tokens
-
-| Token | Dark | Light | Use |
+| Engine (`engine`) | Dark (default) | Light | `custom.lineStyle` |
 |---|---|---|---|
-| `--bar` | `#5B7491` | `#6B829E` | neutral OK bar in the waterfall (3.70 / 3.95 on surface) |
-| alert line | `--degraded` | same | dotted, error-rate threshold |
-| capacity line | `--muted-foreground` | same | dashed, Active sessions |
-| spike / failing span | `--failed` at 10% opacity | same | `ReferenceArea`, decorative |
-| grid | `--border` | same | horizontal grid only |
+| `chromium` | `#56B4E9` | `#0072B2` | `{"fill":"solid"}` |
+| `chrome-headless-shell` | `#E69F00` | `#B86E00` | `{"fill":"dash","dash":[10,10]}` |
+| `lightpanda` | `#CC79A7` | `#B0457F` | `{"fill":"dot","dash":[0,10]}` |
 
-### 2.5 Real vs simulated
-
-| Element | Real | Sim |
-|---|---|---|
-| Chip (20px, 12px uppercase 500) | 1px **solid** `line-strong` outline, **filled** dot, `REAL` | 1px **dashed** `line-strong` outline, **hollow** dot, hatched bg, `SIM` |
-| Source strip (6px, under every time chart's x axis) | solid `fg-subtle` share per minute | hatched `fg-subtle` share per minute |
-| Top bar | n/a | `62% sim` chip (dashed) beside the source filter whenever the filter includes sim |
-| Sim-only filter | n/a | page canvas gets a 1px dashed outline and a notice "Simulated data only" |
-
-Hatch (the only hatch in the app):
-```css
-.hatch { background-image: repeating-linear-gradient(135deg, var(--subtle) 0 1px, transparent 1px 4px); }
-```
-
----
-
-## 3. CSS variables and Tailwind v4 config
-
-Theme switching: `next-themes` with `attribute="class"`, `defaultTheme="dark"`, `enableSystem={false}`. `:root` holds light (the shadcn convention) and `.dark` holds dark. Dark is the default on first load.
-
-Paste into `apps/web/app/globals.css`:
-
-```css
-@import "tailwindcss";
-@custom-variant dark (&:is(.dark *));
-
-:root {
-  --radius: 8px;
-  /* neutrals (light) */
-  --background: #F4F6F9; --foreground: #0F1722;
-  --card: #FFFFFF; --card-foreground: #0F1722;
-  --popover: #FFFFFF; --popover-foreground: #0F1722;
-  --primary: #0F1722; --primary-foreground: #FFFFFF;
-  --secondary: #F0F3F7; --secondary-foreground: #0F1722;
-  --muted: #F0F3F7; --muted-foreground: #475569;
-  --accent: #F0F3F7; --accent-foreground: #0F1722;
-  --destructive: #B42318;
-  --border: #DDE3EA; --input: #7A889B; --ring: #0F1722;
-  --subtle: #5F6E82;
-  --sidebar: #F4F6F9; --sidebar-foreground: #0F1722;
-  --sidebar-accent: #F0F3F7; --sidebar-accent-foreground: #0F1722;
-  --sidebar-border: #DDE3EA; --sidebar-ring: #0F1722;
-  --sidebar-primary: #0F1722; --sidebar-primary-foreground: #FFFFFF;
-  /* status (light) */
-  --healthy: #0B6B39;  --healthy-bg: #DDF5E7;
-  --degraded: #6B4400; --degraded-bg: #FDF1D3;
-  --failed: #B42318;   --failed-bg: #FDE4E1;
-  --blocked: #3D2A9E;  --blocked-bg: #ECE7FB;
-  /* engines (light) */
-  --engine-chromium: #0072B2; --engine-headless: #B86E00; --engine-lightpanda: #B0457F;
-  --chart-1: var(--engine-chromium); --chart-2: var(--engine-headless); --chart-3: var(--engine-lightpanda);
-  --bar: #6B829E;
-}
-
-.dark {
-  --background: #0B0F14; --foreground: #E6EDF5;
-  --card: #111821; --card-foreground: #E6EDF5;
-  --popover: #17212C; --popover-foreground: #E6EDF5;
-  --primary: #E6EDF5; --primary-foreground: #0B0F14;
-  --secondary: #17212C; --secondary-foreground: #E6EDF5;
-  --muted: #17212C; --muted-foreground: #9AA9BB;
-  --accent: #17212C; --accent-foreground: #E6EDF5;
-  --destructive: #FF7B7B;
-  --border: #243142; --input: #5B6B80; --ring: #E6EDF5;
-  --subtle: #7D8DA1;
-  --sidebar: #0B0F14; --sidebar-foreground: #E6EDF5;
-  --sidebar-accent: #17212C; --sidebar-accent-foreground: #E6EDF5;
-  --sidebar-border: #243142; --sidebar-ring: #E6EDF5;
-  --sidebar-primary: #E6EDF5; --sidebar-primary-foreground: #0B0F14;
-  --healthy: #6EE7A8;  --healthy-bg: #10281C;
-  --degraded: #FFD95A; --degraded-bg: #2E2410;
-  --failed: #FF7B7B;   --failed-bg: #33191B;
-  --blocked: #D9CCFF;  --blocked-bg: #2B2159;
-  --engine-chromium: #56B4E9; --engine-headless: #E69F00; --engine-lightpanda: #CC79A7;
-  --bar: #5B7491;
-}
-
-@theme inline {
-  --color-background: var(--background); --color-foreground: var(--foreground);
-  --color-card: var(--card); --color-card-foreground: var(--card-foreground);
-  --color-popover: var(--popover); --color-popover-foreground: var(--popover-foreground);
-  --color-primary: var(--primary); --color-primary-foreground: var(--primary-foreground);
-  --color-secondary: var(--secondary); --color-secondary-foreground: var(--secondary-foreground);
-  --color-muted: var(--muted); --color-muted-foreground: var(--muted-foreground);
-  --color-accent: var(--accent); --color-accent-foreground: var(--accent-foreground);
-  --color-destructive: var(--destructive);
-  --color-border: var(--border); --color-input: var(--input); --color-ring: var(--ring);
-  --color-subtle: var(--subtle);
-  --color-sidebar: var(--sidebar); --color-sidebar-foreground: var(--sidebar-foreground);
-  --color-sidebar-accent: var(--sidebar-accent); --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-  --color-sidebar-border: var(--sidebar-border); --color-sidebar-ring: var(--sidebar-ring);
-  --color-sidebar-primary: var(--sidebar-primary); --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-  --color-healthy: var(--healthy);   --color-healthy-bg: var(--healthy-bg);
-  --color-degraded: var(--degraded); --color-degraded-bg: var(--degraded-bg);
-  --color-failed: var(--failed);     --color-failed-bg: var(--failed-bg);
-  --color-blocked: var(--blocked);   --color-blocked-bg: var(--blocked-bg);
-  --color-engine-chromium: var(--engine-chromium);
-  --color-engine-headless: var(--engine-headless);
-  --color-engine-lightpanda: var(--engine-lightpanda);
-  --color-bar: var(--bar);
-
-  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
-  --font-mono: var(--font-jetbrains-mono), ui-monospace, monospace;
-
-  /* type scale: 6 sizes, nothing else */
-  --text-status: 28px; --text-status--line-height: 32px;
-  --text-kpi: 22px;    --text-kpi--line-height: 28px;
-  --text-title: 20px;  --text-title--line-height: 28px;
-  --text-card: 14px;   --text-card--line-height: 20px;
-  --text-body: 13px;   --text-body--line-height: 20px;
-  --text-label: 12px;  --text-label--line-height: 16px;
-
-  --radius-sm: calc(var(--radius) - 4px); /* 4: badges, chips, kbd, bars */
-  --radius-md: calc(var(--radius) - 2px); /* 6: controls */
-  --radius-lg: var(--radius);             /* 8: cards */
-}
-
-body { @apply bg-background text-foreground font-sans text-body; font-variant-numeric: tabular-nums; }
-.hatch { background-image: repeating-linear-gradient(135deg, var(--subtle) 0 1px, transparent 1px 4px); }
-@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
-```
-
-Fonts in `app/layout.tsx`: `next/font/google` `Inter({ variable: "--font-inter" })` and `JetBrains_Mono({ variable: "--font-jetbrains-mono" })`. Both are self-hosted at build time.
-
-Tailwind usage: `bg-card`, `text-muted-foreground`, `text-subtle`, `bg-failed-bg text-failed`, `border-input`, `text-kpi font-semibold`, `text-label`, `rounded-lg` (card), `rounded-md` (control), `rounded-sm` (badge).
-
-### 3.1 One typed map for engines and statuses
-
-Put this in `apps/web/lib/visual.ts`. Charts, badges, legends and filters read **only** from here, so they cannot drift. The keys come from the zod enums in `packages/schema`. Do not redefine them.
-
-```ts
-export const ENGINES = {
-  chromium:               { label: "Chromium",              color: "var(--engine-chromium)",   marker: "circle",  dash: undefined },
-  "chrome-headless-shell": { label: "chrome-headless-shell", color: "var(--engine-headless)",   marker: "square",  dash: "7 4" },
-  lightpanda:             { label: "Lightpanda",            color: "var(--engine-lightpanda)", marker: "diamond", dash: "9 3 2 3" },
-} as const; // satisfies Record<Engine, EngineVisual>, with Engine taken from @fleetscope/schema
-
-export const STATUSES = {
-  healthy:  { label: "Healthy",  icon: CircleCheck,   fg: "text-healthy",  bg: "bg-healthy-bg" },
-  degraded: { label: "Degraded", icon: TriangleAlert, fg: "text-degraded", bg: "bg-degraded-bg" },
-  failed:   { label: "Failed",   icon: CircleX,       fg: "text-failed",   bg: "bg-failed-bg" },
-  blocked:  { label: "Blocked",  icon: Ban,           fg: "text-blocked",  bg: "bg-blocked-bg" },
-} as const;
-```
-
----
-
-## 4. Typography
-
-**Inter** for UI, **JetBrains Mono** for session ids, selectors, action types, error codes and versions in tables. The minimum size is **12px**. All numbers use `tabular-nums`.
-
-| Token | Size / line | Weight | Used for (only) |
+| Status (SQL value) | Mapping text | Dark (default) | Light |
 |---|---|---|---|
-| `text-status` | 28 / 32 | 600 | the fleet status word on Overview, nothing else |
-| `text-kpi` | 22 / 28 | 600 | KPI values (Overview strip and session stat strip) |
-| `text-title` | 20 / 28 | 600 | page title (h1), session id in mono |
-| `text-card` | 14 / 20 | 600 | card and chart titles, brand |
-| `text-body` | 13 / 20 | 400 (500 for emphasis) | tables, lists, nav, buttons, banner sentence |
-| `text-label` | 12 / 16 | 400 / 500 | labels, axis ticks, chips, badges, units, captions |
+| `healthy` | `✓ Healthy` | `#6EE7A8` | `#0B6B39` |
+| `degraded` | `▲ Degraded` | `#FFD95A` | `#6B4400` |
+| `failed` | `✕ Failed` | `#FF7B7B` | `#B42318` |
+| `blocked` | `⊘ Blocked` | `#D9CCFF` | `#3D2A9E` |
+| `running` | `○ Running` | `#9AA9BB` | `#475569` |
+| `interrupted` | `■ Interrupted` | `#7D8DA1` | `#5F6E82` |
 
-- Units are a 12px `text-muted-foreground` suffix: `36.2 cores`, `1.84 s`.
-- Fixed decimals per metric: rates 1 decimal (`91.6%`), latency 2 decimals in s (`1.84 s`) or integer ms under 1 s in the waterfall (`842 ms`), cost 2 decimals (`$8.73`), or 4 for a single session (`$0.0004`).
-- Every change carries a sign and names its window: `+0.31 s vs prior 1 h`.
-- Chart subtitles, legends, table headers, engine names and badges are **one line** (`whitespace-nowrap`).
+Other colours (dark / light): gauge cells in tables use the approved neutral `--bar`, `#5B7491` / `#6B829E`. The field default colour for any series without an engine override is `#9AA9BB` / `#475569`. The annotations use the status colours: "Failed actions" is Failed, "Issues" is Degraded.
 
----
+- **Engines:** Okabe-Ito hues; every engine-vs-engine pair has ΔE ≥ 11 under protanopia and deuteranopia (DECISIONS.md). Grafana draws every point as a circle, so the approved marker shapes are lost and the **line style** is the shape cue. Lightpanda is dotted because Grafana has no dash-dot preset (the values above are the editor's own Dash/Dots defaults). Engine series are always lines, because bars can't be dashed. Engine colours never colour text or cells, and engine names are written as in the API.
+- **Statuses:** there are exactly six. `timeout` and `crashed` show as Failed, with the code in the Cause column. Running and Interrupted are not outcomes, so they get the approved greys (`fg-muted`, `fg-subtle`), and the glyph and word tell them apart. The glyphs are plain text characters, not emoji.
+- **Dark is the default and the only theme we commit.** Grafana stores field colours as fixed hex, not theme tokens, so one JSON can't switch with the theme. Set the org default theme to Dark (Administration > Default preferences), locally and on Grafana Cloud. The Light column is a 1:1 find-and-replace map (no hex appears in both columns) if a light copy is ever needed. We don't use Grafana's named colours: they follow the theme, but they aren't our measured palette. The one exception is `text` as a threshold base.
+- **Engine overrides:** every time series panel gets three "Fields with name matching regex" overrides: `/chromium/`, `/chrome-headless-shell/`, `/lightpanda/`. Each sets `color` = `{"mode":"fixed","fixedColor":"<hex>"}` and `custom.lineStyle`. The regexes are unanchored on purpose: neither name contains the other, and they still match whatever prefix the plugin adds to a series name. Set the field default colour to `#9AA9BB`, so nothing falls back to Grafana's classic palette, whose green would read as Healthy.
+- **Status:** SQL returns the lowercase value, and the mapping below adds glyph, word and colour; copy it wherever a status appears. Tables use the cell type **Colored text**. The two verdict stats use the colour mode **Background solid**, which makes Grafana pick dark or white text for contrast, so they read in either theme.
+- **Contrast** (lead estimate): Grafana's dark panel `#181B1F` is slightly lighter than our old `#111821`, which scales the measured ratios by about ×0.97. That gives status text ≥ 6.8:1, Interrupted 5.1:1, and engine lines 7.5 / 7.7 / 5.6:1. Light panels are white, the surface the Light column was measured on.
 
-## 5. Spacing, sizing, layout
+```json
+"mappings": [{ "type": "value", "options": {
+  "healthy":     { "index": 0, "text": "✓ Healthy",     "color": "#6EE7A8" },
+  "degraded":    { "index": 1, "text": "▲ Degraded",    "color": "#FFD95A" },
+  "failed":      { "index": 2, "text": "✕ Failed",      "color": "#FF7B7B" },
+  "blocked":     { "index": 3, "text": "⊘ Blocked",     "color": "#D9CCFF" },
+  "running":     { "index": 4, "text": "○ Running",     "color": "#9AA9BB" },
+  "interrupted": { "index": 5, "text": "■ Interrupted", "color": "#7D8DA1" } } }]
+```
 
-- **Spacing scale** (4px base): 4, 8, 12, 16, 24. Card gap 12. Card padding 16 (12 inside KPI cells). Page padding 24 (16 below `xl`).
-- **Heights:** top bar 48, control 32 (`h-8`; compact 28 inside the top-bar segmented controls), nav item 36, table row 40, waterfall row 28, badge and chip 20, icon 16 (14 in badges).
-- **Radius:** card 8, control 6, badge, chip, kbd and bar 4. Shadows only on popover, tooltip and the ⌘K palette.
-- **Breakpoint:** one breakpoint, Tailwind `xl` (1280px). Both 1440 and 1024 must render with **no horizontal scroll**.
-- **Grid rule:** every grid and flex child that contains a chart or a table gets `min-w-0`, and every grid track uses `minmax(0,1fr)`. This prevents the 4px overflow seen in promax v2. Sibling columns stretch to one height (`items-stretch`).
+## 3. Units, thresholds and definitions
 
-### 5.1 Shell
+| Metric | Grafana unit | Decimals | Prints |
+|---|---|---|---|
+| Counts | `locale` | 0 | `1,926` |
+| Latency, durations, offsets | `ms` | unset (a fixed 2 prints `842.00 ms`) | `842 ms`, `1.84 s` |
+| Success / error rate, simulated share | `percent` (SQL returns 0–100) | 1, share 0 | `91.6%`, `62%` |
+| CPU of one session | `percent` (% of one core, can pass 100) | 0 | `62%` |
+| CPU in use (fleet) | `suffix: cores` | 1 | `36.2 cores` |
+| Memory, JS heap | `mbytes` | 0 (fleet total 1) | `210 MiB`, `4.2 GiB` |
+| Network bytes | `bytes` | unset | `1.2 MiB` |
+| Actions per minute | `suffix: /min` | 0 | `48 /min` |
+| Estimated cost: range / one session | `currencyUSD` | 2 / 4 | `$8.73` / `$0.0004` |
+| Timestamps in tables | `dateTimeAsLocalNoDateIfToday` | – | `14:25:03` |
 
-- **Sidebar:** 216px with labels at `xl` and above, a 56px icon rail below. Items: Overview, Sessions (`128 live`), Browsers, Usage & cost, Insights (`5 open`). Counts always carry a noun. The active item is a filled `surface-2` pill with no ring. The footer shows collector status as text ("Collector live · last event 0.8 s ago"). No workspace switcher, user row, settings or saved views (saved views live in ⌘K).
-- **Top bar (48px, sticky):**
-  - Overview and list pages: time range segmented control (`15m 1h 24h 7d Custom`), engine multi-select (with markers), source segmented control (`All | Real | Sim`) and the `% sim` chip on the left; a `Live · hh:mm:ss` indicator, ⌘K search and theme toggle on the right.
-  - **Session page:** filters are hidden. Breadcrumb `Overview > Sessions > s_9Kd2xQ`, ⌘K and theme only.
-  - All filter state lives in URL search params.
+- **Memory is in MiB.** The collector divides bytes by 1024², so use `mbytes` (it prints MiB and GiB), not `decmbytes`. Labelling these values "MB" would be about 5% off.
+- **Cost is always labelled as an estimate.** Use the title "Estimated cost" and the column header "Est. cost", with this description: "Browser-hours × $0.10 per browser-hour (Browserbase's published price, from the `pricing` table). An estimate, not a bill."
 
-### 5.2 Overview (`/`)
+**Thresholds**
+- **Success rate** (KPI stat and the By engine Status column): base `#FF7B7B`, 90 → `#FFD95A`, 95 → `#6EE7A8`. So ≥ 95% is Healthy, 90 to < 95% is Degraded and < 90% is Failed (Eyal, 2026-10-22).
+- **Error rate chart:** the same rule, mirrored. `thresholdsStyle: {"mode":"area"}`, transparent base, 5 → `#FFD95A`, 10 → `#FF7B7B`.
+- **Failed actions** (Sessions) and **HTTP status** (Network): base `text`, then 1 or 400 → `#FF7B7B`.
+- Nothing else has a target, so nothing else is threshold-coloured.
 
-At `xl`, top to bottom:
-1. **Title row:** h1 "Overview", a range sentence ("Last 1 hour · 13:42–14:42 · all engines · real + simulated"), and on the right "Updated 1 s ago · stream connected".
-2. **Verdict banner** (section 6.1).
-3. **KPI strip,** 7 cells (6.2).
-4. **Two columns** `grid-cols-[minmax(0,1fr)_400px]`:
-   - Left: shared legend, Error rate (full column width), then Active sessions and Actions per minute side by side.
-   - Right: the Recent failures rail (6 rows + "View all N failures").
-5. **By engine table,** full width.
+**Definitions.** The SQL that implements them lives in `packages/db/README.md`, and it must agree with this list.
+- **Display status:** `running` = no `session.ended` yet. `interrupted` = `reason = 'interrupted'`. `healthy` = `success` with no failed action and no issue. `degraded` = `success` with a failed action (a retry) or any issue. `blocked` = `blocked`. `failed` = `failed`, `timeout` or `crashed`. The approved rule that an action slower than its p95 degrades a session is a stretch item.
+- **Success rate** = (healthy + degraded) / ended sessions. Ended excludes running and interrupted sessions; blocked counts against the rate.
+- **Error rate** = 100 − success rate, per `ended_at` bucket, computed from `sessions` rather than `fleet_minute` (which counts actions). That way interrupted sessions are excluded and the chart agrees with the verdict.
+- **Fleet verdict** = the success rate over the range, through the thresholds. It is `no_data` when no session ended. The approved capacity rule is dropped, because there is no capacity data.
+- **Failure cause** (sessions that didn't succeed, interrupted excluded): the first `issues.kind`, else the first failed action's `error_code`, else `status`. A From column says which one (`issue` / `action` / `status`).
+- **Estimated cost** = browser-hours (startup + connect + session duration, because the browser is billed from the moment its container exists; a running session counts until now) × price.
+- **Interrupted sessions** have their own count and status. They never enter the success rate, error rate, Recent failures or Top failure causes.
+- **Honest SQL:** ratios as `if(den = 0, NULL, num / den)`; `-OrNull` aggregates (`maxOrNull`, `avgOrNull`, `quantileOrNull`) wherever a set can be empty; never `ifNull(metric, 0)` or `coalesce(metric, 0)`.
 
-Below `xl`: the KPI strip becomes 4 + 3, the rail moves below the charts as a two-column list, and the table hides CPU and Memory.
+## 4. Dashboards
 
-### 5.3 Session detail (`/sessions/[id]`)
+### 4.1 Shared settings
 
-Header → root-cause banner → stat strip → `[timeline card | 340px side column]`.
-- Side column order: Issues, "<scenario> on each engine", Details.
-- Tabs on the timeline card: **Timeline | Network | Screenshots** (no "Raw events").
-- Below `xl` everything stacks in this order: header, banner, stat strip, **timeline**, Issues, engine comparison, Details. The timeline comes before Issues.
+- **Navigation:** tag all three dashboards `fleetscope`. Add dashboard links by tag that keep the time range and the variables. Set `graphTooltip: 1` (shared crosshair) and timezone browser.
+- **Time series:** line width 2, `spanNulls: false`, fill 0 (15 on session charts), points never (always, size 4, on session charts), legend as a list at the bottom, tooltip with all series sorted descending, min interval 1m.
+- **Stats:** graph mode none (no sparklines), text mode value, KPI value size 22. Verdicts use auto size, so they are the largest text on the page. A string stat needs Value options > Fields set to its column, because "Numeric fields" hides strings.
+- **Descriptions:** every panel has a one-sentence description with its definition from section 3. People see it under (i), and Grafana Assistant can read it.
 
----
+| Variable | Type | Values | Default | Dashboards |
+|---|---|---|---|---|
+| `engine` | custom, multi, All | `chromium,chrome-headless-shell,lightpanda` | All | overview, sessions |
+| `source` | custom, single, All | `real,sim` | All | overview, sessions |
+| `status` | custom, multi, All | `Healthy : healthy`, … all six | All | sessions |
+| `agent`, `scenario` | query, multi, All | distinct values from `sessions FINAL` within `$__timeFilter(started_at)` | All | sessions |
+| `session` | textbox | a session id | empty | session |
+| `api_url` | constant, hidden | API base URL (set by provisioning and `grafana:push`) | – | session |
 
-## 6. Components
+In SQL, use the variables as `engine IN (${engine:singlequote})`. Links are relative, so they work both locally and on Grafana Cloud:
+- **To Sessions:** `/d/fleetscope-sessions?${__url_time_range}&${engine:queryparam}&${source:queryparam}`, plus `&var-status=…` where the tables below say so.
+- **To Session detail:** `/d/fleetscope-session?var-session=${__data.fields.session_id}&from=${__data.fields.from_ms}&to=${__data.fields.to_ms}`. Here `from_ms` = start − 5 s and `to_ms` = end (or now) + 5 s, both in epoch ms. Hide these two fields with the `custom.hidden` override. Don't use Organize fields: it removes them, and the link breaks.
+- **To Perfetto:** `${api_url}/v1/sessions/${session}/perfetto`, in a new tab.
 
-### 6.1 Verdict banner (Overview)
-- `-bg` fill of the fleet status and a 4px inset left edge in the `-fg` colour.
-- 32px status icon, the status word in `text-status`, one sentence of evidence in `text-body` with the single most telling number in 600 weight. Example: "Success rate is **91.6%**, 3.4 pts below the prior hour (target 95%). Lightpanda errors peaked at **28.4% at 14:25**; 71 of its 89 failures are `unsupported_api`."
-- On the right: the **four-state distribution bar**: 8px tall, segments `healthy / degraded / failed / blocked` filled with each `-fg`, a 2px gap between segments, and each non-zero segment at least 4px wide. Under the bar: counts with icons ("Healthy 1,642 · Degraded 122 · Failed 111 · Blocked 51") and a line "Capacity 128 / 200 slots (64%) · engines reporting 3 / 3".
-- One primary (`ink`) button: "Review 162 failures ↗", which opens Sessions filtered to failed + blocked in range.
-- When the fleet is Healthy the banner stays, but slim: the word, one sentence, and the bar.
+### 4.2 Overview (`fleetscope-overview`)
 
-### 6.2 KPI strip
-- One shadcn `Card`. Cells sit in a grid with `gap-px bg-border` so the 1px dividers come from the gap. Each cell is a single `<a>` to a pre-filtered Sessions view.
-- Cells: Active now, Sessions (range), Success rate, p95 action latency, CPU in use, Memory, Est. cost (range).
-- Cell anatomy, top to bottom:
-  1. Label (`text-label text-muted-foreground`) with `↗` (`ArrowUpRight` 14px, `text-subtle`, `text-foreground` on hover/focus) top right. The arrow is always visible.
-  2. Value `text-kpi font-semibold` + unit suffix.
-  3. Delta line: arrow icon + signed value + "vs prior 1 h". Colour means **better/worse** (`text-healthy` / `text-failed`), with a hidden `<span class="sr-only">worse</span>`. A neutral change (e.g. session count) is `text-muted-foreground`.
-  4. One footer line, at most:
-     - capacity track (Active)
-     - real/sim split bar, solid + hatched, with "741 real · 1,185 sim" 4px below it (Sessions)
-     - a one-line fact ("0.28 cores / session", "≈ $210 / day")
-- **Breaching cell:** `shadow-[inset_3px_0_0_var(--failed)]` (or `--degraded` if the breach is a degraded-level breach). No tint, no sparkline.
-- **Don't** add sparklines, gauges or donuts.
+Range `now-1h`, refresh `30s`, variables `engine` and `source`. Panels are listed top to bottom, with sizes as w×h on the 24-column grid.
 
-### 6.3 Chart card
-- Header (one line): title `text-card` + one-line subtitle on the left. On the right: "now" values as engine marker + number (the marker identifies the engine), then a 24px "View as table" icon button (`Table2`) and an "Open sessions" `↗` icon button.
-- **One shared legend** above the chart group: line sample + marker + name per engine (toggle buttons with `aria-pressed`, filtering all three charts), the source key (`■ real ▨ sim`), and the hint "Click any point to open the sessions behind it".
-- Plot heights: **Error rate 200px**, Active sessions and Actions per minute **160px**.
-- Axes: horizontal grid only, 3 to 5 y ticks, x ticks every 10 min for 1 h (scale with the range), ticks `text-label` in `--subtle`, no axis lines.
-- Charts:
-  - **Error rate:** `LineChart`, one 2px line per engine with its dash and an end marker (custom `dot` on the last point only). Alert `ReferenceLine` at 10%, dotted, `--degraded`, label "alert 10%" below the line at the left. Spike `ReferenceArea` with a label in a reserved 24px row above the plot ("Spike 14:21–14:28 · 31 failed"). Peak label at the max point ("28.4% at 14:25"). **At most one event marker:** optional "Lightpanda v0.2.9 first seen" (dashed vertical `ReferenceLine`, derived from `session.started.engine_version`, cut first if behind).
-  - **Active sessions:** `BarChart` with `stackId`, per-minute columns, 1px `--card` stroke seams, dashed capacity `ReferenceLine` labelled "capacity 200" under the line at the right.
-  - **Actions per minute:** `LineChart`, same encoding as Error rate (lines, not stacked areas).
-- **Source strip:** a 6px row under the x axis of every time chart. Each minute is split into a solid `--subtle` real share and a hatched sim share. Build it as a sibling div row aligned to the plot's left/right margins (simpler than a Recharts `Customized`).
-- **Tooltip:** `Tooltip content={<FleetTooltip/>}`, `isAnimationActive={false}`. Rows: time; one row per engine (marker + name + value, sorted by value); "Source real 66%, sim 34%"; then a link row "3 failed this minute · Open ↗". The tooltip must never cover a reference-line label; use `position`/`allowEscapeViewBox` to pin it to the top-left of the plot when the cursor is in the right half.
-- Clicking a point opens `/sessions?from=…&to=…&engine=…&status=failed` for that minute.
-- Live updates: SSE throttled to 1/s, `isAnimationActive={false}` everywhere, update in place.
+| # | Panel (type, size) | Shows | Drill-down |
+|---|---|---|---|
+| 1 | **Fleet verdict ↗** (Stat, 6×5) | The word, Background solid. `no_data` → "No ended sessions" in `#9AA9BB`. | Sessions, `var-status=failed&var-status=blocked` |
+| 2 | **Outcomes ↗** (Bar gauge, horizontal, 12×5) | Counts in the fields `healthy`, `degraded`, `failed`, `blocked`. Display names are the mapping texts; colours are fixed per field. | Sessions, `var-status=${__field.name}` |
+| 3 | **Simulated share ↗** (Stat, 6×5) | Sim sessions / all sessions in range, no colour. Mappings: 0 → "0% · all real", 100 → "100% · all simulated". | Sessions, `var-source=sim` |
+| 4–11 | **KPI row** (8 stats, 3×4 each) | See the next table. | See the next table. |
+| 12 | **Error rate by engine ↗** (Time series, 24×8) | Error rate (section 3). Min interval 5m, threshold areas at 5% and 10%, y min 0. | Sessions, `var-engine=${__field.labels.engine}`, failed + blocked |
+| 13 | **Active sessions by engine ↗** (Time series, 12×7) | Sessions running in each bucket, from `sessions` at query time. | Sessions, that engine |
+| 14 | **Actions per minute by engine ↗** (Time series, 12×7) | `fleet_minute` counts divided by the bucket length in minutes. | Sessions, that engine |
+| 15 | **By engine ↗** (Table, 24×6) | Columns below. | Sessions, `var-engine=${__data.fields.engine}` |
+| 16 | **Recent failures ↗** (Table, 14×9) | Below. | Session detail |
+| 17 | **Top failure causes ↗** (Table, 10×9) | Below. | Two links, below |
 
-### 6.4 Tables (shadcn `Table`)
-- Rows 40px, `text-body`, 1px `--border` between rows. Header `text-label text-subtle`, no fill, `whitespace-nowrap`. Numbers right-aligned and tabular with the unit suffix muted. The identity cell is `<th scope="row">`. The whole row is a link (`→` on hover; the first cell is a real `<a>` for keyboard users).
-- **By engine table:**
+| KPI | Value | Unit | Colour | Link `var-status` |
+|---|---|---|---|---|
+| Active now ↗ | Running sessions with a resource sample in the last 30 s. Ignores the time range (the description says so). | `locale` | none | `running`, `from=now-15m` |
+| Sessions ↗ | Sessions started in range, any status. | `locale` | none | All |
+| Success rate ↗ | As defined in section 3. Null → `—`. | `percent`, 1 | thresholds, colour mode Value | `failed` + `blocked` |
+| p95 action latency ↗ | From `fleet_minute` over the range. | `ms` | none | All |
+| CPU in use ↗ | Sum of the latest `cpu_pct` / 100 over active sessions. | `cores`, 1 | none | `running` |
+| Memory in use ↗ | Sum of the latest `mem_mb` over active sessions. | `mbytes`, 1 | none | `running` |
+| Estimated cost ↗ | As defined in section 3. | `currencyUSD`, 2 | none | All |
+| Interrupted ↗ | Sessions in range with `reason = 'interrupted'`. | `locale` | none | `interrupted` |
 
-  | Column | Content |
-  |---|---|
-  | Engine | marker + name + version in mono `fg-muted` |
-  | Status | badge |
-  | Active now | number |
-  | Sessions | number |
-  | Success rate | number |
-  | p95 latency | number |
-  | CPU | number |
-  | Memory | number |
-  | Cost | number |
-  | Top issue | mono code + `×48` in `fg-muted` |
+- **By engine:** columns Engine · Version (latest `engine_version`, null → `not reported`) · Status (engine success rate through the thresholds, Colored text) · Active now · Sessions · Success rate · p95 latency · CPU (avg % of one core) · Memory (avg peak MiB) · Est. cost · Top cause (e.g. `unsupported_api ×48`). There is no totals row: the KPI row is the total, and a Grafana footer would average the rates.
+- **Recent failures:** the last 15 sessions that ended in range without succeeding (interrupted excluded). Columns: Time · Status · Session · Engine · Scenario · Cause (`code: message`, truncated, full text on hover) · Source. The Status and Session cells link to Session detail. No value: "No failures in this range".
+- **Top failure causes:** the top 10. Columns: Cause · From · Sessions (gauge cell, `#5B7491`) · Engines (e.g. `lightpanda 71, chromium 3`). Two data links, which Grafana shows as a menu: "Latest session with this cause" (through hidden `session_id`, `from_ms` and `to_ms` fields) and "Failed and blocked sessions in range". No value: "No failures in this range".
+- **Chart links** carry the whole panel range, not the clicked minute. To open the sessions in one spike, drag across it to zoom, then click. Every chart's description says this.
+- **Stretch (first to cut):** an annotation "`<engine> <version>` first seen", from `min(started_at)` per engine and version, in `#9AA9BB`.
 
-  A totals row ("All engines", with its own badge) sits under a `line-strong` rule and is computed from the rows above. Below `xl`, CPU and Memory are hidden.
-- **Recent failures row** (rail and Sessions-style lists):
-  1. Status badge, session id (mono), time on the right.
-  2. Reason code (mono, 500) + human message (truncate with ellipsis, full text in `title`).
-  3. Engine marker + name, scenario, then the REAL/SIM chip on the right.
+### 4.3 Sessions (`fleetscope-sessions`)
 
-### 6.5 Status badge
-- 20px tall, `rounded-sm`, `text-label font-medium`, 14px icon + word, `-fg` on `-bg`. Build it as a cva variant: `healthy | degraded | failed | blocked`. On the session page header it is 28px tall with `text-body`.
-- **Never icon-only, never word-only.**
+Range `now-1h`, refresh `30s`, variables `engine`, `source`, `status`, `agent`, `scenario`. The dashboard has one panel, **Sessions ↗** (Table, 24×22):
+- **Rows:** the latest 1,000 sessions started in range (the description says so), newest first. Pagination, column filters, a footer with the row count, and cell height `sm`.
+- **Links and empty state:** the Status and Session cells link to Session detail. No value: "No sessions match these filters in this range". The per-row memory sparkline from PLAN section 7 is a stretch item.
 
-### 6.6 Engine marker
-- A 10px SVG (circle / rounded square / diamond) in the engine colour, always followed by the name, except in a chart header "now" value, where the shared legend names it.
-
-### 6.7 Session header and stat strip
-- Header: status badge (28px), session id in `text-title` mono + copy button, engine marker + name + version, REAL/SIM chip. A meta line in `text-label text-muted-foreground`: started, ended, agent, scenario, region, provider. On the right: "Copy link" (secondary) and "Explain this session" (primary, `Sparkles` icon).
-- **Stat strip:** the **same component as the KPI strip**, with 6 cells:
-  - Duration, sub "ended by action_timeout"
-  - Actions, sub "10 ok, 1 failed"
-  - Startup, sub "connect 41 ms"
-  - Peak CPU, sub "at 4 s, container"
-  - Peak memory, sub "at 6 s, JS heap not available"
-  - Cost, sub "23 requests, 1.2 MB"
-
-### 6.8 Root-cause banner (session)
-- `failed-bg` with a 4px inset `--failed` edge and a `CircleX` icon.
-- Bold first line: "Failed at 9.35 s: action #9 `click button.checkout-submit`".
-- Then 1–2 sentences: the error code + message, where it was thrown, what the resources show ("CPU stayed under 15% from 6.5 s to 9.5 s: the page was waiting, not working"), and the cross-engine fact ("Chromium completed this scenario in 211 of 217 runs over 24 h").
-- Buttons: "Jump to action #9" and "Compatibility matrix ↗".
-- Blocked sessions use `blocked-bg`, degraded sessions `degraded-bg`, and healthy sessions get no banner.
-
-### 6.9 Action waterfall and shared time axis
-- **Gutter:** 264px (248 below `xl`): sequence number (20px, `fg-subtle`), action type in mono in an **80px** column (fits `screenshot`; always the API `action_type` name), target in mono with ellipsis and the full text in `title`.
-- **Axis header, two rows:** an events row (failure chip "✕ 9.35 s · failed", "end 12.4 s", hover time tag) **above** the tick row. Labels never sit on a tick.
-- **Rows:** 28px. Bar 14px, `rounded-sm`, minimum 3px wide. Each bar is positioned with `left = start/total`, `width = duration/total` (plain divs with percentages).
-  - **OK:** `--bar` (neutral, not the engine colour).
-  - **Slow** (over its p95): `--degraded` fill + `Clock` icon + label "2.95 s · slow".
-  - **Failed:** **solid** `--failed` fill + `X` icon + label "2.45 s · failed". **No stripes** (hatch means sim).
-- **Duration label:** outside the bar, on the right (flipped to the left past 82% of the axis). It sits on a `--card` pill (`px-1 rounded-sm`) drawn **above** gridlines and the failure line, so no line crosses a label.
-- **Selected row:** `failed-bg` (or `surface-2` for an OK row). A detail strip under the timeline repeats the selected action: badge, `#9 click button.checkout-submit`, `6.90 → 9.35 s · 2.45 s`, error code, "See issue".
-- **Failure overlay:** a shaded failing span (`--failed` at 10%) plus a dashed `--failed` line at the first failure, across every row and both resource charts.
-- **Resource rows:** CPU (% of one core), Memory (MB), and JS heap (CDP), sharing the waterfall's x scale.
-  - Recharts `LineChart` with `syncId="session"`, `XAxis type="number" domain={[0, durationMs]} hide`, fixed `margin={{ left: 12, right: 12, top: 16 }}`, `YAxis` hidden and its tick labels rendered in the gutter.
-  - 2px line + 2.5px dots at the **real** sample times. `connectNulls={false}`. Light area fill at 15%.
-  - The gutter shows "CPU · peak 62% at 3.0 s".
-- **One hover cursor** crosses all rows and updates the CPU and memory read-outs in the gutter.
-- **Unsupported metric** (e.g. JS heap on Lightpanda): a dashed `line-strong` frame filling the row with `text-label text-muted-foreground` "Not available: Lightpanda has no CDP Performance.getMetrics (stored as null)". The frame has a `--card` background and sits above the failure line.
-- **No** boot-phase rows. Startup and connect live in the stat strip.
-
-### 6.10 Issues panel (session side column)
-- One block per issue:
-  - Line 1: status badge for the kind + code in mono, with "+5.74 s, action 10" on the right.
-  - Line 2: the raw message in a mono `surface-2` block.
-  - Line 3: one plain sentence explaining it.
-  - Then links: "48 sessions with this issue in the last hour →" and "Compatibility matrix for checkout-form →".
-- When a second issue is caused by the first, add a `→` line: "Follows from unsupported_api: the handler never ran."
-- **"<scenario> on each engine" card:** one row per engine with marker + name, `successes / runs` over 24 h, and a status badge with the rate.
-
-### 6.11 Empty, loading, error and degraded-data states
-Neither mockup drew these, so they are defined here. Keep them small.
-
-| Situation | Show | Never |
+| Column | Content | Format |
 |---|---|---|
-| Loading | shadcn `Skeleton` blocks with the final heights (KPI cell 104, plots 200/160, rows 40) | spinners inside cards; layout shift |
-| Count with no events | `0` | `—` or an empty cell |
-| Ratio or percentile with no denominator | `—` with `title="No sessions in range"` | `0%`, `NaN` |
-| Chart with no data in range | the card frame + centred `text-body text-muted-foreground` "No sessions in this range" + a "Show 24 h" link button | an empty axis with no message |
-| Metric the engine can't provide (`null`) | the dashed "Not available: <reason>" frame; gaps in lines (`connectNulls={false}`) | zero, interpolation, hatch |
-| Recent failures empty | `CircleCheck` in `--healthy` + "No failures in the last 1 h" | hiding the rail |
-| One card's API call fails | inside that card: `CircleX` `--failed` + "Couldn't load error rate" + request id in mono + "Retry" button; other cards keep working | a full-page error |
-| SSE stream disconnected | the top bar `Live` dot becomes hollow `fg-muted` with "Paused, retrying"; the sidebar footer line uses `--degraded` text "Live updates paused"; data stays with "Updated 2 min ago" | clearing the data |
-| Sim-only filter | dashed canvas outline + "Simulated data only" notice | presenting it as real |
-| Unknown session id | a 404 card: "Session s_xxx not found (it may be older than 30 days)" + "Back to Sessions" | a blank page |
+| Status | display status | Colored text + the status mapping |
+| Session | `session_id` | data link |
+| Started | `started_at` | `dateTimeAsLocalNoDateIfToday` |
+| Engine, Version | `engine`, `engine_version` | Version null → `not reported` |
+| Scenario, Agent | `scenario`, `agent_id` | text |
+| Duration | `duration_ms` | `ms`; null → `running` |
+| Time to browser | `startup_ms + connect_ms` | `ms` |
+| Actions, Failed actions | counts | `locale`; Failed actions has the threshold from section 3 |
+| Peak memory | `maxOrNull(mem_mb)` | `mbytes`, 0; null → `Not available` |
+| Est. cost | as defined in section 3 | `currencyUSD`, 4 |
+| Cause | failure cause, `code: message` | truncated, full text on hover |
+| Source | `real` → `REAL`, `sim` → `SIM` | no colour |
+| (hidden) | `from_ms`, `to_ms` | `custom.hidden` |
 
----
+### 4.4 Session detail (`fleetscope-session`)
+
+Variables `session` and `api_url`, refresh off.
+- **Time range:** the Sessions link sets it to the session ± 5 s.
+- **Filtering:** only the three charts use `$__timeFilter`. Every other panel filters on `session_id = '${session}'` alone, so the header works in any range.
+- **Layout:** a left column 16 wide and a right column 8 wide. Issues is the always-visible side panel that Eyal approved.
+
+| # | Panel (type, size, column) | Shows |
+|---|---|---|
+| 1 | **Status** (Stat, 4×4) | Display status, Background solid. No value: "Session not found. It may be older than 30 days, or the id is wrong." |
+| 2 | **What happened** (string Stat, 12×4) | One sentence built in SQL. Examples: `Failed at 9.35 s: action #9 click button.checkout-submit, selector_timeout`, `Blocked at 3.10 s: captcha`, `Completed with 1 issue: unsupported_api`, `Completed, no issues`, `Interrupted by the runner (not counted as a failure)`, `Running`. |
+| 3, 4 | **Engine**, **Source** (Stats, 4×4) | `lightpanda 0.2.9` and `REAL` / `SIM`, no colour |
+| 5–12 | **Stat row** (8 stats, 3×3) | Duration · Actions (`10 ok · 1 failed`) · Time to browser · Peak CPU · Peak memory · Peak JS heap (null → `Not available`) · Requests · Est. cost (4 decimals) |
+| 13 | **Actions** (Table, 16×10, left) | # · Start (offset, `ms`) · Action (`action_type`) · Target · Duration (gauge cell, `#5B7491`) · Result (`✓ ok`, or `✕ failed` in `#FF7B7B`) · Error code. Sorted by #. Panel link: "Open timeline in Perfetto ↗". |
+| 14 | **Timeline** (Text, 8×3, right) | "Open timeline in Perfetto ↗" and the line: "Actions, network and issues with CPU, memory and JS heap on one time axis. Opens ui.perfetto.dev; the trace stays in your browser." |
+| 15 | **Issues** (Table, 8×13, right) | Time (offset) · Kind · Message (wrapped). No value: "No issues in this session". |
+| 16–18 | **CPU**, **Memory**, **JS heap** (Time series, 16×6 each, left) | Container `cpu_pct` and `mem_mb`; CDP `js_heap_mb` |
+| 19 | **Ask Grafana Assistant** (Text, 8×10, right) | The prompts below |
+| 20 | **Network** (Table, 24×8) | Time · Domain · Type · Status (null → `no response`, ≥ 400 in `#FF7B7B`) · Bytes (null → `not reported`) · Duration. The description says the requests are sampled. |
+
+- **Charts:** the queries keep the `engine` label, so the engine overrides colour them, and points sit at the real sample times. No value on CPU and Memory: "No samples in this range. Open the session from the Sessions table so the range fits it." No value on JS heap: "No JS heap samples: the engine doesn't report it (stored as null), or the range doesn't cover the session."
+- **Annotations** (dashboard level, so they show on all three charts) replace the approved failure line. "Failed actions" is `#FF7B7B`, with text like `#9 click button.checkout-submit: selector_timeout`. "Issues" is `#FFD95A`, with text `kind: message`: an issue is what makes a successful session Degraded.
+- **Assistant prompts** (Markdown; Grafana fills in `${session}`). Note in the panel that Assistant is Grafana Cloud only.
+  - "Why did session ${session} fail? Start from the What happened panel and the first failed action."
+  - "Was the page waiting or working when it failed? Compare CPU with the Actions table."
+  - "Is this an engine limitation (unsupported_api, metrics that are Not available) or a problem with the site?"
+  - "Find other sessions in the last 24 hours with the same failure cause, and say which engines they ran on."
+
+## 5. Perfetto timeline
+
+`GET /v1/sessions/:id/trace` returns Chrome Trace Event JSON (`{"traceEvents": [...], "displayTimeUnit": "ms"}`). `GET /v1/sessions/:id/perfetto` opens ui.perfetto.dev and hands it the trace with `postMessage`. The trace is processed in the viewer's browser and is never uploaded.
+- **Time base:** `ts` and `dur` are microseconds from `started_at`, so the axis runs from 0 to the session duration, like the offsets in Grafana.
+- **Process:** a single process (`pid: 1`), named with an `M` `process_name` event: `<session_id> · <engine> <version> · <REAL|SIM> · <status word>`.
+- **Tracks:** each track is a thread, named with `M` `thread_name` and ordered with `thread_sort_index`.
+
+| Track | tid | Events | Slice name | args |
+|---|---|---|---|---|
+| actions | 1 | `X` | `<action_type> <target>` (target cut at 60 chars); failed: `✕ <action_type> <target>` | `seq`, `ok`, `duration_ms`, `error_code` |
+| network | 2, then `network 2`, `network 3`… | `X` | `<resource_type> <domain>`; failed (status null or ≥ 400): `✕ <resource_type> <domain> <status or "no response">` | `status`, `bytes`, `duration_ms` |
+| issues | 3 | `i`, `s: "t"` | `<kind>` | `message` |
+
+| Counter track | Event (`ph: "C"`, `pid: 1`) | Source | Unit |
+|---|---|---|---|
+| CPU % | `{"name":"CPU","args":{"%":62}}` | container `cpu_pct` | % of one core |
+| memory MB | `{"name":"memory","args":{"MB":210}}` | container `mem_mb` | MiB, as stored |
+| JS heap MB | `{"name":"JS heap","args":{"MB":38}}` | cdp `js_heap_mb` | MiB |
+
+- **Lanes:** slices on one thread must nest. Network requests overlap, so the API packs them greedily into lanes and adds a `network N` thread only when one is needed. Actions are sequential and use one lane.
+- **Counter track names:** Perfetto builds them by joining the event name and the arg key. Check them in Perfetto once. If they differ, change the key, not the meaning.
+- **Colours:** Perfetto colours each slice from a hash of its name, using its own palette, and a JSON trace can't set a slice's colour (don't rely on the legacy `cname` field). So our tokens don't apply, identical actions share a colour, and ok vs failed is carried by the `✕` prefix and the args, never by colour.
+- **Nulls:** never emit a counter value for a null sample. A counter holds its last value until the next event, so Perfetto can't show a gap (Grafana's charts can). If every JS heap sample of a session is null, emit no JS heap track; instead, add an instant at 0 on the issues track: `note: JS heap not available (engine reports null)`.
+
+## 6. Empty and error states
+
+| Situation | Shows | How |
+|---|---|---|
+| Count with no events | `0` | `count()` |
+| Ratio or percentile with no denominator | `—` | SQL NULL; special mappings Null → `—` and NaN → `—` (as a guard) |
+| Metric the engine can't provide | `Not available` | special mapping Null → `Not available`; `spanNulls: false` |
+| Panel with no rows | the panel's own No value text (given per panel above) | `fieldConfig.defaults.noValue`; never Grafana's bare "No data" |
+| One query fails | Grafana's red corner icon and the error on that panel only | built in |
+| ClickHouse unreachable | the error on every panel; the time picker, variables and links still work | built in |
+| Sim-only filter | Simulated share reads "100% · all simulated", and every row says `SIM` | 4.2 |
+| Unknown or empty `session` | "Session not found…" in Status; the other panels show their No value text | 4.4 |
 
 ## 7. Do and don't
 
 | Do | Don't |
 |---|---|
-| `<Badge variant="failed"><CircleX/> Failed</Badge>` + `<code>timeout</code>` | `<Badge>Timeout</Badge>` (a fifth status) |
-| Engine name in `text-foreground`, marker in engine colour | `<span style={{color: ENGINES.lightpanda.color}}>v0.2.9</span>` (engine colour as text: the v1 AA failure) |
-| `ENGINES[e].color` / `var(--engine-lightpanda)` | hard-coded `#CC79A7` in a component |
-| Hatch only for simulated data | hatched blocked segments, striped failed bars, hatched "Not available" frames |
-| `chrome-headless-shell` with `whitespace-nowrap` and a sized column | abbreviating it in tables or wrapping it to two lines |
-| "−3.4 pts vs prior 1 h" in `text-failed` with sr-only "worse" | "▼ 3.4" in red with no baseline |
-| `↗` visible at rest on every linked KPI cell | hover-only affordances |
-| `grid-cols-[minmax(0,1fr)_400px]` + `min-w-0` on chart cards | `grid-cols-2` with a card whose min-content overflows (promax v2's 4px overflow) |
-| Duration label on a `--card` pill above gridlines | labels with no background crossed by the failure line |
-| `isAnimationActive={false}` on live charts | entrance animations on SSE updates |
-| "Not available: … (stored as null)" | `0 MB` for a JS heap the engine can't report |
-| `fg-muted` on status tints and area fills | `fg-subtle` on a tint (falls below 4.5:1 on some fills) |
+| `✕ Failed` from the mapping, with `timeout` in the Cause column | A `Timeout` status, or a coloured status cell with no word |
+| Engine colours set by the three regex overrides, with field default `#9AA9BB` | Series left on Grafana's classic palette |
+| `if(den = 0, NULL, …)`, `maxOrNull`, `spanNulls: false` | `ifNull(x, 0)`, `coalesce(x, 0)`, connecting nulls |
+| "Estimated cost", with the price explained in the description | A bare `$` figure |
+| A data link on the value or the row, plus `↗` in the title | Links that live only in the panel header menu |
+| Interrupted sessions shown as their own count | Counting them as failed, or dropping them silently |
+| Hex values from section 2 only | A new colour without updating this file |
 
----
+## 8. What we gave up for Grafana, and what we got
 
-## 8. Accessibility checklist
-- Text ≥ 4.5:1, and graphics and control outlines ≥ 3:1, in both themes (section 2, measured).
-- Status is never shown by colour alone, engines are never shown by colour alone, and sim is never shown by colour at all.
-- Visible 2px focus ring (`ring-2 ring-ring ring-offset-2 ring-offset-background`). Segmented controls and legend toggles use `aria-pressed`. The ⌘K palette is shadcn `Command`.
-- Charts: `role="img"` + an `aria-label` summary ("Error rate by engine, last hour. Lightpanda peaked at 28.4% at 14:25."), plus the "View as table" alternative (a shadcn `Dialog` with a `Table`).
-- `prefers-reduced-motion` disables the live-dot pulse and transitions.
-- Hit areas: 28–32px on desktop.
+**Gave up:**
+- **Custom KPI cards:** deltas "vs prior 1 h", the real/sim split bar, the capacity track and the breach edge. A Grafana stat shows one value, so trends live in the time series.
+- **The verdict banner's sentence and its "Review N failures" button:** now the verdict stat, Outcomes and Success rate, with the verdict linking to the failures.
+- **⌘K** (Grafana's own search covers dashboards; sessions open from the Sessions table), and **SSE live updates and animation** (a 30 s auto-refresh instead).
+- **The Recharts waterfall** (neutral, slow and failed bars, the selected-row strip, one cursor across all rows): now Perfetto, plus the Actions table with gauge cells and the failure annotations.
+- **Visual details:** marker shapes and end markers, peak and spike labels, the shared legend, the hatch and source strip for sim, our type scale and monospace ids, automatic theme switching. **Capacity** goes too (the line and the verdict rule), because the schema has no capacity data.
+- **"Explain this session"** is replaced by Grafana Assistant (Cloud only, and we don't control its answers). **PostHog** is gone.
 
-## 9. What QA checks (so the palette can't drift)
-- **Token test** (vitest, `apps/web`): parse the variables in `globals.css`, then:
-  - assert every text pair in section 2 is ≥ 4.5:1 and every non-text pair is ≥ 3:1, in both themes, including engine colours on `surface-2` (hovered row);
-  - assert CIEDE2000 ≥ 10 under protan/deutan simulation for all engine-vs-engine pairs;
-  - log (do not fail on) the four accepted flags in 2.3;
-  - also log status-vs-status pairs, which no one has measured yet.
-- **Playwright:** Overview and Session at 1440 and 1024 in both themes. Assert `scrollWidth === clientWidth`, no "Raw events" tab, a REAL/SIM chip on every failure row, and that the session waterfall comes before Issues at 1024.
+**Got for free:** the time picker with state in the URL, variables, auto-refresh, the shared crosshair, annotations, Inspect > Data (the "View as table" alternative for every chart, with CSV export), per-panel error isolation, and alerting for later.
+
+## 9. Checks
+
+- **SQL:** CI already runs every panel's SQL against seeded data (ADR 0003).
+- **Dashboard JSON:** add a check that parses `infra/grafana/dashboards/*.json` and asserts that every colour is a Dark hex from section 2 (or `text` / `transparent` as a threshold base), every panel uses UID `fleetscope-clickhouse`, every stat and table sets `noValue`, every time series has `spanNulls: false` and the three engine overrides, and no `rawSql` contains `ifNull(` or `coalesce(` with a `0` default.
+- **QA:** open Overview and Session detail at 1440 and 1024 px in dark. Check that no panel shows the bare "No data", every `↗` panel opens a filtered Sessions view, a Sessions row opens Session detail with data in its charts, and Perfetto shows the tracks and counters from section 5.

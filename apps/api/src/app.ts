@@ -1,3 +1,4 @@
+import type { SessionTimeline, TimelineSession } from "@fleetscope/db";
 import Fastify, { type FastifyInstance, LogController } from "fastify";
 import {
   type DeadLetter,
@@ -23,6 +24,16 @@ export interface AppDeps {
    * `fileDeadLetter`). Without it such a flush is retried forever.
    */
   deadLetter?: DeadLetter;
+  /**
+   * The timeline of one session (production: `getSessionTimeline` from `@fleetscope/db`), or null
+   * when there is no such session. Without it the app has no `GET /v1/sessions/:id/trace`.
+   */
+  getSessionTimeline?: (sessionId: string) => Promise<SessionTimeline | null>;
+  /**
+   * Just the session row, for the Perfetto page (production: `getTimelineSession`). Without it the
+   * app has no `GET /v1/sessions/:id/perfetto`.
+   */
+  getSession?: (sessionId: string) => Promise<TimelineSession | null>;
   /** Overrides for the ingest buffer (capacity, flush interval, ...). Mostly for tests. */
   ingest?: Partial<IngestBufferOptions>;
   /** Milliseconds since the epoch, for the skew check and the buffer. Defaults to `Date.now`. */
@@ -48,6 +59,9 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     }),
     // Honour X-Request-Id from a proxy; otherwise Fastify generates one for log correlation.
     requestIdHeader: "x-request-id",
+    // Fastify refuses a route parameter longer than 100 characters (with a plain 404), but a
+    // session id may be up to 128 (`SessionId` in packages/schema).
+    routerOptions: { maxParamLength: 256 },
   });
 
   const buffer = deps.insert
@@ -74,8 +88,13 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     timeoutMs: deps.healthTimeoutMs ?? 1000,
     ...(buffer && { ingestStats: () => buffer.stats() }),
   });
-  // Versioned API. Query routes arrive with the dashboard (M2).
-  app.register(v1Routes, { prefix: "/v1" });
+  // Versioned API. The dashboards (Grafana) read ClickHouse directly; the API serves the session
+  // timeline for Perfetto here.
+  app.register(v1Routes, {
+    prefix: "/v1",
+    getSessionTimeline: deps.getSessionTimeline,
+    getSession: deps.getSession,
+  });
 
   return app;
 }

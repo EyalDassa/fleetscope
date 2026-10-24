@@ -103,6 +103,8 @@ const id = z
   .min(1)
   .max(128)
   .refine(isWellFormed, { error: "must not contain an unpaired UTF-16 surrogate" });
+/** A session id as it appears in events and in URLs (`/v1/sessions/:id/trace`). */
+export const SessionId = id;
 const label = z.string().min(1).max(128).transform(wellFormed);
 const text = z.string().max(2000).transform(wellFormed);
 /*
@@ -199,7 +201,9 @@ export const ResourceSampleEvent = z
     origin: ResourceOrigin,
     // Whatever a sample cannot measure is null. A container sample always has the four
     // container metrics (checked below); a cdp sample may have them null.
+    /** Percent of one core, as Docker reports it; can pass 100 on a multi-core container. */
     cpu_pct: float32(MAX_CPU_PCT).nullable(),
+    /** MiB (bytes / 1024 / 1024), despite the name. Grafana's `mbytes` unit prints MiB and GiB. */
     mem_mb: float32(MAX_MEMORY_MB).nullable(),
     /**
      * Network bytes of the CONTAINER since the previous sample (a delta, so samples can be summed;
@@ -209,7 +213,7 @@ export const ResourceSampleEvent = z
      */
     net_rx_bytes: uint64.nullable(),
     net_tx_bytes: uint64.nullable(),
-    /** JS heap size via CDP. `null` when the engine does not support it, absent on container samples. */
+    /** JS heap size via CDP, in MiB (bytes / 1024 / 1024). `null` when the engine does not support it, absent on container samples. */
     js_heap_mb: float32(MAX_MEMORY_MB).nullable().optional(),
   })
   .superRefine((sample, ctx) => {
@@ -229,6 +233,8 @@ export type ResourceSampleEvent = z.infer<typeof ResourceSampleEvent>;
 export const NetworkRequestEvent = z.object({
   ...envelope,
   type: z.literal("network.request"),
+  // `ts` is when the request FINISHED (the collector reports it once the response is complete), so
+  // it started `duration_ms` earlier. An action's `ts`, in contrast, is when the action started.
   domain: label,
   /** HTTP status; `null` when the request failed before a response arrived. */
   status: z.int().min(100).max(599).nullable(),

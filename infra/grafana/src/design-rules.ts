@@ -1,0 +1,173 @@
+// The "Dashboard JSON" checks of design/DESIGN.md section 9, kept apart from the structural rules
+// in dashboards.ts: they come from the design spec, not from how Grafana works.
+//   - every colour is a Dark hex from section 2 (or `text` / `transparent`)
+//   - every stat and table sets `noValue`
+//   - every time series has `spanNulls: false`, the three engine overrides and a fixed default colour
+//   - no rawSql uses ifNull(x, 0) or coalesce(x, 0) (a missing value must not turn into a 0)
+import { collectPanels, type Problem } from "./dashboards";
+import { asArray, asString, isObject, type JsonObject } from "./json";
+import { ALLOWED_COLOR_NAMES, ALLOWED_COLORS, ENGINES, FIELD_DEFAULT_COLOR } from "./palette";
+import { codeOnly, findClosingParen, splitArgs, stripComments } from "./sql-text";
+
+const HEX_COLOR = /^#[0-9a-fA-F]{3,8}$/;
+const COLOR_KEYS = new Set(["color", "fixedColor", "iconColor"]);
+
+/** Every hex colour, and every string under a colour key, anywhere in the dashboard. */
+function colorProblems(dashboard: JsonObject): Problem[] {
+  const problems: Problem[] = [];
+  const reported = new Set<string>();
+  const report = (path: string, value: string, why: string): void => {
+    const key = `${value}|${why}`;
+    if (reported.has(key)) return;
+    reported.add(key);
+    problems.push({ where: `colour at ${path || "dashboard"}`, message: `"${value}" ${why}` });
+  };
+  const walk = (value: unknown, path: string, key: string): void => {
+    if (typeof value === "string") {
+      if (HEX_COLOR.test(value)) {
+        if (!ALLOWED_COLORS.has(value.toLowerCase())) {
+          report(path, value, "is not in the Dark palette of DESIGN.md section 2");
+        }
+      } else if (COLOR_KEYS.has(key) && !ALLOWED_COLOR_NAMES.has(value)) {
+        report(
+          path,
+          value,
+          'is a named colour. Use a hex value from DESIGN.md section 2 (only "text" and "transparent" are allowed by name)',
+        );
+      }
+    } else if (Array.isArray(value)) {
+      value.forEach((item, index) => {
+        walk(item, `${path}[${index}]`, key);
+      });
+    } else if (isObject(value)) {
+      for (const [childKey, child] of Object.entries(value)) {
+        walk(child, path === "" ? childKey : `${path}.${childKey}`, childKey);
+      }
+    }
+  };
+  walk(dashboard, "", "");
+  return problems;
+}
+
+function defaultsOf(panel: JsonObject): JsonObject {
+  const fieldConfig = isObject(panel.fieldConfig) ? panel.fieldConfig : {};
+  return isObject(fieldConfig.defaults) ? fieldConfig.defaults : {};
+}
+
+function overridesOf(panel: JsonObject): JsonObject[] {
+  const fieldConfig = isObject(panel.fieldConfig) ? panel.fieldConfig : {};
+  return asArray(fieldConfig.overrides).filter(isObject);
+}
+
+function overridePropertyValue(override: JsonObject, id: string): unknown {
+  const property = asArray(override.properties)
+    .filter(isObject)
+    .find((p) => p.id === id);
+  return property?.value;
+}
+
+function timeSeriesProblems(panel: JsonObject, where: string): Problem[] {
+  const problems: Problem[] = [];
+  const defaults = defaultsOf(panel);
+  const custom = isObject(defaults.custom) ? defaults.custom : {};
+  if (custom.spanNulls !== false) {
+    problems.push({
+      where,
+      message:
+        'a time series must set "spanNulls": false (fieldConfig.defaults.custom), so a missing value shows as a gap',
+    });
+  }
+  const color = isObject(defaults.color) ? defaults.color : {};
+  const fixedDefault = asString(color.fixedColor)?.toLowerCase();
+  if (color.mode !== "fixed" || fixedDefault !== FIELD_DEFAULT_COLOR.toLowerCase()) {
+    problems.push({
+      where,
+      message: `the default field colour must be fixed ${FIELD_DEFAULT_COLOR}, so no series falls back to Grafana's classic palette`,
+    });
+  }
+  const overrides = overridesOf(panel);
+  for (const engine of ENGINES) {
+    const override = overrides.find((o) => {
+      const matcher = isObject(o.matcher) ? o.matcher : {};
+      const options = asString(matcher.options)?.replace(/^\/|\/$/g, "");
+      return matcher.id === "byRegexp" && options === engine.name;
+    });
+    if (!override) {
+      problems.push({
+        where,
+        message: `missing the "Fields with name matching regex" override /${engine.name}/ (colour ${engine.color}, line style ${engine.lineFill})`,
+      });
+      continue;
+    }
+    const overrideColor = overridePropertyValue(override, "color");
+    const fixed = isObject(overrideColor) ? asString(overrideColor.fixedColor) : undefined;
+    if (
+      overrideColorMode(overrideColor) !== "fixed" ||
+      fixed?.toLowerCase() !== engine.color.toLowerCase()
+    ) {
+      problems.push({
+        where,
+        message: `override /${engine.name}/ must set the colour {"mode":"fixed","fixedColor":"${engine.color}"}`,
+      });
+    }
+    const lineStyle = overridePropertyValue(override, "custom.lineStyle");
+    if (!isObject(lineStyle) || lineStyle.fill !== engine.lineFill) {
+      problems.push({
+        where,
+        message: `override /${engine.name}/ must set custom.lineStyle with fill "${engine.lineFill}"`,
+      });
+    }
+  }
+  return problems;
+}
+
+function overrideColorMode(value: unknown): string | undefined {
+  return isObject(value) ? asString(value.mode) : undefined;
+}
+
+const ZERO_LITERAL = /^(?:to\w+\(\s*)?0+(?:\.0*)?\s*\)?$/;
+
+/** Finds ifNull(x, 0) and coalesce(x, 0): a zero default for something that may be missing. */
+export function zeroDefaults(sql: string): string[] {
+  const text = stripComments(sql);
+  // Same length as `text`, with the contents of strings blanked, so a name inside a string never matches.
+  const code = codeOnly(sql);
+  const found: string[] = [];
+  for (const match of code.matchAll(/\b(?:ifNull|coalesce)\s*\(/gi)) {
+    const start = match.index as number;
+    const open = start + match[0].length - 1;
+    const close = findClosingParen(code, open);
+    if (close === -1) continue;
+    const args = splitArgs(text.slice(open + 1, close));
+    if (args.slice(1).some((arg) => ZERO_LITERAL.test(arg))) {
+      found.push(text.slice(start, close + 1).replace(/\s+/g, " "));
+    }
+  }
+  return found;
+}
+
+export function sqlRuleProblems(sql: string, where: string): Problem[] {
+  return zeroDefaults(sql).map((snippet) => ({
+    where,
+    message: `${snippet} turns a missing value into 0. Return NULL and let the panel's noValue or mapping show "Not available" or "-" (DESIGN.md section 3, Honest SQL)`,
+  }));
+}
+
+export function designProblems(dashboard: JsonObject): Problem[] {
+  const problems = colorProblems(dashboard);
+  for (const { panel, title } of collectPanels(dashboard)) {
+    const where = `panel "${title}"`;
+    const type = asString(panel.type);
+    if (type === "stat" || type === "table") {
+      const noValue = defaultsOf(panel).noValue;
+      if (typeof noValue !== "string" || noValue === "") {
+        problems.push({
+          where,
+          message: `a ${type} must set fieldConfig.defaults.noValue, so an empty result never shows Grafana's bare "No data" (DESIGN.md section 6)`,
+        });
+      }
+    }
+    if (type === "timeseries") problems.push(...timeSeriesProblems(panel, where));
+  }
+  return problems;
+}

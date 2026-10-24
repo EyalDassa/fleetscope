@@ -1,0 +1,228 @@
+import { describe, expect, it } from "vitest";
+import type { ClickHouseClient } from "./client";
+import { ConfigError } from "./config";
+import {
+  ensureGrafanaUser,
+  GrafanaUserError,
+  isLocalClickHouseUrl,
+  LOCAL_GRAFANA_PASSWORD,
+  LOCAL_GRAFANA_USER,
+  loadGrafanaUserOptions,
+} from "./grafana-user";
+
+const env = {
+  CLICKHOUSE_URL: "http://localhost:8123",
+  CLICKHOUSE_USER: "fleetscope",
+  CLICKHOUSE_DATABASE: "fleetscope",
+  CLICKHOUSE_GRAFANA_USER: "grafana",
+  CLICKHOUSE_GRAFANA_PASSWORD: "a-long-enough-password",
+};
+
+describe("loadGrafanaUserOptions", () => {
+  it("reads the user, the password and the database", () => {
+    expect(loadGrafanaUserOptions(env)).toEqual({
+      user: "grafana",
+      password: "a-long-enough-password",
+      database: "fleetscope",
+    });
+  });
+
+  it("refuses the admin user, which would make the admin read-only", () => {
+    expect(() => loadGrafanaUserOptions({ ...env, CLICKHOUSE_GRAFANA_USER: "fleetscope" })).toThrow(
+      /must not be the admin user/,
+    );
+    expect(() => loadGrafanaUserOptions({ ...env, CLICKHOUSE_GRAFANA_USER: "default" })).toThrow(
+      ConfigError,
+    );
+  });
+
+  it("refuses a missing user, a short password and an unsafe name", () => {
+    const { CLICKHOUSE_GRAFANA_USER: _user, ...withoutUser } = env;
+    expect(() =>
+      loadGrafanaUserOptions({ ...withoutUser, CLICKHOUSE_URL: "https://x.clickhouse.cloud:8443" }),
+    ).toThrow(/CLICKHOUSE_GRAFANA_USER/);
+    expect(() => loadGrafanaUserOptions({ ...env, CLICKHOUSE_GRAFANA_PASSWORD: "short" })).toThrow(
+      /at least 8/,
+    );
+    expect(() =>
+      loadGrafanaUserOptions({ ...env, CLICKHOUSE_GRAFANA_USER: "graf ana; DROP USER x" }),
+    ).toThrow(/plain identifier/);
+  });
+
+  it("does not put the password into the error message", () => {
+    try {
+      loadGrafanaUserOptions({
+        ...env,
+        CLICKHOUSE_GRAFANA_USER: "bad name",
+        CLICKHOUSE_GRAFANA_PASSWORD: "hunter2hunter2",
+      });
+    } catch (error) {
+      expect((error as Error).message).not.toContain("hunter2hunter2");
+    }
+  });
+});
+
+describe("the development defaults", () => {
+  const { CLICKHOUSE_GRAFANA_USER: _u, CLICKHOUSE_GRAFANA_PASSWORD: _p, ...bare } = env;
+
+  it("match docker-compose and .env.example", () => {
+    expect([LOCAL_GRAFANA_USER, LOCAL_GRAFANA_PASSWORD]).toEqual([
+      "grafana_ro",
+      "grafana_ro_dev_password",
+    ]);
+  });
+
+  it.each([
+    "http://localhost:8123",
+    "http://127.0.0.1:8123",
+    "http://127.1.2.3:8123",
+    "http://[::1]:8123",
+    "https://clickhouse.localhost:8443",
+  ])("are used when ClickHouse is local (%s)", (url) => {
+    expect(loadGrafanaUserOptions({ ...bare, CLICKHOUSE_URL: url })).toEqual({
+      user: "grafana_ro",
+      password: "grafana_ro_dev_password",
+      database: "fleetscope",
+    });
+  });
+
+  it("fill in only what is missing, and treat an empty value as missing", () => {
+    expect(
+      loadGrafanaUserOptions({
+        ...bare,
+        CLICKHOUSE_GRAFANA_USER: "reader",
+        CLICKHOUSE_GRAFANA_PASSWORD: "",
+      }),
+    ).toMatchObject({ user: "reader", password: "grafana_ro_dev_password" });
+    expect(
+      loadGrafanaUserOptions({ ...bare, CLICKHOUSE_GRAFANA_PASSWORD: "my-own-password" }),
+    ).toMatchObject({
+      user: "grafana_ro",
+      password: "my-own-password",
+    });
+  });
+
+  it.each([
+    "https://abc123.eu-west-1.aws.clickhouse.cloud:8443",
+    "http://clickhouse:8123",
+    "http://10.0.0.5:8123",
+    "http://localhost.evil.example:8123",
+    "http://127.0.0.1.evil.example:8123",
+    "not a url",
+    "",
+  ])("are NOT used for a remote ClickHouse (%s)", (url) => {
+    expect(() => loadGrafanaUserOptions({ ...bare, CLICKHOUSE_URL: url })).toThrow(
+      /must be set explicitly/,
+    );
+    expect(() =>
+      loadGrafanaUserOptions({
+        ...bare,
+        CLICKHOUSE_URL: url,
+        CLICKHOUSE_GRAFANA_USER: "grafana_ro",
+      }),
+    ).toThrow(/must be set explicitly/);
+    expect(() =>
+      loadGrafanaUserOptions({
+        ...bare,
+        CLICKHOUSE_URL: url,
+        CLICKHOUSE_GRAFANA_PASSWORD: "a-real-password-1",
+      }),
+    ).toThrow(/must be set explicitly/);
+  });
+
+  it("are not used when CLICKHOUSE_URL is not set at all", () => {
+    const { CLICKHOUSE_URL: _url, ...noUrl } = bare;
+    expect(() => loadGrafanaUserOptions(noUrl)).toThrow(/must be set explicitly/);
+  });
+
+  it("refuse the development password for a remote ClickHouse, even when it is set on purpose", () => {
+    expect(() =>
+      loadGrafanaUserOptions({
+        ...bare,
+        CLICKHOUSE_URL: "https://abc123.clickhouse.cloud:8443",
+        CLICKHOUSE_GRAFANA_USER: "grafana_ro",
+        CLICKHOUSE_GRAFANA_PASSWORD: "grafana_ro_dev_password",
+      }),
+    ).toThrow(/development password/);
+  });
+
+  it("accept explicit values for a remote ClickHouse", () => {
+    expect(
+      loadGrafanaUserOptions({
+        ...bare,
+        CLICKHOUSE_URL: "https://abc123.clickhouse.cloud:8443",
+        CLICKHOUSE_GRAFANA_USER: "grafana_ro",
+        CLICKHOUSE_GRAFANA_PASSWORD: "a-real-password-1",
+      }),
+    ).toEqual({ user: "grafana_ro", password: "a-real-password-1", database: "fleetscope" });
+  });
+
+  it("isLocalClickHouseUrl is false for nothing at all", () => {
+    expect(isLocalClickHouseUrl(undefined)).toBe(false);
+  });
+
+  it("still refuse the admin user's own name, defaults or not", () => {
+    expect(() => loadGrafanaUserOptions({ ...bare, CLICKHOUSE_USER: "grafana_ro" })).toThrow(
+      /must not be the admin user/,
+    );
+  });
+});
+
+describe("ensureGrafanaUser", () => {
+  function fakeAdmin(fail?: (query: string) => Error | undefined) {
+    const calls: Array<{ query: string; query_params?: Record<string, unknown> }> = [];
+    const client = {
+      command: async (call: { query: string; query_params?: Record<string, unknown> }) => {
+        calls.push(call);
+        const error = fail?.(call.query);
+        if (error) throw error;
+      },
+    } as unknown as ClickHouseClient;
+    return { client, calls };
+  }
+  const options = { user: "grafana", password: "super-secret-pass", database: "fleetscope" };
+
+  it("creates, updates and grants, with the password only as a query parameter", async () => {
+    const { client, calls } = fakeAdmin();
+    await ensureGrafanaUser(client, options);
+
+    expect(calls.map((c) => c.query.split(/\s+/).slice(0, 3).join(" "))).toEqual([
+      "CREATE USER IF",
+      "ALTER USER {user:Identifier}",
+      "GRANT SELECT ON",
+    ]);
+    for (const call of calls) expect(call.query).not.toContain("super-secret-pass");
+    expect(calls[0]?.query_params).toMatchObject({
+      user: "grafana",
+      password: "super-secret-pass",
+    });
+    // read-only from the moment it exists, and only the settings the plugin needs are changeable
+    for (const call of calls.slice(0, 2)) {
+      expect(call.query).toContain("readonly = 1");
+      expect(call.query).toContain("max_execution_time = 60 MAX 300 CHANGEABLE_IN_READONLY");
+    }
+    expect(calls[2]?.query).toBe("GRANT SELECT ON `fleetscope`.* TO `grafana`");
+  });
+
+  it("refuses a name that is not a plain identifier before sending anything", async () => {
+    const { client, calls } = fakeAdmin();
+    await expect(
+      ensureGrafanaUser(client, { ...options, database: "x`; DROP DATABASE y; --" }),
+    ).rejects.toThrow(/plain identifier/);
+    await expect(ensureGrafanaUser(client, { ...options, user: "a b" })).rejects.toThrow(
+      /plain identifier/,
+    );
+    expect(calls).toEqual([]);
+  });
+
+  it("reports a failure without the password, even if the server echoes it", async () => {
+    const { client } = fakeAdmin((query) =>
+      query.startsWith("ALTER") ? new Error("Syntax error near 'super-secret-pass'") : undefined,
+    );
+    const failure = await ensureGrafanaUser(client, options).catch((e: unknown) => e);
+    expect(failure).toBeInstanceOf(GrafanaUserError);
+    expect((failure as Error).message).toContain("***");
+    expect((failure as Error).message).not.toContain("super-secret-pass");
+    expect((failure as Error).cause).toBeUndefined();
+  });
+});

@@ -13,7 +13,7 @@ import {
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createClickHouseClient } from "./client";
 import { dedupTokensFor, insertEvents } from "./insert";
-import { runMigrations } from "./migrate";
+import { loadMigrationFiles, runMigrations } from "./migrate";
 import { seed } from "./seed";
 import { buildSeedEvents } from "./seed-events";
 import { createTestDatabase, dropDatabase, type TestDatabase } from "./testing";
@@ -842,7 +842,7 @@ describe("migrations: concurrency and history", () => {
     const config = { ...db.config, database: `${db.config.database}_empty` };
     try {
       const result = await runMigrations(config);
-      expect(result.applied).toHaveLength(6);
+      expect(result.applied).toHaveLength((await loadMigrationFiles()).length);
       const client = createClickHouseClient(config);
       const tables = await (
         await client.query({
@@ -853,8 +853,13 @@ describe("migrations: concurrency and history", () => {
       await client.close();
       expect(tables.map((t) => t.name)).toEqual([
         "actions",
+        "fleet_minute",
+        "fleet_minute_actions_mv",
+        "fleet_minute_samples_mv",
         "issues",
         "network_requests",
+        "pricing",
+        "pricing_current",
         "resource_samples",
         "schema_migrations",
         "sessions",
@@ -894,7 +899,7 @@ describe("migrations: concurrency and history", () => {
         runMigrations(config),
       ]);
       const counts = await ledgerCounts(config.database);
-      expect(Object.keys(counts)).toHaveLength(6);
+      expect(Object.keys(counts)).toHaveLength((await loadMigrationFiles()).length);
       for (const n of Object.values(counts)) {
         expect(n).toBeGreaterThanOrEqual(1);
         expect(n).toBeLessThanOrEqual(3);
@@ -911,7 +916,9 @@ describe("migrations: concurrency and history", () => {
     try {
       await runMigrations(config);
       await runMigrations(config);
-      expect(Object.values(await ledgerCounts(config.database))).toEqual([1, 1, 1, 1, 1, 1]);
+      expect(Object.values(await ledgerCounts(config.database))).toEqual(
+        (await loadMigrationFiles()).map(() => 1),
+      );
     } finally {
       await dropDatabase(config);
     }

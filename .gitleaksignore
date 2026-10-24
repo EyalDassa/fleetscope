@@ -1,0 +1,6 @@
+# Findings reviewed and accepted. Add a line only for a value that is not a real secret, and say why.
+#
+# Local-dev Grafana admin password (the documented default from .env.example), written into a curl
+# example in commit 7c630de and replaced with "$GRAFANA_ADMIN_PASSWORD" in the next commit. Not a
+# secret: it only works against the Grafana on 127.0.0.1:3001.
+7c630de2dc5ce3ff1799e22b49df3c81b931bc62:infra/grafana/README.md:curl-auth-user:35
