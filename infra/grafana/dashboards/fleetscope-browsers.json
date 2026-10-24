@@ -176,7 +176,7 @@
               },
               {
                 "id": "custom.width",
-                "value": 190
+                "value": 175
               },
               {
                 "id": "links",
@@ -222,7 +222,7 @@
             "properties": [
               {
                 "id": "displayName",
-                "value": "Time to browser p50"
+                "value": "To browser p50"
               },
               {
                 "id": "unit",
@@ -263,7 +263,7 @@
             "properties": [
               {
                 "id": "displayName",
-                "value": "Time to browser p95"
+                "value": "To browser p95"
               },
               {
                 "id": "unit",
@@ -304,7 +304,7 @@
             "properties": [
               {
                 "id": "displayName",
-                "value": "Peak memory p50"
+                "value": "Memory p50"
               },
               {
                 "id": "unit",
@@ -349,7 +349,7 @@
             "properties": [
               {
                 "id": "displayName",
-                "value": "p95 action latency"
+                "value": "Action p95"
               },
               {
                 "id": "unit",
@@ -469,11 +469,11 @@
             "properties": [
               {
                 "id": "displayName",
-                "value": "Est. cost / 1k sessions"
+                "value": "Est. cost / 1k"
               },
               {
                 "id": "custom.width",
-                "value": 175
+                "value": 110
               },
               {
                 "id": "unit",
@@ -2041,7 +2041,7 @@
         "x": 0,
         "y": 26,
         "w": 24,
-        "h": 7
+        "h": 9
       },
       "description": "What the numbers on this dashboard mean and what they leave out.",
       "options": {
