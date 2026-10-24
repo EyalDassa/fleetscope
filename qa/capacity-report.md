@@ -55,3 +55,17 @@ Billing alert URL, billing group emptied by a keyless push (the throwaway push a
 
 ## Verdict
 **Not ready to merge** until the being-fixed items are re-tested: QA-CAP-05 (grants, was major), and the review's blockers RV-CAP-01 to RV-CAP-04. Nothing else open is a blocker or major: QA-CAP-01, 03, 04, 06, 07 are minor or informational. The core measurements (sent vs written, dedup, utilization against limits, scaling annotation, alert fire/resolve, provenance, `grafana:check` rules) all passed against hand-computed numbers.
+
+## Round 2 (billing, throwaway Grafana 13.2.4, real read-only key)
+
+Scope cut by the lead to billing only. Tested at `31b45c4`. Throwaway Grafana removed afterwards; no secret printed; the three billing variables were read from `.env.cloud` by name only (the rest of that file, which points at Cloud ClickHouse, was not loaded).
+
+| Item | Result |
+|------|--------|
+| (a) Billing panels vs direct `usageCost` | **Pass.** Pushed with the key (data source URL is `https://api.clickhouse.cloud/v1/organizations/<org>`, panel URLs are `/usageCost`, no `${ch_org}`). Queried the 4 panels through `/api/ds/query`: used 18.2 credits, left 281.8, per-day chart one point (2026-10-24, 18.2), run-out "Not available". Direct call summed per date: `{2026-10-24: 18.2}`, grand 18.2, 300 - 18.2 = 281.8. Run-out is "Not available" by hand too (no full day before today). The run-out arithmetic with real multi-day data is still untested. |
+| (b) Billing rules evaluate | **Pass.** Both rules `health ok`, state inactive, `execErrState: Error`, no `${` or `$__` in any model, query `/usageCost?from_date=2026-10-24&to_date=2026-11-23`. Immediate evaluation through `/api/v1/eval`: "below $50" gives 281.8; "runs out before the trial end" returns no data (no full day yet, `noDataState: OK`, so no false alert). |
+| (c) Keyless push | **Pass.** A push without the three variables left the existing billing data source and both billing rules in place (`alerts Fleetscope billing unchanged (2 rule(s))`, note "What a Grafana already has is left as it is"). |
+
+Not re-tested in Round 2 (lead's scope cut): the column grants, the 1-minute memory alert, `grafana:check`. For the record, in the same session before the cut: `pnpm db:grafana-user` left only column grants (`SELECT(event_time, hostname, metric, value)` on `asynchronous_metric_log`, `SELECT(database, error, event_time, event_type, rows, table)` on `part_log`, idempotent on a second run); all capacity snippets ran as `grafana_ro`; `exception`, `query_id`, `path_on_disk`, `partition` and `SELECT *` on both tables are denied, `count()` still works; `capacity-alerts-mem-pct-1m` returns a value (10.6) and `pnpm grafana:check` passed (5 dashboards, 2 alert groups, 84 queries). The "1 s spike does not fire, sustained load does" check was not run.
+
+**Round 2 verdict: ready to merge from QA's side**, with two caveats the lead should accept knowingly: the 1-second-spike versus sustained-load behaviour of the 75/85 memory rule was not exercised end to end, and the run-out projection has only been seen in its "Not available" state.
