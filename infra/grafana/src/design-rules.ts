@@ -113,6 +113,7 @@ function timeSeriesProblems(panel: JsonObject, where: string): Problem[] {
     }
   }
   problems.push(...lineStyleProblems(defaults, overrides, where));
+  problems.push(...thresholdsStyleProblems(defaults, overrides, where));
   problems.push(...sharedColorProblems(overrides, where));
   return problems;
 }
@@ -143,6 +144,40 @@ function lineStyleProblems(
     const matcher = isObject(override.matcher) ? override.matcher : {};
     const label = `override ${asString(matcher.options) ?? asString(matcher.id) ?? "?"}`;
     check(overridePropertyValue(override, "custom.lineStyle"), label);
+  }
+  return problems;
+}
+
+/** The threshold styles that draw no dashed line. `dashed` and `dashed+area` are the ones Grafana adds. */
+const SOLID_THRESHOLD_MODES: ReadonlySet<string> = new Set(["off", "line", "area", "line+area"]);
+
+/**
+ * Threshold lines are lines too (DESIGN.md section 2): `custom.thresholdsStyle.mode` may only be
+ * off, line, area or line+area, never dashed or dashed+area. A missing mode is Grafana's default, off.
+ */
+function thresholdsStyleProblems(
+  defaults: JsonObject,
+  overrides: JsonObject[],
+  where: string,
+): Problem[] {
+  const problems: Problem[] = [];
+  const check = (style: unknown, source: string): void => {
+    if (style === undefined) return;
+    const mode = isObject(style) ? style.mode : undefined;
+    if (mode === undefined) return;
+    if (typeof mode !== "string" || !SOLID_THRESHOLD_MODES.has(mode)) {
+      problems.push({
+        where,
+        message: `${source} sets custom.thresholdsStyle.mode ${JSON.stringify(mode)}. Every time series line is solid, threshold lines too: use off, line, area or line+area`,
+      });
+    }
+  };
+  const custom = isObject(defaults.custom) ? defaults.custom : {};
+  check(custom.thresholdsStyle, "the field defaults");
+  for (const override of overrides) {
+    const matcher = isObject(override.matcher) ? override.matcher : {};
+    const label = `override ${asString(matcher.options) ?? asString(matcher.id) ?? "?"}`;
+    check(overridePropertyValue(override, "custom.thresholdsStyle"), label);
   }
   return problems;
 }
