@@ -24,7 +24,7 @@ jobs:
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
-      - run: pnpm build # next build (web) and the esbuild bundle (api)
+      - run: pnpm build # esbuild bundles of the api and the demo site
       - name: ClickHouse image tag in CI matches docker-compose
         run: bash .github/scripts/check-clickhouse-tag.sh
       - name: Playwright client and browser image versions match

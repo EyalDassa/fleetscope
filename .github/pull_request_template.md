@@ -18,5 +18,5 @@
 - [ ] No secrets in the diff; `.env.example` updated if env vars changed
 - [ ] QA report says "ready to merge" and the reviewer approved (see `qa/` and `reviews/`)
 
-## Screenshots
-<!-- UI changes only -->
+## Grafana dashboard changes
+<!-- Screenshots of changed panels. Delete this section if no dashboard changed. -->

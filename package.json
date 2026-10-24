@@ -9,7 +9,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "dev": "turbo run dev --filter=@fleetscope/web --filter=@fleetscope/api --filter=@fleetscope/demo-site",
+    "dev": "turbo run dev --filter=@fleetscope/api --filter=@fleetscope/demo-site",
     "build": "turbo run build",
     "lint": "turbo run lint //#lint:root",
     "lint:root": "biome check --config-path=biome.root.json .",
