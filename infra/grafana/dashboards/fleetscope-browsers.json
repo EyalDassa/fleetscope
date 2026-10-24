@@ -1,0 +1,2053 @@
+{
+  "uid": "fleetscope-browsers",
+  "title": "Fleetscope / Browsers",
+  "description": "Which browser engine should the fleet use? Engines side by side: time to a usable browser, memory, action latency, success rate, cost, and which scenarios each engine can run.",
+  "tags": [
+    "fleetscope"
+  ],
+  "style": "dark",
+  "timezone": "browser",
+  "editable": true,
+  "graphTooltip": 1,
+  "refresh": "30s",
+  "schemaVersion": 41,
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "links": [
+    {
+      "type": "dashboards",
+      "title": "Fleetscope",
+      "tags": [
+        "fleetscope"
+      ],
+      "asDropdown": false,
+      "includeVars": true,
+      "keepTime": true,
+      "icon": "external link",
+      "targetBlank": false,
+      "tooltip": "",
+      "url": ""
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "type": "custom",
+        "name": "engine",
+        "label": "Engine",
+        "query": "chromium,chrome-headless-shell,lightpanda",
+        "multi": true,
+        "includeAll": true,
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": [
+          {
+            "text": "All",
+            "value": "$__all",
+            "selected": true
+          },
+          {
+            "text": "chromium",
+            "value": "chromium",
+            "selected": false
+          },
+          {
+            "text": "chrome-headless-shell",
+            "value": "chrome-headless-shell",
+            "selected": false
+          },
+          {
+            "text": "lightpanda",
+            "value": "lightpanda",
+            "selected": false
+          }
+        ],
+        "hide": 0
+      },
+      {
+        "type": "custom",
+        "name": "source",
+        "label": "Source",
+        "query": "real,sim",
+        "multi": false,
+        "includeAll": true,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "options": [
+          {
+            "text": "All",
+            "value": "$__all",
+            "selected": true
+          },
+          {
+            "text": "real",
+            "value": "real",
+            "selected": false
+          },
+          {
+            "text": "sim",
+            "value": "sim",
+            "selected": false
+          }
+        ],
+        "hide": 0
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "table",
+      "title": "Engine comparison ↗",
+      "description": "One row per engine, from the sessions that ended in the range (interrupted left out). Time to usable browser = container start + client connect (startup_ms + connect_ms). Peak memory and JS heap: the highest sample of each session, then the median over sessions; memory is the container (Docker stats, in MiB), the forwarder sidecar is not counted. JS heap comes from CDP: Not available means the engine does not report it (stored as null), not 0. p95 action latency from the per-minute rollup. Success rate = (healthy + degraded) / ended sessions, thresholds 95 and 90. Cost per 1,000 sessions: browser-hours × $0.10 per browser-hour (Browserbase's published price, from the `pricing` table) for sessions that started in the range. An estimate, not a bill. Click an engine to open its sessions.",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 5
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "-- Engine comparison (README snippet engine-comparison): one row per engine for the sessions that ended in the range, interrupted left out.\nWITH\n    facts AS (\n        WITH\n            picked AS\n            (\n                SELECT *\n                FROM sessions FINAL\n                WHERE engine IN (${engine:singlequote})\n                  AND source IN (${source:singlequote})\n                  AND started_at >= $__fromTime - INTERVAL 1 DAY\n                  AND started_at <= $__toTime\n                  AND (ended_at IS NULL OR ended_at >= $__fromTime)\n            ),\n            issue_facts AS\n            (\n                SELECT session_id, count() AS issue_count, toString(argMin(kind, ts)) AS first_issue\n                FROM issues\n                WHERE session_id IN (SELECT session_id FROM picked)\n                  AND ts >= (SELECT min(started_at) FROM picked)\n                  AND engine IN (${engine:singlequote})\n                  AND source IN (${source:singlequote})\n                GROUP BY session_id\n            ),\n            action_facts AS\n            (\n                SELECT\n                    session_id,\n                    count() AS actions,\n                    countIf(NOT ok) AS failed_actions,\n                    ifNull(argMinIf(error_code, seq, NOT ok), '') AS first_failed_code\n                FROM actions\n                WHERE session_id IN (SELECT session_id FROM picked)\n                  AND ts >= (SELECT min(started_at) FROM picked)\n                  AND engine IN (${engine:singlequote})\n                  AND source IN (${source:singlequote})\n                GROUP BY session_id\n            )\n        SELECT\n            p.session_id AS session_id,\n            p.agent_id AS agent_id,\n            p.source AS source,\n            p.engine AS engine,\n            p.engine_version AS engine_version,\n            p.provider AS provider,\n            p.scenario AS scenario,\n            p.started_at AS started_at,\n            p.ended_at AS ended_at,\n            p.status AS status,\n            p.reason AS reason,\n            p.duration_ms AS duration_ms,\n            p.startup_ms + p.connect_ms AS time_to_browser_ms,\n            (p.status = 'failed' AND ifNull(p.reason, '') = 'interrupted') AS is_interrupted,\n            a.actions AS actions,\n            a.failed_actions AS failed_actions,\n            i.issue_count AS issue_count,\n            multiIf(\n                p.status = 'running', 'running',\n                is_interrupted, 'interrupted',\n                p.status = 'success' AND a.failed_actions = 0 AND i.issue_count = 0, 'healthy',\n                p.status = 'success', 'degraded',\n                p.status = 'blocked', 'blocked',\n                'failed') AS display_status,\n            if(p.status NOT IN ('running', 'success') AND NOT is_interrupted,\n                multiIf(i.first_issue != '', i.first_issue, a.first_failed_code != '', a.first_failed_code, p.status),\n                NULL) AS cause,\n            if(cause IS NULL, NULL,\n                multiIf(i.first_issue != '', 'issue', a.first_failed_code != '', 'action', 'status')) AS cause_from,\n            (toUInt64(p.startup_ms) + p.connect_ms\n                + ifNull(p.duration_ms, dateDiff('millisecond', p.started_at, now64(3)))) / 3.6e6 AS browser_hours,\n            if(price.provider = '', NULL, browser_hours * price.usd_per_browser_hour) AS est_cost_usd\n        FROM picked AS p\n        LEFT JOIN issue_facts AS i ON i.session_id = p.session_id\n        LEFT JOIN action_facts AS a ON a.session_id = p.session_id\n        LEFT JOIN pricing_current AS price ON price.engine = p.engine AND price.provider = p.provider\n    ),\n    done AS\n    (\n        SELECT *\n        FROM facts\n        WHERE ended_at IS NOT NULL AND $__timeFilter(ended_at) AND NOT is_interrupted\n    ),\n    samples AS\n    (\n        SELECT\n            session_id,\n            maxIf(mem_mb, origin = 'container') AS peak_mib,\n            countIf(origin = 'container' AND mem_mb IS NOT NULL) AS container_samples,\n            countIf(origin = 'cdp' AND js_heap_mb IS NOT NULL) AS heap_samples\n        FROM resource_samples\n        WHERE session_id IN (SELECT session_id FROM done)\n          AND ts >= $__fromTime - INTERVAL 1 DAY\n          AND engine IN (${engine:singlequote})\n          AND source IN (${source:singlequote})\n        GROUP BY session_id\n    ),\n    per_engine AS\n    (\n        SELECT\n            d.engine AS engine,\n            count() AS sessions,\n            100 * countIf(d.status = 'success') / count() AS success_rate,\n            quantile(0.5)(d.time_to_browser_ms) AS time_to_browser_p50_ms,\n            quantile(0.95)(d.time_to_browser_ms) AS time_to_browser_p95_ms,\n            if(countIf(s.container_samples > 0) = 0, NULL,\n                quantileIf(0.5)(s.peak_mib, s.container_samples > 0)) AS peak_mem_mib_p50,\n            if(countIf(d.est_cost_usd IS NULL) > 0, NULL, 1000 * sum(d.est_cost_usd) / count()) AS cost_per_1k_sessions_usd,\n            countIf(s.heap_samples > 0) > 0 AS js_heap_available\n        FROM done AS d\n        LEFT JOIN samples AS s ON s.session_id = d.session_id\n        GROUP BY engine\n    ),\n    latency AS\n    (\n        SELECT\n            engine,\n            countMerge(actions) AS action_count,\n            quantilesMerge(0.5, 0.95)(action_ms)[2] AS p95_ms\n        FROM fleet_minute\n        WHERE minute >= toStartOfMinute($__fromTime) AND minute <= $__toTime\n          AND engine IN (${engine:singlequote})\n          AND source IN (${source:singlequote})\n        GROUP BY engine\n    )\nSELECT\n    p.engine AS engine,\n    p.sessions AS sessions,\n    p.success_rate AS success_rate,\n    p.time_to_browser_p50_ms AS time_to_browser_p50_ms,\n    p.time_to_browser_p95_ms AS time_to_browser_p95_ms,\n    p.peak_mem_mib_p50 AS peak_mem_mib_p50,\n    if(l.action_count = 0, NULL, l.p95_ms) AS action_p95_ms,\n    p.cost_per_1k_sessions_usd AS cost_per_1k_sessions_usd,\n    p.js_heap_available AS js_heap_available\nFROM per_engine AS p\nLEFT JOIN latency AS l ON l.engine = p.engine\nORDER BY engine\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false,
+            "filterable": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "No sessions ended in this range"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "engine"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Engine"
+              },
+              {
+                "id": "custom.width",
+                "value": 190
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Sessions of this engine",
+                    "url": "/d/fleetscope-sessions?${__url_time_range}&var-engine=${__data.fields.engine}&${source:queryparam}",
+                    "targetBlank": false
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "sessions"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Sessions"
+              },
+              {
+                "id": "custom.width",
+                "value": 90
+              },
+              {
+                "id": "unit",
+                "value": "locale"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "time_to_browser_p50_ms"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Time to browser p50"
+              },
+              {
+                "id": "unit",
+                "value": "ms"
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "—",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "—",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "time_to_browser_p95_ms"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Time to browser p95"
+              },
+              {
+                "id": "unit",
+                "value": "ms"
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "—",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "—",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "peak_mem_mib_p50"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Peak memory p50"
+              },
+              {
+                "id": "unit",
+                "value": "mbytes"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "Not available",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "Not available",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "action_p95_ms"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "p95 action latency"
+              },
+              {
+                "id": "unit",
+                "value": "ms"
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "—",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "—",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "success_rate"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Success rate"
+              },
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "—",
+                        "index": 0,
+                        "color": "#9AA9BB"
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "—",
+                        "index": 1,
+                        "color": "#9AA9BB"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "#FF7B7B",
+                      "value": null
+                    },
+                    {
+                      "color": "#FFD95A",
+                      "value": 90
+                    },
+                    {
+                      "color": "#6EE7A8",
+                      "value": 95
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cost_per_1k_sessions_usd"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Est. cost / 1k sessions"
+              },
+              {
+                "id": "custom.width",
+                "value": 175
+              },
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "decimals",
+                "value": 2
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "Not available",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "Not available",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "js_heap_available"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "JS heap"
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "index": 1,
+                        "text": "Not available"
+                      },
+                      "1": {
+                        "index": 0,
+                        "text": "Available"
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "Not available",
+                        "index": 2
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "Not available",
+                        "index": 3
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "enablePagination": false,
+        "footer": {
+          "show": false,
+          "reducer": [
+            "count"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      }
+    },
+    {
+      "id": 2,
+      "type": "bargauge",
+      "title": "Time to usable browser, p50 ↗",
+      "description": "Median of container start + client connect per engine, from the Engine comparison query. The bar is the engine colour and the label is the engine name. Not available (—) means no session ended. Click a bar to open the sessions of that engine.",
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 8,
+        "h": 7
+      },
+      "datasource": {
+        "type": "datasource",
+        "uid": "-- Dashboard --"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "datasource",
+            "uid": "-- Dashboard --"
+          },
+          "panelId": 1,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "rowsToFields",
+          "options": {
+            "mappings": [
+              {
+                "fieldName": "engine",
+                "handlerKey": "field.name"
+              },
+              {
+                "fieldName": "time_to_browser_p50_ms",
+                "handlerKey": "field.value"
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#9AA9BB"
+          },
+          "displayName": "${__field.name}",
+          "unit": "ms",
+          "min": 0,
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "—",
+                  "index": 0
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "—",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "No sessions ended in this range",
+          "links": [
+            {
+              "title": "Sessions of this engine",
+              "url": "/d/fleetscope-sessions?${__url_time_range}&var-engine=${__field.name}&${source:queryparam}",
+              "targetBlank": false
+            }
+          ]
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "chromium"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#56B4E9"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "chrome-headless-shell"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#E69F00"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "lightpanda"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#CC79A7"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "valueMode": "text",
+        "namePlacement": "top",
+        "showUnfilled": true,
+        "sizing": "auto",
+        "minVizHeight": 16,
+        "minVizWidth": 8,
+        "maxVizHeight": 300,
+        "legend": {
+          "showLegend": false,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "text": {
+          "titleSize": 14,
+          "valueSize": 22
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "bargauge",
+      "title": "Peak memory per session, p50 ↗",
+      "description": "Median over sessions of the highest container memory sample (MiB), from the Engine comparison query. The port forwarder sidecar is not counted. Not available means the engine has no container samples. Click a bar to open the sessions of that engine.",
+      "gridPos": {
+        "x": 8,
+        "y": 5,
+        "w": 8,
+        "h": 7
+      },
+      "datasource": {
+        "type": "datasource",
+        "uid": "-- Dashboard --"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "datasource",
+            "uid": "-- Dashboard --"
+          },
+          "panelId": 1,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "rowsToFields",
+          "options": {
+            "mappings": [
+              {
+                "fieldName": "engine",
+                "handlerKey": "field.name"
+              },
+              {
+                "fieldName": "peak_mem_mib_p50",
+                "handlerKey": "field.value"
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#9AA9BB"
+          },
+          "displayName": "${__field.name}",
+          "unit": "mbytes",
+          "decimals": 0,
+          "min": 0,
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "Not available",
+                  "index": 0
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "Not available",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "No sessions ended in this range",
+          "links": [
+            {
+              "title": "Sessions of this engine",
+              "url": "/d/fleetscope-sessions?${__url_time_range}&var-engine=${__field.name}&${source:queryparam}",
+              "targetBlank": false
+            }
+          ]
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "chromium"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#56B4E9"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "chrome-headless-shell"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#E69F00"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "lightpanda"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#CC79A7"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "valueMode": "text",
+        "namePlacement": "top",
+        "showUnfilled": true,
+        "sizing": "auto",
+        "minVizHeight": 16,
+        "minVizWidth": 8,
+        "maxVizHeight": 300,
+        "legend": {
+          "showLegend": false,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "text": {
+          "titleSize": 14,
+          "valueSize": 22
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "bargauge",
+      "title": "p95 action latency ↗",
+      "description": "p95 of action duration per engine over the range, from the per-minute rollup (Engine comparison query). Click a bar to open the sessions of that engine.",
+      "gridPos": {
+        "x": 16,
+        "y": 5,
+        "w": 8,
+        "h": 7
+      },
+      "datasource": {
+        "type": "datasource",
+        "uid": "-- Dashboard --"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "datasource",
+            "uid": "-- Dashboard --"
+          },
+          "panelId": 1,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "rowsToFields",
+          "options": {
+            "mappings": [
+              {
+                "fieldName": "engine",
+                "handlerKey": "field.name"
+              },
+              {
+                "fieldName": "action_p95_ms",
+                "handlerKey": "field.value"
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#9AA9BB"
+          },
+          "displayName": "${__field.name}",
+          "unit": "ms",
+          "min": 0,
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "—",
+                  "index": 0
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "—",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "No sessions ended in this range",
+          "links": [
+            {
+              "title": "Sessions of this engine",
+              "url": "/d/fleetscope-sessions?${__url_time_range}&var-engine=${__field.name}&${source:queryparam}",
+              "targetBlank": false
+            }
+          ]
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "chromium"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#56B4E9"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "chrome-headless-shell"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#E69F00"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "lightpanda"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#CC79A7"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "valueMode": "text",
+        "namePlacement": "top",
+        "showUnfilled": true,
+        "sizing": "auto",
+        "minVizHeight": 16,
+        "minVizWidth": 8,
+        "maxVizHeight": 300,
+        "legend": {
+          "showLegend": false,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "text": {
+          "titleSize": 14,
+          "valueSize": 22
+        }
+      }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "p95 action latency by engine ↗",
+      "description": "p95 of action duration in each bucket, from the per-minute rollup. A gap means no actions in the bucket. Click a line to open its sessions. The link carries the whole panel range, not the clicked minute: drag across a spike to zoom, then click.",
+      "gridPos": {
+        "x": 0,
+        "y": 12,
+        "w": 12,
+        "h": 7
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "interval": "1m",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "timeseries",
+          "rawSql": "-- p95 action latency per engine and bucket, from the per-minute rollup (NULL where the bucket has no actions).\nSELECT\n    $__timeInterval(minute) AS time,\n    engine,\n    if(countMerge(actions) = 0, NULL, quantilesMerge(0.5, 0.95)(action_ms)[2]) AS p95_ms\nFROM fleet_minute\nWHERE minute >= toStartOfMinute($__fromTime) AND minute <= $__toTime\n  AND engine IN (${engine:singlequote})\n  AND source IN (${source:singlequote})\nGROUP BY time, engine\nORDER BY time\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#9AA9BB"
+          },
+          "displayName": "${__field.labels.engine}",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "lineInterpolation": "linear",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "showPoints": "auto",
+            "pointSize": 5,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisPlacement": "auto",
+            "axisBorderShow": false,
+            "axisSoftMin": 0,
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "unit": "ms",
+          "min": 0,
+          "noValue": "No data in this range",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "links": [
+            {
+              "title": "Sessions of ${__field.labels.engine}",
+              "url": "/d/fleetscope-sessions?${__url_time_range}&var-engine=${__field.labels.engine}&${source:queryparam}",
+              "targetBlank": false
+            }
+          ]
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/chromium/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#56B4E9"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "solid"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/chrome-headless-shell/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#E69F00"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/lightpanda/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#CC79A7"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dot",
+                  "dash": [
+                    0,
+                    10
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc",
+          "hideZeros": false
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Memory per container by engine ↗",
+      "description": "Average container memory (MiB, Docker stats) in each bucket, from the per-minute rollup. The port forwarder sidecar is not counted. Click a line to open its sessions. The link carries the whole panel range, not the clicked minute: drag across a spike to zoom, then click.",
+      "gridPos": {
+        "x": 12,
+        "y": 12,
+        "w": 12,
+        "h": 7
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "interval": "1m",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "timeseries",
+          "rawSql": "-- Memory per container (MiB, Docker stats, the forwarder sidecar is not counted) per engine and bucket, from the per-minute rollup.\nSELECT\n    $__timeInterval(minute) AS time,\n    engine,\n    if(countMerge(samples) = 0, NULL, sumMerge(mem_mb_sum) / countMerge(samples)) AS mem_mib_per_container\nFROM fleet_minute\nWHERE minute >= toStartOfMinute($__fromTime) AND minute <= $__toTime\n  AND engine IN (${engine:singlequote})\n  AND source IN (${source:singlequote})\nGROUP BY time, engine\nORDER BY time\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#9AA9BB"
+          },
+          "displayName": "${__field.labels.engine}",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "lineInterpolation": "linear",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "showPoints": "auto",
+            "pointSize": 5,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisPlacement": "auto",
+            "axisBorderShow": false,
+            "axisSoftMin": 0,
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "unit": "mbytes",
+          "decimals": 0,
+          "min": 0,
+          "noValue": "No data in this range",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "links": [
+            {
+              "title": "Sessions of ${__field.labels.engine}",
+              "url": "/d/fleetscope-sessions?${__url_time_range}&var-engine=${__field.labels.engine}&${source:queryparam}",
+              "targetBlank": false
+            }
+          ]
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/chromium/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#56B4E9"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "solid"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/chrome-headless-shell/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#E69F00"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/lightpanda/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#CC79A7"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dot",
+                  "dash": [
+                    0,
+                    10
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc",
+          "hideZeros": false
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "table",
+      "title": "Compatibility matrix: scenario × engine ↗",
+      "description": "Success rate of each scenario on each engine, for the sessions that ended in the range (interrupted left out), coloured by the success-rate thresholds (95 and 90). n = sessions behind the rate, cause = the most common failure cause (a tie goes to the first name alphabetically). — means no session of that scenario ran on that engine in the range; it is not 0%. Click a cell to open that engine's sessions of the scenario, with the same time range and source.",
+      "gridPos": {
+        "x": 0,
+        "y": 19,
+        "w": 24,
+        "h": 7
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "-- Compatibility matrix (README snippet compatibility-matrix, one row per scenario and engine), turned into one row per scenario with a rate, n and cause column per engine.\n-- An engine that ran no session of a scenario in the range stays NULL (shown as —), never 0%.\nWITH matrix AS\n(\n    WITH\n        facts AS (\n            WITH\n                picked AS\n                (\n                    SELECT *\n                    FROM sessions FINAL\n                    WHERE engine IN (${engine:singlequote})\n                      AND source IN (${source:singlequote})\n                      AND started_at >= $__fromTime - INTERVAL 1 DAY\n                      AND started_at <= $__toTime\n                      AND (ended_at IS NULL OR ended_at >= $__fromTime)\n                ),\n                issue_facts AS\n                (\n                    SELECT session_id, count() AS issue_count, toString(argMin(kind, ts)) AS first_issue\n                    FROM issues\n                    WHERE session_id IN (SELECT session_id FROM picked)\n                      AND ts >= (SELECT min(started_at) FROM picked)\n                      AND engine IN (${engine:singlequote})\n                      AND source IN (${source:singlequote})\n                    GROUP BY session_id\n                ),\n                action_facts AS\n                (\n                    SELECT\n                        session_id,\n                        count() AS actions,\n                        countIf(NOT ok) AS failed_actions,\n                        ifNull(argMinIf(error_code, seq, NOT ok), '') AS first_failed_code\n                    FROM actions\n                    WHERE session_id IN (SELECT session_id FROM picked)\n                      AND ts >= (SELECT min(started_at) FROM picked)\n                      AND engine IN (${engine:singlequote})\n                      AND source IN (${source:singlequote})\n                    GROUP BY session_id\n                )\n            SELECT\n                p.session_id AS session_id,\n                p.agent_id AS agent_id,\n                p.source AS source,\n                p.engine AS engine,\n                p.engine_version AS engine_version,\n                p.provider AS provider,\n                p.scenario AS scenario,\n                p.started_at AS started_at,\n                p.ended_at AS ended_at,\n                p.status AS status,\n                p.reason AS reason,\n                p.duration_ms AS duration_ms,\n                p.startup_ms + p.connect_ms AS time_to_browser_ms,\n                (p.status = 'failed' AND ifNull(p.reason, '') = 'interrupted') AS is_interrupted,\n                a.actions AS actions,\n                a.failed_actions AS failed_actions,\n                i.issue_count AS issue_count,\n                multiIf(\n                    p.status = 'running', 'running',\n                    is_interrupted, 'interrupted',\n                    p.status = 'success' AND a.failed_actions = 0 AND i.issue_count = 0, 'healthy',\n                    p.status = 'success', 'degraded',\n                    p.status = 'blocked', 'blocked',\n                    'failed') AS display_status,\n                if(p.status NOT IN ('running', 'success') AND NOT is_interrupted,\n                    multiIf(i.first_issue != '', i.first_issue, a.first_failed_code != '', a.first_failed_code, p.status),\n                    NULL) AS cause,\n                if(cause IS NULL, NULL,\n                    multiIf(i.first_issue != '', 'issue', a.first_failed_code != '', 'action', 'status')) AS cause_from,\n                (toUInt64(p.startup_ms) + p.connect_ms\n                    + ifNull(p.duration_ms, dateDiff('millisecond', p.started_at, now64(3)))) / 3.6e6 AS browser_hours,\n                if(price.provider = '', NULL, browser_hours * price.usd_per_browser_hour) AS est_cost_usd\n            FROM picked AS p\n            LEFT JOIN issue_facts AS i ON i.session_id = p.session_id\n            LEFT JOIN action_facts AS a ON a.session_id = p.session_id\n            LEFT JOIN pricing_current AS price ON price.engine = p.engine AND price.provider = p.provider\n        ),\n        done AS\n        (\n            SELECT *\n            FROM facts\n            WHERE ended_at IS NOT NULL AND $__timeFilter(ended_at) AND NOT is_interrupted\n        ),\n        causes AS\n        (\n            SELECT scenario, engine, argMin(cause, (-toInt64(n), cause)) AS top_cause\n            FROM\n            (\n                SELECT scenario, engine, cause, count() AS n\n                FROM done\n                WHERE cause IS NOT NULL\n                GROUP BY scenario, engine, cause\n            )\n            GROUP BY scenario, engine\n        )\n    SELECT\n        d.scenario AS scenario,\n        d.engine AS engine,\n        count() AS sessions,\n        100 * countIf(d.status = 'success') / count() AS success_rate,\n        nullIf(any(c.top_cause), '') AS top_cause\n    FROM done AS d\n    LEFT JOIN causes AS c ON c.scenario = d.scenario AND c.engine = d.engine\n    GROUP BY scenario, engine\n    ORDER BY scenario, engine\n)\nSELECT\n    scenario,\n    if(countIf(engine = 'chromium') = 0, NULL, anyIf(success_rate, engine = 'chromium')) AS chromium_rate,\n    sumIf(sessions, engine = 'chromium') AS chromium_n,\n    anyIf(top_cause, engine = 'chromium') AS chromium_cause,\n    if(countIf(engine = 'chrome-headless-shell') = 0, NULL, anyIf(success_rate, engine = 'chrome-headless-shell')) AS chrome_headless_shell_rate,\n    sumIf(sessions, engine = 'chrome-headless-shell') AS chrome_headless_shell_n,\n    anyIf(top_cause, engine = 'chrome-headless-shell') AS chrome_headless_shell_cause,\n    if(countIf(engine = 'lightpanda') = 0, NULL, anyIf(success_rate, engine = 'lightpanda')) AS lightpanda_rate,\n    sumIf(sessions, engine = 'lightpanda') AS lightpanda_n,\n    anyIf(top_cause, engine = 'lightpanda') AS lightpanda_cause\nFROM matrix\nGROUP BY scenario\nORDER BY scenario\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false,
+            "filterable": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "No sessions ended in this range"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "scenario"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Scenario"
+              },
+              {
+                "id": "custom.width",
+                "value": 170
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Sessions of this scenario",
+                    "url": "/d/fleetscope-sessions?${__url_time_range}&${engine:queryparam}&var-scenario=${__data.fields.scenario}&${source:queryparam}",
+                    "targetBlank": false
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "chromium_rate"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "chromium"
+              },
+              {
+                "id": "custom.width",
+                "value": 165
+              },
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "—",
+                        "index": 0,
+                        "color": "#9AA9BB"
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "—",
+                        "index": 1,
+                        "color": "#9AA9BB"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "#FF7B7B",
+                      "value": null
+                    },
+                    {
+                      "color": "#FFD95A",
+                      "value": 90
+                    },
+                    {
+                      "color": "#6EE7A8",
+                      "value": 95
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "chromium sessions of this scenario",
+                    "url": "/d/fleetscope-sessions?${__url_time_range}&var-engine=chromium&var-scenario=${__data.fields.scenario}&${source:queryparam}",
+                    "targetBlank": false
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "chromium_n"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Sessions"
+              },
+              {
+                "id": "custom.width",
+                "value": 85
+              },
+              {
+                "id": "unit",
+                "value": "locale"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "chromium sessions of this scenario",
+                    "url": "/d/fleetscope-sessions?${__url_time_range}&var-engine=chromium&var-scenario=${__data.fields.scenario}&${source:queryparam}",
+                    "targetBlank": false
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "chromium_cause"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Top cause"
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "—",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "—",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "chromium sessions of this scenario",
+                    "url": "/d/fleetscope-sessions?${__url_time_range}&var-engine=chromium&var-scenario=${__data.fields.scenario}&${source:queryparam}",
+                    "targetBlank": false
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "chrome_headless_shell_rate"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "chrome-headless-shell"
+              },
+              {
+                "id": "custom.width",
+                "value": 165
+              },
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "—",
+                        "index": 0,
+                        "color": "#9AA9BB"
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "—",
+                        "index": 1,
+                        "color": "#9AA9BB"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "#FF7B7B",
+                      "value": null
+                    },
+                    {
+                      "color": "#FFD95A",
+                      "value": 90
+                    },
+                    {
+                      "color": "#6EE7A8",
+                      "value": 95
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "chrome-headless-shell sessions of this scenario",
+                    "url": "/d/fleetscope-sessions?${__url_time_range}&var-engine=chrome-headless-shell&var-scenario=${__data.fields.scenario}&${source:queryparam}",
+                    "targetBlank": false
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "chrome_headless_shell_n"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Sessions​"
+              },
+              {
+                "id": "custom.width",
+                "value": 85
+              },
+              {
+                "id": "unit",
+                "value": "locale"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "chrome-headless-shell sessions of this scenario",
+                    "url": "/d/fleetscope-sessions?${__url_time_range}&var-engine=chrome-headless-shell&var-scenario=${__data.fields.scenario}&${source:queryparam}",
+                    "targetBlank": false
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "chrome_headless_shell_cause"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Top cause​"
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "—",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "—",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "chrome-headless-shell sessions of this scenario",
+                    "url": "/d/fleetscope-sessions?${__url_time_range}&var-engine=chrome-headless-shell&var-scenario=${__data.fields.scenario}&${source:queryparam}",
+                    "targetBlank": false
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "lightpanda_rate"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "lightpanda"
+              },
+              {
+                "id": "custom.width",
+                "value": 165
+              },
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "—",
+                        "index": 0,
+                        "color": "#9AA9BB"
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "—",
+                        "index": 1,
+                        "color": "#9AA9BB"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "#FF7B7B",
+                      "value": null
+                    },
+                    {
+                      "color": "#FFD95A",
+                      "value": 90
+                    },
+                    {
+                      "color": "#6EE7A8",
+                      "value": 95
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "lightpanda sessions of this scenario",
+                    "url": "/d/fleetscope-sessions?${__url_time_range}&var-engine=lightpanda&var-scenario=${__data.fields.scenario}&${source:queryparam}",
+                    "targetBlank": false
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "lightpanda_n"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Sessions​​"
+              },
+              {
+                "id": "custom.width",
+                "value": 85
+              },
+              {
+                "id": "unit",
+                "value": "locale"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "lightpanda sessions of this scenario",
+                    "url": "/d/fleetscope-sessions?${__url_time_range}&var-engine=lightpanda&var-scenario=${__data.fields.scenario}&${source:queryparam}",
+                    "targetBlank": false
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "lightpanda_cause"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Top cause​​"
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "—",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "—",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "lightpanda sessions of this scenario",
+                    "url": "/d/fleetscope-sessions?${__url_time_range}&var-engine=lightpanda&var-scenario=${__data.fields.scenario}&${source:queryparam}",
+                    "targetBlank": false
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "enablePagination": false,
+        "footer": {
+          "show": false,
+          "reducer": [
+            "count"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "text",
+      "title": "How to read this",
+      "gridPos": {
+        "x": 0,
+        "y": 26,
+        "w": 24,
+        "h": 7
+      },
+      "description": "What the numbers on this dashboard mean and what they leave out.",
+      "options": {
+        "mode": "markdown",
+        "content": "- **Time to usable browser** is the container start plus the client connect. It leaves out the page load. Chromium launches its browser inside the connect step, the CDP engines inside the container start, so only the sum is comparable.\n- **Peak memory** is the container memory (Docker stats) of each session, then the median over sessions. **The port forwarder is no longer counted** (since M3 it runs as a sidecar container), so numbers from before M3 are not comparable with these.\n- **JS heap** comes from the Chrome DevTools Protocol. *Not available* means the engine does not report it (Lightpanda). It is stored as null and is never shown as 0.\n- **Success rate** = (healthy + degraded) / ended sessions. Interrupted and running sessions are left out. Green from 95%, yellow from 90%, red below.\n- **Cost per 1,000 sessions** is an estimate: browser-hours × $0.10 per browser-hour. No bill is involved.\n- **Simulated data** is part of the numbers unless the Source filter says *real*. Use the filter to compare real runs with simulated ones.\n- **Matrix:** a cell is empty (—) when that engine did not run that scenario in the range. Click a cell to see its sessions."
+      }
+    }
+  ]
+}
