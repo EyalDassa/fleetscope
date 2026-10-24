@@ -110,15 +110,15 @@
   },
   "panels": [
     {
-      "id": 1,
-      "type": "table",
-      "title": "Engine comparison ↗",
-      "description": "One row per engine, from the sessions that ended in the range (interrupted left out). Time to usable browser = container start + client connect (startup_ms + connect_ms). Peak memory and JS heap: the highest sample of each session, then the median over sessions; memory is the container (Docker stats, in MiB), the forwarder sidecar is not counted. JS heap comes from CDP: Not available means the engine does not report it (stored as null), not 0. p95 action latency from the per-minute rollup. Success rate = (healthy + degraded) / ended sessions, thresholds 95 and 90. Cost per 1,000 sessions: browser-hours × $0.10 per browser-hour (Browserbase's published price, from the `pricing` table) for sessions that started in the range. An estimate, not a bill. Click an engine to open its sessions.",
+      "id": 9,
+      "type": "stat",
+      "title": "Simulated share ↗",
+      "description": "Simulated sessions as a share of the sessions that ended in the range (interrupted left out), the same sessions as the Engine comparison; follows the engine and source filters. Simulated data comes from the simulator (source = sim). Click to open the simulated sessions.",
       "gridPos": {
         "x": 0,
         "y": 0,
-        "w": 24,
-        "h": 5
+        "w": 8,
+        "h": 3
       },
       "datasource": {
         "type": "grafana-clickhouse-datasource",
@@ -133,7 +133,134 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "-- Engine comparison (README snippet engine-comparison): one row per engine for the sessions that ended in the range, interrupted left out.\nWITH\n    facts AS (\n        WITH\n            picked AS\n            (\n                SELECT *\n                FROM sessions FINAL\n                WHERE engine IN (${engine:singlequote})\n                  AND source IN (${source:singlequote})\n                  AND started_at >= $__fromTime - INTERVAL 1 DAY\n                  AND started_at <= $__toTime\n                  AND (ended_at IS NULL OR ended_at >= $__fromTime)\n            ),\n            issue_facts AS\n            (\n                SELECT session_id, count() AS issue_count, toString(argMin(kind, ts)) AS first_issue\n                FROM issues\n                WHERE session_id IN (SELECT session_id FROM picked)\n                  AND ts >= (SELECT min(started_at) FROM picked)\n                  AND engine IN (${engine:singlequote})\n                  AND source IN (${source:singlequote})\n                GROUP BY session_id\n            ),\n            action_facts AS\n            (\n                SELECT\n                    session_id,\n                    count() AS actions,\n                    countIf(NOT ok) AS failed_actions,\n                    ifNull(argMinIf(error_code, seq, NOT ok), '') AS first_failed_code\n                FROM actions\n                WHERE session_id IN (SELECT session_id FROM picked)\n                  AND ts >= (SELECT min(started_at) FROM picked)\n                  AND engine IN (${engine:singlequote})\n                  AND source IN (${source:singlequote})\n                GROUP BY session_id\n            )\n        SELECT\n            p.session_id AS session_id,\n            p.agent_id AS agent_id,\n            p.source AS source,\n            p.engine AS engine,\n            p.engine_version AS engine_version,\n            p.provider AS provider,\n            p.scenario AS scenario,\n            p.started_at AS started_at,\n            p.ended_at AS ended_at,\n            p.status AS status,\n            p.reason AS reason,\n            p.duration_ms AS duration_ms,\n            p.startup_ms + p.connect_ms AS time_to_browser_ms,\n            (p.status = 'failed' AND ifNull(p.reason, '') = 'interrupted') AS is_interrupted,\n            a.actions AS actions,\n            a.failed_actions AS failed_actions,\n            i.issue_count AS issue_count,\n            multiIf(\n                p.status = 'running', 'running',\n                is_interrupted, 'interrupted',\n                p.status = 'success' AND a.failed_actions = 0 AND i.issue_count = 0, 'healthy',\n                p.status = 'success', 'degraded',\n                p.status = 'blocked', 'blocked',\n                'failed') AS display_status,\n            if(p.status NOT IN ('running', 'success') AND NOT is_interrupted,\n                multiIf(i.first_issue != '', i.first_issue, a.first_failed_code != '', a.first_failed_code, p.status),\n                NULL) AS cause,\n            if(cause IS NULL, NULL,\n                multiIf(i.first_issue != '', 'issue', a.first_failed_code != '', 'action', 'status')) AS cause_from,\n            (toUInt64(p.startup_ms) + p.connect_ms\n                + ifNull(p.duration_ms, dateDiff('millisecond', p.started_at, now64(3)))) / 3.6e6 AS browser_hours,\n            if(price.provider = '', NULL, browser_hours * price.usd_per_browser_hour) AS est_cost_usd\n        FROM picked AS p\n        LEFT JOIN issue_facts AS i ON i.session_id = p.session_id\n        LEFT JOIN action_facts AS a ON a.session_id = p.session_id\n        LEFT JOIN pricing_current AS price ON price.engine = p.engine AND price.provider = p.provider\n    ),\n    done AS\n    (\n        SELECT *\n        FROM facts\n        WHERE ended_at IS NOT NULL AND $__timeFilter(ended_at) AND NOT is_interrupted\n    ),\n    samples AS\n    (\n        SELECT\n            session_id,\n            maxIf(mem_mb, origin = 'container') AS peak_mib,\n            countIf(origin = 'container' AND mem_mb IS NOT NULL) AS container_samples,\n            countIf(origin = 'cdp' AND js_heap_mb IS NOT NULL) AS heap_samples\n        FROM resource_samples\n        WHERE session_id IN (SELECT session_id FROM done)\n          AND ts >= $__fromTime - INTERVAL 1 DAY\n          AND engine IN (${engine:singlequote})\n          AND source IN (${source:singlequote})\n        GROUP BY session_id\n    ),\n    per_engine AS\n    (\n        SELECT\n            d.engine AS engine,\n            count() AS sessions,\n            100 * countIf(d.status = 'success') / count() AS success_rate,\n            quantile(0.5)(d.time_to_browser_ms) AS time_to_browser_p50_ms,\n            quantile(0.95)(d.time_to_browser_ms) AS time_to_browser_p95_ms,\n            if(countIf(s.container_samples > 0) = 0, NULL,\n                quantileIf(0.5)(s.peak_mib, s.container_samples > 0)) AS peak_mem_mib_p50,\n            if(countIf(d.est_cost_usd IS NULL) > 0, NULL, 1000 * sum(d.est_cost_usd) / count()) AS cost_per_1k_sessions_usd,\n            countIf(s.heap_samples > 0) > 0 AS js_heap_available\n        FROM done AS d\n        LEFT JOIN samples AS s ON s.session_id = d.session_id\n        GROUP BY engine\n    ),\n    latency AS\n    (\n        SELECT\n            engine,\n            countMerge(actions) AS action_count,\n            quantilesMerge(0.5, 0.95)(action_ms)[2] AS p95_ms\n        FROM fleet_minute\n        WHERE minute >= toStartOfMinute($__fromTime) AND minute <= $__toTime\n          AND engine IN (${engine:singlequote})\n          AND source IN (${source:singlequote})\n        GROUP BY engine\n    )\nSELECT\n    p.engine AS engine,\n    p.sessions AS sessions,\n    p.success_rate AS success_rate,\n    p.time_to_browser_p50_ms AS time_to_browser_p50_ms,\n    p.time_to_browser_p95_ms AS time_to_browser_p95_ms,\n    p.peak_mem_mib_p50 AS peak_mem_mib_p50,\n    if(l.action_count = 0, NULL, l.p95_ms) AS action_p95_ms,\n    p.cost_per_1k_sessions_usd AS cost_per_1k_sessions_usd,\n    p.js_heap_available AS js_heap_available\nFROM per_engine AS p\nLEFT JOIN latency AS l ON l.engine = p.engine\nORDER BY engine\n",
+          "rawSql": "-- Simulated share: simulated sessions / sessions that ended in the range (interrupted left out), the same sessions as the Engine comparison.\nSELECT if(count() = 0, NULL, 100 * countIf(source = 'sim') / count()) AS simulated_share\nFROM sessions FINAL\nWHERE engine IN (${engine:singlequote})\n  AND source IN (${source:singlequote})\n  AND started_at >= $__fromTime - INTERVAL 1 DAY\n  AND started_at <= $__toTime\n  AND ended_at IS NOT NULL AND $__timeFilter(ended_at)\n  AND NOT (status = 'failed' AND ifNull(reason, '') = 'interrupted')\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "index": 0,
+                  "text": "0% · all real"
+                },
+                "100": {
+                  "index": 1,
+                  "text": "100% · all simulated"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "—",
+                  "index": 2
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "—",
+                  "index": 3
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "—",
+          "unit": "percent",
+          "decimals": 0,
+          "links": [
+            {
+              "title": "Simulated sessions",
+              "url": "/d/fleetscope-sessions?${__url_time_range}&${engine:queryparam}&var-source=sim",
+              "targetBlank": false
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/^simulated_share$/",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "text": {
+          "valueSize": 22
+        }
+      }
+    },
+    {
+      "id": 10,
+      "type": "text",
+      "title": "Real or simulated?",
+      "gridPos": {
+        "x": 8,
+        "y": 0,
+        "w": 16,
+        "h": 3
+      },
+      "description": "Why the Source filter matters on this dashboard.",
+      "options": {
+        "mode": "markdown",
+        "content": "Source = All blends measured and simulated sessions. **Sim %** shows how much of each row or cell is simulated, and simulated headless-shell and Lightpanda numbers come from priors. Set **Source = real** for measured data only."
+      }
+    },
+    {
+      "id": 1,
+      "type": "table",
+      "title": "Engine comparison ↗",
+      "description": "One row per engine, from the sessions that ended in the range (interrupted left out). Time to usable browser = container start + client connect (startup_ms + connect_ms). Peak memory and JS heap: the highest sample of each session, then the median over sessions; memory is the container (Docker stats, in MiB), the forwarder sidecar is not counted. JS heap comes from CDP: Not available means the engine does not report it (stored as null), not 0. p95 action latency from the per-minute rollup. Success rate = (healthy + degraded) / ended sessions, thresholds 95 and 90. Cost per 1,000 sessions: browser-hours × $0.10 per browser-hour (Browserbase's published price, from the `pricing` table) for sessions that started in the range. An estimate, not a bill. Click an engine to open its sessions.",
+      "gridPos": {
+        "x": 0,
+        "y": 3,
+        "w": 24,
+        "h": 6
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "-- Engine comparison (README snippet engine-comparison): one row per engine for the sessions that ended in the range, interrupted left out.\nWITH\n    facts AS (\n        WITH\n            picked AS\n            (\n                SELECT *\n                FROM sessions FINAL\n                WHERE engine IN (${engine:singlequote})\n                  AND source IN (${source:singlequote})\n                  AND started_at >= $__fromTime - INTERVAL 1 DAY\n                  AND started_at <= $__toTime\n                  AND (ended_at IS NULL OR ended_at >= $__fromTime)\n            ),\n            issue_facts AS\n            (\n                SELECT session_id, count() AS issue_count, toString(argMin(kind, ts)) AS first_issue\n                FROM issues\n                WHERE session_id IN (SELECT session_id FROM picked)\n                  AND ts >= (SELECT min(started_at) FROM picked)\n                  AND engine IN (${engine:singlequote})\n                  AND source IN (${source:singlequote})\n                GROUP BY session_id\n            ),\n            action_facts AS\n            (\n                SELECT\n                    session_id,\n                    count() AS actions,\n                    countIf(NOT ok) AS failed_actions,\n                    ifNull(argMinIf(error_code, seq, NOT ok), '') AS first_failed_code\n                FROM actions\n                WHERE session_id IN (SELECT session_id FROM picked)\n                  AND ts >= (SELECT min(started_at) FROM picked)\n                  AND engine IN (${engine:singlequote})\n                  AND source IN (${source:singlequote})\n                GROUP BY session_id\n            )\n        SELECT\n            p.session_id AS session_id,\n            p.agent_id AS agent_id,\n            p.source AS source,\n            p.engine AS engine,\n            p.engine_version AS engine_version,\n            p.provider AS provider,\n            p.scenario AS scenario,\n            p.started_at AS started_at,\n            p.ended_at AS ended_at,\n            p.status AS status,\n            p.reason AS reason,\n            p.duration_ms AS duration_ms,\n            p.startup_ms + p.connect_ms AS time_to_browser_ms,\n            (p.status = 'failed' AND ifNull(p.reason, '') = 'interrupted') AS is_interrupted,\n            a.actions AS actions,\n            a.failed_actions AS failed_actions,\n            i.issue_count AS issue_count,\n            multiIf(\n                p.status = 'running', 'running',\n                is_interrupted, 'interrupted',\n                p.status = 'success' AND a.failed_actions = 0 AND i.issue_count = 0, 'healthy',\n                p.status = 'success', 'degraded',\n                p.status = 'blocked', 'blocked',\n                'failed') AS display_status,\n            if(p.status NOT IN ('running', 'success') AND NOT is_interrupted,\n                multiIf(i.first_issue != '', i.first_issue, a.first_failed_code != '', a.first_failed_code, p.status),\n                NULL) AS cause,\n            if(cause IS NULL, NULL,\n                multiIf(i.first_issue != '', 'issue', a.first_failed_code != '', 'action', 'status')) AS cause_from,\n            (toUInt64(p.startup_ms) + p.connect_ms\n                + ifNull(p.duration_ms, dateDiff('millisecond', p.started_at, now64(3)))) / 3.6e6 AS browser_hours,\n            if(price.provider = '', NULL, browser_hours * price.usd_per_browser_hour) AS est_cost_usd\n        FROM picked AS p\n        LEFT JOIN issue_facts AS i ON i.session_id = p.session_id\n        LEFT JOIN action_facts AS a ON a.session_id = p.session_id\n        LEFT JOIN pricing_current AS price ON price.engine = p.engine AND price.provider = p.provider\n    ),\n    done AS\n    (\n        SELECT *\n        FROM facts\n        WHERE ended_at IS NOT NULL AND $__timeFilter(ended_at) AND NOT is_interrupted\n    ),\n    samples AS\n    (\n        SELECT\n            session_id,\n            maxIf(mem_mb, origin = 'container') AS peak_mib,\n            countIf(origin = 'container' AND mem_mb IS NOT NULL) AS container_samples,\n            countIf(origin = 'cdp' AND js_heap_mb IS NOT NULL) AS heap_samples\n        FROM resource_samples\n        WHERE session_id IN (SELECT session_id FROM done)\n          AND ts >= $__fromTime - INTERVAL 1 DAY\n          AND engine IN (${engine:singlequote})\n          AND source IN (${source:singlequote})\n        GROUP BY session_id\n    ),\n    per_engine AS\n    (\n        SELECT\n            d.engine AS engine,\n            count() AS sessions,\n            100 * countIf(d.status = 'success') / count() AS success_rate,\n            quantile(0.5)(d.time_to_browser_ms) AS time_to_browser_p50_ms,\n            quantile(0.95)(d.time_to_browser_ms) AS time_to_browser_p95_ms,\n            if(countIf(s.container_samples > 0) = 0, NULL,\n                quantileIf(0.5)(s.peak_mib, s.container_samples > 0)) AS peak_mem_mib_p50,\n            if(countIf(d.est_cost_usd IS NULL) > 0, NULL, 1000 * sum(d.est_cost_usd) / count()) AS cost_per_1k_sessions_usd,\n            countIf(s.heap_samples > 0) > 0 AS js_heap_available,\n            100 * countIf(d.source = 'sim') / count() AS sim_share\n        FROM done AS d\n        LEFT JOIN samples AS s ON s.session_id = d.session_id\n        GROUP BY engine\n    ),\n    latency AS\n    (\n        SELECT\n            engine,\n            countMerge(actions) AS action_count,\n            quantilesMerge(0.5, 0.95)(action_ms)[2] AS p95_ms\n        FROM fleet_minute\n        WHERE minute >= toStartOfMinute($__fromTime) AND minute <= $__toTime\n          AND engine IN (${engine:singlequote})\n          AND source IN (${source:singlequote})\n        GROUP BY engine\n    )\nSELECT\n    p.engine AS engine,\n    p.sessions AS sessions,\n    p.success_rate AS success_rate,\n    p.time_to_browser_p50_ms AS time_to_browser_p50_ms,\n    p.time_to_browser_p95_ms AS time_to_browser_p95_ms,\n    p.peak_mem_mib_p50 AS peak_mem_mib_p50,\n    if(l.action_count = 0, NULL, l.p95_ms) AS action_p95_ms,\n    p.cost_per_1k_sessions_usd AS cost_per_1k_sessions_usd,\n    p.js_heap_available AS js_heap_available,\n    p.sim_share AS sim_share\nFROM per_engine AS p\nLEFT JOIN latency AS l ON l.engine = p.engine\nORDER BY engine\n",
           "refId": "A",
           "pluginVersion": "4.23.2"
         }
@@ -513,6 +640,55 @@
           {
             "matcher": {
               "id": "byName",
+              "options": "sim_share"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Sim %"
+              },
+              {
+                "id": "custom.width",
+                "value": 75
+              },
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "—",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "—",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
               "options": "js_heap_available"
             },
             "properties": [
@@ -583,7 +759,7 @@
       "description": "Median of container start + client connect per engine, from the Engine comparison query. The bar is the engine colour and the label is the engine name. Not available (—) means no session ended. Click a bar to open the sessions of that engine.",
       "gridPos": {
         "x": 0,
-        "y": 5,
+        "y": 8,
         "w": 8,
         "h": 7
       },
@@ -751,7 +927,7 @@
       "description": "Median over sessions of the highest container memory sample (MiB), from the Engine comparison query. The port forwarder sidecar is not counted. Not available means the engine has no container samples. Click a bar to open the sessions of that engine.",
       "gridPos": {
         "x": 8,
-        "y": 5,
+        "y": 8,
         "w": 8,
         "h": 7
       },
@@ -920,7 +1096,7 @@
       "description": "p95 of action duration per engine over the range, from the per-minute rollup (Engine comparison query). Click a bar to open the sessions of that engine.",
       "gridPos": {
         "x": 16,
-        "y": 5,
+        "y": 8,
         "w": 8,
         "h": 7
       },
@@ -1088,7 +1264,7 @@
       "description": "p95 of action duration in each bucket, from the per-minute rollup. A gap means no actions in the bucket. Click a line to open its sessions. The link carries the whole panel range, not the clicked minute: drag across a spike to zoom, then click.",
       "gridPos": {
         "x": 0,
-        "y": 12,
+        "y": 15,
         "w": 12,
         "h": 7
       },
@@ -1254,7 +1430,7 @@
       "description": "Average container memory (MiB, Docker stats) in each bucket, from the per-minute rollup. The port forwarder sidecar is not counted. Click a line to open its sessions. The link carries the whole panel range, not the clicked minute: drag across a spike to zoom, then click.",
       "gridPos": {
         "x": 12,
-        "y": 12,
+        "y": 15,
         "w": 12,
         "h": 7
       },
@@ -1421,7 +1597,7 @@
       "description": "Success rate of each scenario on each engine, for the sessions that ended in the range (interrupted left out), coloured by the success-rate thresholds (95 and 90). n = sessions behind the rate, cause = the most common failure cause (a tie goes to the first name alphabetically). — means no session of that scenario ran on that engine in the range; it is not 0%. Click a cell to open that engine's sessions of the scenario, with the same time range and source.",
       "gridPos": {
         "x": 0,
-        "y": 19,
+        "y": 22,
         "w": 24,
         "h": 7
       },
@@ -1438,7 +1614,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "-- Compatibility matrix (README snippet compatibility-matrix, one row per scenario and engine), turned into one row per scenario with a rate, n and cause column per engine.\n-- An engine that ran no session of a scenario in the range stays NULL (shown as —), never 0%.\nWITH matrix AS\n(\n    WITH\n        facts AS (\n            WITH\n                picked AS\n                (\n                    SELECT *\n                    FROM sessions FINAL\n                    WHERE engine IN (${engine:singlequote})\n                      AND source IN (${source:singlequote})\n                      AND started_at >= $__fromTime - INTERVAL 1 DAY\n                      AND started_at <= $__toTime\n                      AND (ended_at IS NULL OR ended_at >= $__fromTime)\n                ),\n                issue_facts AS\n                (\n                    SELECT session_id, count() AS issue_count, toString(argMin(kind, ts)) AS first_issue\n                    FROM issues\n                    WHERE session_id IN (SELECT session_id FROM picked)\n                      AND ts >= (SELECT min(started_at) FROM picked)\n                      AND engine IN (${engine:singlequote})\n                      AND source IN (${source:singlequote})\n                    GROUP BY session_id\n                ),\n                action_facts AS\n                (\n                    SELECT\n                        session_id,\n                        count() AS actions,\n                        countIf(NOT ok) AS failed_actions,\n                        ifNull(argMinIf(error_code, seq, NOT ok), '') AS first_failed_code\n                    FROM actions\n                    WHERE session_id IN (SELECT session_id FROM picked)\n                      AND ts >= (SELECT min(started_at) FROM picked)\n                      AND engine IN (${engine:singlequote})\n                      AND source IN (${source:singlequote})\n                    GROUP BY session_id\n                )\n            SELECT\n                p.session_id AS session_id,\n                p.agent_id AS agent_id,\n                p.source AS source,\n                p.engine AS engine,\n                p.engine_version AS engine_version,\n                p.provider AS provider,\n                p.scenario AS scenario,\n                p.started_at AS started_at,\n                p.ended_at AS ended_at,\n                p.status AS status,\n                p.reason AS reason,\n                p.duration_ms AS duration_ms,\n                p.startup_ms + p.connect_ms AS time_to_browser_ms,\n                (p.status = 'failed' AND ifNull(p.reason, '') = 'interrupted') AS is_interrupted,\n                a.actions AS actions,\n                a.failed_actions AS failed_actions,\n                i.issue_count AS issue_count,\n                multiIf(\n                    p.status = 'running', 'running',\n                    is_interrupted, 'interrupted',\n                    p.status = 'success' AND a.failed_actions = 0 AND i.issue_count = 0, 'healthy',\n                    p.status = 'success', 'degraded',\n                    p.status = 'blocked', 'blocked',\n                    'failed') AS display_status,\n                if(p.status NOT IN ('running', 'success') AND NOT is_interrupted,\n                    multiIf(i.first_issue != '', i.first_issue, a.first_failed_code != '', a.first_failed_code, p.status),\n                    NULL) AS cause,\n                if(cause IS NULL, NULL,\n                    multiIf(i.first_issue != '', 'issue', a.first_failed_code != '', 'action', 'status')) AS cause_from,\n                (toUInt64(p.startup_ms) + p.connect_ms\n                    + ifNull(p.duration_ms, dateDiff('millisecond', p.started_at, now64(3)))) / 3.6e6 AS browser_hours,\n                if(price.provider = '', NULL, browser_hours * price.usd_per_browser_hour) AS est_cost_usd\n            FROM picked AS p\n            LEFT JOIN issue_facts AS i ON i.session_id = p.session_id\n            LEFT JOIN action_facts AS a ON a.session_id = p.session_id\n            LEFT JOIN pricing_current AS price ON price.engine = p.engine AND price.provider = p.provider\n        ),\n        done AS\n        (\n            SELECT *\n            FROM facts\n            WHERE ended_at IS NOT NULL AND $__timeFilter(ended_at) AND NOT is_interrupted\n        ),\n        causes AS\n        (\n            SELECT scenario, engine, argMin(cause, (-toInt64(n), cause)) AS top_cause\n            FROM\n            (\n                SELECT scenario, engine, cause, count() AS n\n                FROM done\n                WHERE cause IS NOT NULL\n                GROUP BY scenario, engine, cause\n            )\n            GROUP BY scenario, engine\n        )\n    SELECT\n        d.scenario AS scenario,\n        d.engine AS engine,\n        count() AS sessions,\n        100 * countIf(d.status = 'success') / count() AS success_rate,\n        nullIf(any(c.top_cause), '') AS top_cause\n    FROM done AS d\n    LEFT JOIN causes AS c ON c.scenario = d.scenario AND c.engine = d.engine\n    GROUP BY scenario, engine\n    ORDER BY scenario, engine\n)\nSELECT\n    scenario,\n    if(countIf(engine = 'chromium') = 0, NULL, anyIf(success_rate, engine = 'chromium')) AS chromium_rate,\n    sumIf(sessions, engine = 'chromium') AS chromium_n,\n    anyIf(top_cause, engine = 'chromium') AS chromium_cause,\n    if(countIf(engine = 'chrome-headless-shell') = 0, NULL, anyIf(success_rate, engine = 'chrome-headless-shell')) AS chrome_headless_shell_rate,\n    sumIf(sessions, engine = 'chrome-headless-shell') AS chrome_headless_shell_n,\n    anyIf(top_cause, engine = 'chrome-headless-shell') AS chrome_headless_shell_cause,\n    if(countIf(engine = 'lightpanda') = 0, NULL, anyIf(success_rate, engine = 'lightpanda')) AS lightpanda_rate,\n    sumIf(sessions, engine = 'lightpanda') AS lightpanda_n,\n    anyIf(top_cause, engine = 'lightpanda') AS lightpanda_cause\nFROM matrix\nGROUP BY scenario\nORDER BY scenario\n",
+          "rawSql": "-- Compatibility matrix (README snippet compatibility-matrix, one row per scenario and engine), turned into one row per scenario with a rate, n and cause column per engine.\n-- An engine that ran no session of a scenario in the range stays NULL (shown as —), never 0%.\nWITH matrix AS\n(\n    WITH\n        facts AS (\n            WITH\n                picked AS\n                (\n                    SELECT *\n                    FROM sessions FINAL\n                    WHERE engine IN (${engine:singlequote})\n                      AND source IN (${source:singlequote})\n                      AND started_at >= $__fromTime - INTERVAL 1 DAY\n                      AND started_at <= $__toTime\n                      AND (ended_at IS NULL OR ended_at >= $__fromTime)\n                ),\n                issue_facts AS\n                (\n                    SELECT session_id, count() AS issue_count, toString(argMin(kind, ts)) AS first_issue\n                    FROM issues\n                    WHERE session_id IN (SELECT session_id FROM picked)\n                      AND ts >= (SELECT min(started_at) FROM picked)\n                      AND engine IN (${engine:singlequote})\n                      AND source IN (${source:singlequote})\n                    GROUP BY session_id\n                ),\n                action_facts AS\n                (\n                    SELECT\n                        session_id,\n                        count() AS actions,\n                        countIf(NOT ok) AS failed_actions,\n                        ifNull(argMinIf(error_code, seq, NOT ok), '') AS first_failed_code\n                    FROM actions\n                    WHERE session_id IN (SELECT session_id FROM picked)\n                      AND ts >= (SELECT min(started_at) FROM picked)\n                      AND engine IN (${engine:singlequote})\n                      AND source IN (${source:singlequote})\n                    GROUP BY session_id\n                )\n            SELECT\n                p.session_id AS session_id,\n                p.agent_id AS agent_id,\n                p.source AS source,\n                p.engine AS engine,\n                p.engine_version AS engine_version,\n                p.provider AS provider,\n                p.scenario AS scenario,\n                p.started_at AS started_at,\n                p.ended_at AS ended_at,\n                p.status AS status,\n                p.reason AS reason,\n                p.duration_ms AS duration_ms,\n                p.startup_ms + p.connect_ms AS time_to_browser_ms,\n                (p.status = 'failed' AND ifNull(p.reason, '') = 'interrupted') AS is_interrupted,\n                a.actions AS actions,\n                a.failed_actions AS failed_actions,\n                i.issue_count AS issue_count,\n                multiIf(\n                    p.status = 'running', 'running',\n                    is_interrupted, 'interrupted',\n                    p.status = 'success' AND a.failed_actions = 0 AND i.issue_count = 0, 'healthy',\n                    p.status = 'success', 'degraded',\n                    p.status = 'blocked', 'blocked',\n                    'failed') AS display_status,\n                if(p.status NOT IN ('running', 'success') AND NOT is_interrupted,\n                    multiIf(i.first_issue != '', i.first_issue, a.first_failed_code != '', a.first_failed_code, p.status),\n                    NULL) AS cause,\n                if(cause IS NULL, NULL,\n                    multiIf(i.first_issue != '', 'issue', a.first_failed_code != '', 'action', 'status')) AS cause_from,\n                (toUInt64(p.startup_ms) + p.connect_ms\n                    + ifNull(p.duration_ms, dateDiff('millisecond', p.started_at, now64(3)))) / 3.6e6 AS browser_hours,\n                if(price.provider = '', NULL, browser_hours * price.usd_per_browser_hour) AS est_cost_usd\n            FROM picked AS p\n            LEFT JOIN issue_facts AS i ON i.session_id = p.session_id\n            LEFT JOIN action_facts AS a ON a.session_id = p.session_id\n            LEFT JOIN pricing_current AS price ON price.engine = p.engine AND price.provider = p.provider\n        ),\n        done AS\n        (\n            SELECT *\n            FROM facts\n            WHERE ended_at IS NOT NULL AND $__timeFilter(ended_at) AND NOT is_interrupted\n        ),\n        causes AS\n        (\n            SELECT scenario, engine, argMin(cause, (-toInt64(n), cause)) AS top_cause\n            FROM\n            (\n                SELECT scenario, engine, cause, count() AS n\n                FROM done\n                WHERE cause IS NOT NULL\n                GROUP BY scenario, engine, cause\n            )\n            GROUP BY scenario, engine\n        )\n    SELECT\n        d.scenario AS scenario,\n        d.engine AS engine,\n        count() AS sessions,\n        100 * countIf(d.status = 'success') / count() AS success_rate,\n        nullIf(any(c.top_cause), '') AS top_cause,\n        100 * countIf(d.source = 'sim') / count() AS sim_share\n    FROM done AS d\n    LEFT JOIN causes AS c ON c.scenario = d.scenario AND c.engine = d.engine\n    GROUP BY scenario, engine\n    ORDER BY scenario, engine\n)\nSELECT\n    scenario,\n    if(countIf(engine = 'chromium') = 0, NULL, anyIf(success_rate, engine = 'chromium')) AS chromium_rate,\n    sumIf(sessions, engine = 'chromium') AS chromium_n,\n    if(countIf(engine = 'chromium') = 0, NULL, anyIf(sim_share, engine = 'chromium')) AS chromium_sim,\n    anyIf(top_cause, engine = 'chromium') AS chromium_cause,\n    if(countIf(engine = 'chrome-headless-shell') = 0, NULL, anyIf(success_rate, engine = 'chrome-headless-shell')) AS chrome_headless_shell_rate,\n    sumIf(sessions, engine = 'chrome-headless-shell') AS chrome_headless_shell_n,\n    if(countIf(engine = 'chrome-headless-shell') = 0, NULL, anyIf(sim_share, engine = 'chrome-headless-shell')) AS chrome_headless_shell_sim,\n    anyIf(top_cause, engine = 'chrome-headless-shell') AS chrome_headless_shell_cause,\n    if(countIf(engine = 'lightpanda') = 0, NULL, anyIf(success_rate, engine = 'lightpanda')) AS lightpanda_rate,\n    sumIf(sessions, engine = 'lightpanda') AS lightpanda_n,\n    if(countIf(engine = 'lightpanda') = 0, NULL, anyIf(sim_share, engine = 'lightpanda')) AS lightpanda_sim,\n    anyIf(top_cause, engine = 'lightpanda') AS lightpanda_cause\nFROM matrix\nGROUP BY scenario\nORDER BY scenario\n",
           "refId": "A",
           "pluginVersion": "4.23.2"
         }
@@ -1481,7 +1657,7 @@
               },
               {
                 "id": "custom.width",
-                "value": 170
+                "value": 150
               },
               {
                 "id": "links",
@@ -1507,7 +1683,7 @@
               },
               {
                 "id": "custom.width",
-                "value": 165
+                "value": 110
               },
               {
                 "id": "unit",
@@ -1596,11 +1772,11 @@
             "properties": [
               {
                 "id": "displayName",
-                "value": "Sessions"
+                "value": "n"
               },
               {
                 "id": "custom.width",
-                "value": 85
+                "value": 45
               },
               {
                 "id": "unit",
@@ -1609,6 +1785,65 @@
               {
                 "id": "decimals",
                 "value": 0
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "chromium sessions of this scenario",
+                    "url": "/d/fleetscope-sessions?${__url_time_range}&var-engine=chromium&var-scenario=${__data.fields.scenario}&${source:queryparam}",
+                    "targetBlank": false
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "chromium_sim"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Sim %"
+              },
+              {
+                "id": "custom.width",
+                "value": 70
+              },
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "—",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "—",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
               },
               {
                 "id": "links",
@@ -1770,11 +2005,11 @@
             "properties": [
               {
                 "id": "displayName",
-                "value": "Sessions​"
+                "value": "n​"
               },
               {
                 "id": "custom.width",
-                "value": 85
+                "value": 45
               },
               {
                 "id": "unit",
@@ -1783,6 +2018,65 @@
               {
                 "id": "decimals",
                 "value": 0
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "chrome-headless-shell sessions of this scenario",
+                    "url": "/d/fleetscope-sessions?${__url_time_range}&var-engine=chrome-headless-shell&var-scenario=${__data.fields.scenario}&${source:queryparam}",
+                    "targetBlank": false
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "chrome_headless_shell_sim"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Sim %​"
+              },
+              {
+                "id": "custom.width",
+                "value": 70
+              },
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "—",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "—",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
               },
               {
                 "id": "links",
@@ -1855,7 +2149,7 @@
               },
               {
                 "id": "custom.width",
-                "value": 165
+                "value": 110
               },
               {
                 "id": "unit",
@@ -1944,11 +2238,11 @@
             "properties": [
               {
                 "id": "displayName",
-                "value": "Sessions​​"
+                "value": "n​​"
               },
               {
                 "id": "custom.width",
-                "value": 85
+                "value": 45
               },
               {
                 "id": "unit",
@@ -1957,6 +2251,65 @@
               {
                 "id": "decimals",
                 "value": 0
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "lightpanda sessions of this scenario",
+                    "url": "/d/fleetscope-sessions?${__url_time_range}&var-engine=lightpanda&var-scenario=${__data.fields.scenario}&${source:queryparam}",
+                    "targetBlank": false
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "lightpanda_sim"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Sim %​​"
+              },
+              {
+                "id": "custom.width",
+                "value": 70
+              },
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "—",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "—",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
               },
               {
                 "id": "links",
@@ -2039,14 +2392,14 @@
       "title": "How to read this",
       "gridPos": {
         "x": 0,
-        "y": 26,
+        "y": 29,
         "w": 24,
-        "h": 9
+        "h": 10
       },
       "description": "What the numbers on this dashboard mean and what they leave out.",
       "options": {
         "mode": "markdown",
-        "content": "- **Time to usable browser** is the container start plus the client connect. It leaves out the page load. Chromium launches its browser inside the connect step, the CDP engines inside the container start, so only the sum is comparable.\n- **Peak memory** is the container memory (Docker stats) of each session, then the median over sessions. **The port forwarder is no longer counted** (since M3 it runs as a sidecar container), so numbers from before M3 are not comparable with these.\n- **JS heap** comes from the Chrome DevTools Protocol. *Not available* means the engine does not report it (Lightpanda). It is stored as null and is never shown as 0.\n- **Success rate** = (healthy + degraded) / ended sessions. Interrupted and running sessions are left out. Green from 95%, yellow from 90%, red below.\n- **Cost per 1,000 sessions** is an estimate: browser-hours × $0.10 per browser-hour. No bill is involved.\n- **Simulated data** is part of the numbers unless the Source filter says *real*. Use the filter to compare real runs with simulated ones.\n- **Matrix:** a cell is empty (—) when that engine did not run that scenario in the range. Click a cell to see its sessions."
+        "content": "- **Time to usable browser** is the container start plus the client connect. It leaves out the page load. Chromium launches its browser inside the connect step, the CDP engines inside the container start, so only the sum is comparable.\n- **Peak memory** is the container memory (Docker stats) of each session, then the median over sessions. **The port forwarder is no longer counted** (since M3 it runs as a sidecar container), so numbers from before M3 are not comparable with these.\n- **JS heap** comes from the Chrome DevTools Protocol. *Not available* means the engine does not report it (Lightpanda). It is stored as null and is never shown as 0.\n- **Success rate** = (healthy + degraded) / ended sessions. Interrupted and running sessions are left out. Green from 95%, yellow from 90%, red below.\n- **Cost per 1,000 sessions** is an estimate: browser-hours × $0.10 per browser-hour. No bill is involved.\n- **Simulated data** is part of the numbers unless the Source filter says *real*. The Simulated share stat and the Sim % columns say how much of each number is simulated. Headless-shell and Lightpanda numbers from the simulator come from priors until enough real runs exist; filter Source = real for measured data only.\n- **Chromium's memory** is not like for like: its container also runs Playwright's Node server, so its memory includes ~N MB (being measured) the CDP engines don't have.\n- **Matrix:** a cell is empty (—) when that engine did not run that scenario in the range. Click a cell to see its sessions."
       }
     }
   ]
