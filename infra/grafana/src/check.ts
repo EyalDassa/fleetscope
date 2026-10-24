@@ -31,6 +31,7 @@ import { formatInterval } from "./macros";
 import { unmatchedFieldReferences } from "./panel-fields";
 import { sessionFactsProblems } from "./session-facts";
 import { panelIntervalMs, parseIntervalMs, resolveTimeRange, type TimeRange } from "./time";
+import { textboxProblems } from "./variable-rules";
 
 export interface CheckOptions {
   dir: string;
@@ -380,8 +381,15 @@ export async function checkDashboards(options: CheckOptions): Promise<CheckRepor
     const extracted = extractQueries(dashboard.json);
     report.problems.push(...extracted.problems, ...designProblems(dashboard.json));
     report.warnings.push(...extracted.warnings);
+    const textboxes = variableDefinitions(dashboard.json)
+      .filter((def) => def.type === "textbox")
+      .map((def) => def.name);
     for (const query of extracted.queries) {
       report.problems.push(...sqlRuleProblems(query.sql, query.where));
+      // Text boxes take any text: they may reach SQL only through percentencode (R-M2-19).
+      for (const found of textboxProblems(query.sql, textboxes)) {
+        report.problems.push({ where: query.where, message: found.message, detail: found.detail });
+      }
       if (options.sessionFacts !== undefined) {
         for (const found of sessionFactsProblems(query.sql, options.sessionFacts, dashboard.uid)) {
           report.problems.push({

@@ -81,11 +81,11 @@ describe("checkDashboards with text boxes", () => {
     panels: [
       statPanel(
         "Per session",
-        "SELECT count() FROM actions WHERE session_id = ${session:singlequote}",
+        "SELECT count() FROM actions WHERE session_id = decodeURLComponent('${session:percentencode}')",
       ),
       statPanel(
         "Filtered by cause",
-        "SELECT count() FROM sessions WHERE $__conditionalAll(cause = ${cause:singlequote}, $cause)",
+        "SELECT count() FROM sessions WHERE $__conditionalAll(cause = decodeURLComponent('${cause:percentencode}'), $cause)",
       ),
     ],
   });
@@ -107,8 +107,8 @@ describe("checkDashboards with text boxes", () => {
     expect(report.problemCount).toBe(0);
     const perSession = sent.filter((sql) => sql.includes("FROM actions"));
     expect(perSession).toEqual([
-      "SELECT count() FROM actions WHERE session_id = ''",
-      "SELECT count() FROM actions WHERE session_id = 's-newest-0001'",
+      "SELECT count() FROM actions WHERE session_id = decodeURLComponent('')",
+      "SELECT count() FROM actions WHERE session_id = decodeURLComponent('s-newest-0001')",
     ]);
   });
 
@@ -116,7 +116,9 @@ describe("checkDashboards with text boxes", () => {
     await run();
     const byCause = sent.filter((sql) => sql.includes("FROM sessions WHERE"));
     expect(byCause[0]).toBe("SELECT count() FROM sessions WHERE 1=1");
-    expect(byCause[1]).toMatch(/WHERE cause = 'fleetscope-check-placeholder'$/);
+    expect(byCause[1]).toMatch(
+      /WHERE cause = decodeURLComponent\('fleetscope-check-placeholder'\)$/,
+    );
   });
 
   it("warns, and still runs, when there is no session to use", async () => {

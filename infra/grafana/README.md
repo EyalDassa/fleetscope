@@ -119,7 +119,14 @@ For every `dashboards/*.json` it:
 6. applies the dashboard rules of `design/DESIGN.md` section 9: only palette colours, `noValue` on
    every stat and table, `spanNulls: false` plus the three engine overrides on every time series,
    no `ifNull(x, 0)` / `coalesce(x, 0)` in SQL, and no `SETTINGS` clause the read-only user may not use;
-7. **executes every SQL query** against ClickHouse, after expanding it the way Grafana does.
+7. **text box variables go into SQL only as `decodeURLComponent('${name:percentencode}')`.** A text
+   box (`session`, `cause`) takes any text, and `singlequote` does not escape a backslash, so a value
+   ending in `\'` can leave the SQL string (QA-M2-05). `${name:singlequote}`, `'${name}'`, a bare
+   `$name` and `[[name]]` fail, with the dashboard, the panel and the offending snippet. The variable
+   argument of `$__conditionalAll(condition, $cause)` is not a use. The multi-select query variables
+   (`engine`, `source`, `agent`, `scenario`) may keep `singlequote`: their values come from the
+   database and ingest restricts those fields to `SAFE_LABEL_PATTERN` (no quote or backslash);
+8. **executes every SQL query** against ClickHouse, after expanding it the way Grafana does.
 
 On failure it prints the dashboard, the panel title, the ClickHouse error and the SQL that was sent,
 and (in GitHub Actions) an annotation on the dashboard file. With an empty `dashboards/` folder it passes.
