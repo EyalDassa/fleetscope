@@ -8,7 +8,7 @@ through the official ClickHouse data source, with a **read-only** ClickHouse use
 infra/grafana/
   provisioning/datasources/clickhouse.yaml   the data source (uid fleetscope-clickhouse)
   provisioning/dashboards/fleetscope.yaml    loads dashboards/ into the folder "Fleetscope" (uid fleetscope)
-  dashboards/                                the dashboard JSON (fleetscope-overview, -sessions, -session)
+  dashboards/                                the dashboard JSON (fleetscope-overview, -sessions, -session, -browsers)
   src/                                       `pnpm grafana:push`, `grafana:check` and `grafana:reload` (TypeScript)
 ```
 
@@ -112,7 +112,9 @@ For every `dashboards/*.json` it:
    `packages/db/README.md` defines a session's display status, cause and cost. Panels paste it as
    `WITH facts AS ( ... )`; each pasted copy must equal the README block (comments, indentation and
    the spacing around `( ) ,` are ignored). The one allowed difference: on the Session dashboard
-   `picked` selects one session, so its `WHERE` may be a `session_id = ...${session...}...` condition.
+   `picked` selects one session, so its `WHERE` may be a `session_id = ...${session...}...` condition,
+   and, because that dashboard has no engine or source variable, the two lines `AND engine IN (...)` /
+   `AND source IN (...)` may be left out of `issue_facts` and `action_facts` (and from nowhere else).
    A mismatch names the panel and shows the first difference, README side and panel side. The check
    stops if the README block cannot be found, so the rule cannot be skipped by accident;
 5. checks links like `/d/<uid>` point at a dashboard in the folder;
