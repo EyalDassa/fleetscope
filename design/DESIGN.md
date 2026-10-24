@@ -197,7 +197,8 @@ Variables `session` and `api_url`, refresh off.
 `GET /v1/sessions/:id/trace` returns Chrome Trace Event JSON (`{"traceEvents": [...], "displayTimeUnit": "ms"}`). `GET /v1/sessions/:id/perfetto` opens ui.perfetto.dev and hands it the trace with `postMessage`. The trace is processed in the viewer's browser and is never uploaded.
 - **Time base:** `ts` and `dur` are microseconds from `started_at`, so the axis runs from 0 to the session duration, like the offsets in Grafana.
 - **Process:** a single process (`pid: 1`), named with an `M` `process_name` event: `<session_id> · <engine> <version> · <REAL|SIM> · <status word>`.
-- **Tracks:** each track is a thread, named with `M` `thread_name` and ordered with `thread_sort_index`.
+- **Tracks:** each track is a thread, named with `M` `thread_name` and ordered with `thread_sort_index`. Each group has its own sort range so they never interleave: actions 1000+, network 2000+, issues 3000, session 4000 (session start and end markers with the reason, `startup_ms` and `connect_ms`).
+- **Events before the session start** (rare clock edges) are clamped to 0, keep their end, and carry `args.ms_before_session_start`; their count is in `metadata.before_session_start`. Perfetto drops negative timestamps silently, so they are never emitted.
 
 | Track | tid | Events | Slice name | args |
 |---|---|---|---|---|
@@ -211,7 +212,7 @@ Variables `session` and `api_url`, refresh off.
 | memory MB | `{"name":"memory","args":{"MB":210}}` | container `mem_mb` | MiB, as stored |
 | JS heap MB | `{"name":"JS heap","args":{"MB":38}}` | cdp `js_heap_mb` | MiB |
 
-- **Lanes:** slices on one thread must nest. Network requests overlap, so the API packs them greedily into lanes and adds a `network N` thread only when one is needed. Actions are sequential and use one lane.
+- **Lanes:** slices on one thread must nest. Network requests overlap, so the API packs them greedily into lanes, **at most 6 network threads**. When there are more overlapping requests than fit, failed requests are drawn first, then the slowest; the rest are left out, and the trace says so three ways: an instant `note: N of M requests not drawn` on the network track, `metadata.network`, and a **`network in flight`** counter with the real concurrency of all requests. (A heavy page with 112 requests goes from 44 threads to 9, and the counters stay on the first screen.) Actions are sequential and use one lane; back-to-back actions that "overlap" by ≤ 2 ms because of rounding stay on one lane, the earlier slice drawn up to the next start, while `args.duration_ms` keeps the measured value. Perfetto names thread tracks "name + tid" (e.g. "network 2"); we can't change that.
 - **Counter track names:** Perfetto builds them by joining the event name and the arg key. Check them in Perfetto once. If they differ, change the key, not the meaning.
 - **Colours:** Perfetto colours each slice from a hash of its name, using its own palette, and a JSON trace can't set a slice's colour (don't rely on the legacy `cname` field). So our tokens don't apply, identical actions share a colour, and ok vs failed is carried by the `✕` prefix and the args, never by colour.
 - **Nulls:** never emit a counter value for a null sample. A counter holds its last value until the next event, so Perfetto can't show a gap (Grafana's charts can). If every JS heap sample of a session is null, emit no JS heap track; instead, add an instant at 0 on the issues track: `note: JS heap not available (engine reports null)`.
