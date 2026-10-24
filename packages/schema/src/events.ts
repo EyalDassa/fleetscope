@@ -199,7 +199,9 @@ export const ResourceSampleEvent = z
     origin: ResourceOrigin,
     // Whatever a sample cannot measure is null. A container sample always has the four
     // container metrics (checked below); a cdp sample may have them null.
+    /** Percent of one core, as Docker reports it; can pass 100 on a multi-core container. */
     cpu_pct: float32(MAX_CPU_PCT).nullable(),
+    /** MiB (bytes / 1024 / 1024), despite the name. Grafana's `mbytes` unit prints MiB and GiB. */
     mem_mb: float32(MAX_MEMORY_MB).nullable(),
     /**
      * Network bytes of the CONTAINER since the previous sample (a delta, so samples can be summed;
@@ -209,7 +211,7 @@ export const ResourceSampleEvent = z
      */
     net_rx_bytes: uint64.nullable(),
     net_tx_bytes: uint64.nullable(),
-    /** JS heap size via CDP. `null` when the engine does not support it, absent on container samples. */
+    /** JS heap size via CDP, in MiB (bytes / 1024 / 1024). `null` when the engine does not support it, absent on container samples. */
     js_heap_mb: float32(MAX_MEMORY_MB).nullable().optional(),
   })
   .superRefine((sample, ctx) => {

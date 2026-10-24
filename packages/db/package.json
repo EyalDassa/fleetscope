@@ -14,7 +14,9 @@
     "test": "vitest run --passWithNoTests",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "migrate": "tsx --env-file-if-exists=../../.env src/cli/migrate.ts",
-    "seed": "tsx --env-file-if-exists=../../.env src/cli/seed.ts"
+    "seed": "tsx --env-file-if-exists=../../.env src/cli/seed.ts",
+    "grafana-user": "tsx --env-file-if-exists=../../.env src/cli/grafana-user.ts",
+    "backfill-rollups": "tsx --env-file-if-exists=../../.env src/cli/backfill-rollups.ts"
   },
   "dependencies": {
     "@clickhouse/client": "^1.24.1",

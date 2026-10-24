@@ -41,6 +41,9 @@ afterAll(async () => {
   await rm(tmp, { recursive: true, force: true });
 });
 
+/** Everything after the five M0 migrations. */
+const AFTER_M0 = ["0006_insert_dedup_window.sql", "0007_fleet_minute.sql", "0008_pricing.sql"];
+
 const ctx = (session_id: string): EventEnvelope => ({
   session_id,
   source: "real",
@@ -98,7 +101,8 @@ describe("upgrading an M0 database to 0006", () => {
     );
 
     const second = await runMigrations(config); // the real migrations directory
-    expect(second.applied).toEqual(["0006_insert_dedup_window.sql"]);
+    // 0006 is the migration under test; the rollup and pricing migrations (0007, 0008) follow it
+    expect(second.applied).toEqual(AFTER_M0);
     expect(second.alreadyApplied).toHaveLength(5);
     for (const table of ["sessions", "actions", "resource_samples", "network_requests", "issues"]) {
       expect(await showCreate(config, table), table).toContain(
@@ -170,7 +174,7 @@ describe("upgrading an M0 database to 0006", () => {
     ).toBe("0");
 
     const retry = await runMigrations(config); // the real file: every statement is safe to repeat
-    expect(retry.applied).toEqual(["0006_insert_dedup_window.sql"]);
+    expect(retry.applied).toEqual(AFTER_M0);
     for (const table of ["sessions", "actions", "resource_samples", "network_requests", "issues"]) {
       expect(await showCreate(config, table), table).toContain(
         "non_replicated_deduplication_window = 10000",
