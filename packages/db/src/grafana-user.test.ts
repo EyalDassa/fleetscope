@@ -194,6 +194,10 @@ describe("ensureGrafanaUser", () => {
       "CREATE USER IF",
       "ALTER USER {user:Identifier}",
       "GRANT SELECT ON",
+      "REVOKE SELECT ON",
+      "REVOKE SELECT ON",
+      "GRANT SELECT(`event_time`, `hostname`,",
+      "GRANT SELECT(`database`, `error`,",
     ]);
     for (const call of calls) expect(call.query).not.toContain(SECRET_PASSWORD);
     expect(calls[0]?.query_params).toMatchObject({
@@ -208,7 +212,16 @@ describe("ensureGrafanaUser", () => {
       expect(call.query).toContain("aggregate_functions_null_for_empty = 0");
       expect(call.query).toContain("max_execution_time = 60 MAX 300 CHANGEABLE_IN_READONLY");
     }
-    expect(calls[2]?.query).toBe("GRANT SELECT ON `fleetscope`.* TO `grafana`");
+    // the database; then any earlier table-level grant is taken back; then exactly the columns
+    // of the two system tables that the Capacity snippets use, nothing more
+    expect(calls.slice(2).map((c) => c.query)).toEqual([
+      "GRANT SELECT ON `fleetscope`.* TO `grafana`",
+      "REVOKE SELECT ON system.`asynchronous_metric_log` FROM `grafana`",
+      "REVOKE SELECT ON system.`part_log` FROM `grafana`",
+      "GRANT SELECT(`event_time`, `hostname`, `metric`, `value`) ON system.`asynchronous_metric_log` TO `grafana`",
+      "GRANT SELECT(`database`, `error`, `event_time`, `event_type`, `rows`, `table`) ON system.`part_log` TO `grafana`",
+    ]);
+    for (const call of calls) expect(call.query).not.toMatch(/REMOTE|ON \*\.\*|WITH GRANT/i);
   });
 
   it("refuses a name that is not a plain identifier before sending anything", async () => {

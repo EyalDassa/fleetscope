@@ -2,7 +2,8 @@
 //
 // Makes the Grafana at GRAFANA_URL match the repository: the locked official folder, the team folder
 // (created, never touched inside), the ClickHouse data source, dashboards and the dark default
-// theme. GRAFANA_TOKEN is a service account token with the Admin role.
+// theme, the ClickHouse Cloud billing data source (only with CLICKHOUSE_CLOUD_KEY_ID / _SECRET; the
+// Infinity plugin is installed if missing) and the alert rules of infra/grafana/alerts. GRAFANA_TOKEN is a service account token with the Admin role.
 // A dashboard that somebody else saved in Grafana and that differs from the repository is refused
 // (exit code 1 at the end); --force overwrites all of them, --force <uid> (repeatable) only that
 // one, and pnpm grafana:pull <uid> keeps it first.
@@ -10,6 +11,8 @@
 // would be created, updated or left alone; without them it only prints the plan.
 // See infra/grafana/README.md.
 import { fileURLToPath } from "node:url";
+import { loadAlertFiles } from "../alerts";
+import { buildBillingDataSource } from "../billing";
 import { loadDashboardFiles } from "../dashboards";
 import { complain, say } from "../out";
 import {
@@ -27,6 +30,7 @@ interface Args {
   forceUids: string[];
   skipHealthCheck: boolean;
   dir: string;
+  alertsDir: string;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -36,6 +40,7 @@ function parseArgs(argv: string[]): Args {
     forceUids: [],
     skipHealthCheck: false,
     dir: fileURLToPath(new URL("../../dashboards", import.meta.url)),
+    alertsDir: fileURLToPath(new URL("../../alerts", import.meta.url)),
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -78,14 +83,17 @@ async function main(): Promise<number> {
   const grafana = rawUrl ? parseGrafanaUrl(rawUrl) : { url: "http://not-set.invalid", local: true };
   const dataSource = buildDataSource(env, grafana.local);
   const files = loadDashboardFiles(args.dir);
+  const alertFiles = loadAlertFiles(args.alertsDir);
 
   say(
-    `${args.dryRun ? "DRY RUN (nothing is changed) " : ""}pushing ${files.length} dashboard(s) to ${rawUrl ? grafana.url : "(GRAFANA_URL not set)"}`,
+    `${args.dryRun ? "DRY RUN (nothing is changed) " : ""}pushing ${files.length} dashboard(s) and ${alertFiles.length} alert group(s) to ${rawUrl ? grafana.url : "(GRAFANA_URL not set)"}`,
   );
   const result = await pushToGrafana({
     client: new GrafanaClient(grafana.url, token),
     dataSource,
     dashboardFiles: files,
+    billing: buildBillingDataSource(env),
+    alertFiles,
     apiUrl: env.FLEETSCOPE_API_URL,
     grafanaIsLocal: grafana.local,
     dryRun: args.dryRun,

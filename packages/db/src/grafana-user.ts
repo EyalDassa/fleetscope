@@ -7,7 +7,8 @@ import { ConfigError, identifierSchema, parseEnv } from "./config";
  *
  * Grafana runs whatever SQL a dashboard contains, so the user must not be able to change anything,
  * even if someone pastes a `DROP TABLE` into a panel. Two layers:
- *  - the grants: `SELECT` on the Fleetscope database and nothing else;
+ *  - the grants: `SELECT` on the Fleetscope database, plus `SELECT` on a few columns of two system
+ *    tables for the Capacity dashboard (see CAPACITY_SYSTEM_COLUMNS), and nothing else;
  *  - `readonly = 1`: ClickHouse refuses every statement that is not a read, whatever the grants.
  *
  * Why `readonly = 1` and not `readonly = 2`. With `readonly = 2` a client may change settings per
@@ -39,6 +40,26 @@ import { ConfigError, identifierSchema, parseEnv } from "./config";
  * text, and ClickHouse does not write it to `system.query_log`. It also works on ClickHouse Cloud,
  * which supports SQL-driven users and settings constraints (not tested against Cloud here).
  */
+
+/**
+ * The two system tables the Capacity dashboard reads (packages/db/README.md, "Capacity"), and the
+ * columns of each that its snippets use: `part_log` (what ClickHouse wrote) and
+ * `asynchronous_metric_log` (its memory and CPU against the limits).
+ *
+ * The grants are per COLUMN (`GRANT SELECT(a, b) ON system.part_log`), not per table. `part_log` also
+ * holds `query_id`, `exception` (the text of a failed insert, which can quote data), `path_on_disk`,
+ * `partition` and `ProfileEvents`, and the dashboard needs none of them. A snippet that starts to use
+ * another column must add it here (and say so in the README), or it fails with ACCESS_DENIED.
+ * Every query must name a granted column: `count()` alone has to read some column too, so write
+ * `count(event_time)` if no column is otherwise used.
+ *
+ * NOT granted: `READ ON REMOTE`, which `clusterAllReplicas` needs and which would let the user read
+ * from any server the cluster functions reach.
+ */
+export const CAPACITY_SYSTEM_COLUMNS = {
+  asynchronous_metric_log: ["event_time", "hostname", "metric", "value"],
+  part_log: ["database", "error", "event_time", "event_type", "rows", "table"],
+} as const;
 
 export const GRAFANA_MAX_EXECUTION_SECONDS = 300;
 export const GRAFANA_DEFAULT_EXECUTION_SECONDS = 60;
@@ -149,7 +170,8 @@ const USER_CLAUSES = `IDENTIFIED WITH sha256_password BY {password:String}
 
 /**
  * Creates the user, or updates the password and the settings of an existing one, and grants it
- * SELECT on the database. Safe to run again at any time, and the way to rotate the password.
+ * SELECT on the database and on the columns of the two system tables in CAPACITY_SYSTEM_COLUMNS. Safe to run again
+ * at any time (a GRANT that already holds changes nothing), and the way to rotate the password.
  *
  * `admin` is a connection of a user that may manage users (the one in CLICKHOUSE_USER). Errors
  * come back without the password even if ClickHouse echoes it.
@@ -169,10 +191,20 @@ export async function ensureGrafanaUser(
     }
   }
   const params = { user: options.user, password: options.password };
+  const tables = Object.keys(CAPACITY_SYSTEM_COLUMNS) as Array<
+    keyof typeof CAPACITY_SYSTEM_COLUMNS
+  >;
   const statements = [
     `CREATE USER IF NOT EXISTS {user:Identifier} ${USER_CLAUSES}`,
     `ALTER USER {user:Identifier} ${USER_CLAUSES}`,
     `GRANT SELECT ON \`${options.database}\`.* TO \`${options.user}\``,
+    // An earlier version granted the whole tables. Take that back first (a no-op when it was never
+    // granted), so that a re-run leaves exactly the columns below.
+    ...tables.map((table) => `REVOKE SELECT ON system.\`${table}\` FROM \`${options.user}\``),
+    ...tables.map((table) => {
+      const columns = CAPACITY_SYSTEM_COLUMNS[table].map((c) => `\`${c}\``).join(", ");
+      return `GRANT SELECT(${columns}) ON system.\`${table}\` TO \`${options.user}\``;
+    }),
   ];
   try {
     for (const query of statements) {

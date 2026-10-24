@@ -8,7 +8,9 @@ through the official ClickHouse data source, with a **read-only** ClickHouse use
 infra/grafana/
   provisioning/datasources/clickhouse.yaml   the data source (uid fleetscope-clickhouse)
   provisioning/dashboards/fleetscope.yaml    loads dashboards/ into the folder "Fleetscope" (uid fleetscope)
-  dashboards/                                the dashboard JSON (fleetscope-overview, -sessions, -session, -browsers)
+  optional-provisioning/                     the billing data source (clickhouse-cloud-api), local Grafana, only with an API key
+  dashboards/                                the dashboard JSON (fleetscope-overview, -sessions, -session, -browsers, -capacity)
+  alerts/                                    alert rules as code (capacity.json, billing.json), see "Alerts"
   src/                                       `pnpm grafana:push`, `grafana:pull`, `grafana:check` and `grafana:reload` (TypeScript)
 ```
 
@@ -77,6 +79,7 @@ Dashboards must not use "Export for sharing externally" (it turns the data sourc
 |---|---|---|---|
 | Grafana | `grafana/grafana:13.2.4` | `infra/docker-compose.yml` | GitHub releases of grafana/grafana (13.2.4, 2026-10-13, the latest stable); the image exists in the Docker registry |
 | ClickHouse plugin | `grafana-clickhouse-datasource@4.23.2` | `GF_PLUGINS_PREINSTALL_SYNC` in the compose file | GitHub releases of grafana/clickhouse-datasource (4.23.2, 2026-10-22); plugin page: needs Grafana 11.6 or newer |
+| Infinity plugin | `yesoreyeram-infinity-datasource@4.1.3` | `GF_PLUGINS_PREINSTALL_SYNC` in the compose file, `INFINITY_PLUGIN_VERSION` in `src/billing.ts` (a test keeps them equal) | grafana.com plugin API (4.1.3, 2026-10-21, signed by Grafana Labs, needs Grafana >= 12.2.5; its `plugin.json` has `"alerting": true`). Run against Grafana 13.2.4 |
 
 The image name is `grafana/grafana`, not `grafana/grafana-oss`: the `-oss` repository stopped at
 13.0.2 (June 2026). Grafana's Docker docs list `grafana/grafana` as "Grafana Open Source".
@@ -128,7 +131,20 @@ For every `dashboards/*.json` it:
    argument of `$__conditionalAll(condition, $cause)` is not a use. The multi-select query variables
    (`engine`, `source`, `agent`, `scenario`) may keep `singlequote`: their values come from the
    database and ingest restricts those fields to `SAFE_LABEL_PATTERN` (no quote or backslash);
-8. **executes every SQL query** against ClickHouse, after expanding it the way Grafana does.
+8. **executes every SQL query** against ClickHouse, after expanding it the way Grafana does;
+9. **every query copied whole from the README is the README's** (`src/snippet-copies.ts`). A comment line
+   `-- snippet: <name>` in a panel's SQL names the block ```` ```sql name=<name> ```` of `packages/db/README.md`
+   it copies, and the SQL must equal that block (comments and spacing ignored, like `session-facts`). On the
+   **Capacity dashboard every panel query must be a copy**: it names a block, or equals one exactly; anything
+   else is an edited copy (or new SQL that belongs in the README first). On the other dashboards the marker is
+   optional. `session-facts` keeps its own rule (4 above);
+10. **billing panels** (data source `clickhouse-cloud-api`, Infinity) are **not executed**, because that needs the
+    API key and CI has none. They are checked for shape: `type` json, `source` url, `parser` `backend` or
+    `jq-backend` (the default `simple` parser runs in the browser, which an alert has not), a `root_selector`, a URL
+    that is exactly `/usageCost?...` (the organisation is in the data source), GET, and no `Authorization` header or credential in the query;
+11. the **alert rules** (`alerts/*.json`, see "Alerts"): structure, SQL equal to the README, and **every ClickHouse
+    alert query is executed** as the read-only user (each must return at most one row with the single column `value`), and no
+    `${...}` or `$__...` appears in a rule, because alerting fills in no variable.
 
 On failure it prints the dashboard, the panel title, the ClickHouse error and the SQL that was sent,
 and (in GitHub Actions) an annotation on the dashboard file. With an empty `dashboards/` folder it passes.
@@ -205,8 +221,9 @@ Grafana Cloud stack itself is deleted. For a dashboard you cannot lose, run
 ## `pnpm grafana:push`: Grafana Cloud
 
 Makes a Grafana match the repository: the folder `fleetscope` (locked, see below), the folder
-`fleetscope-team` (created, then left alone), the data source `fleetscope-clickhouse`, every
-`dashboards/*.json` (into the official folder, `overwrite: true`), and the
+`fleetscope-team` (created, then left alone), the data source `fleetscope-clickhouse`, the billing data source
+`clickhouse-cloud-api` (with the Infinity plugin, only with an API key, see "Billing"), every
+`dashboards/*.json` (into the official folder, `overwrite: true`), the alert rule groups of `alerts/` (see "Alerts"), and the
 organisation default theme `dark` (the dashboards use dark-only colours). It can run again and again:
 it prints `created`, `updated` or `unchanged` for each part and leaves unchanged dashboards alone.
 The data source always says `updated`: Grafana never returns the password, so it cannot be compared
@@ -271,6 +288,7 @@ Viewer role is enough.
 | `CLICKHOUSE_URL` or `GRAFANA_CLICKHOUSE_URL` | where Grafana reaches ClickHouse. `https://...:8443` sets `secure: true`. `GRAFANA_CLICKHOUSE_URL` wins when your machine and Grafana see ClickHouse at different addresses |
 | `CLICKHOUSE_GRAFANA_USER`, `CLICKHOUSE_GRAFANA_PASSWORD` | the read-only user, stored as the data source's secure password. There is no fallback to the admin user |
 | `CLICKHOUSE_DATABASE` | the data source's default database (`fleetscope`) |
+| `CLICKHOUSE_CLOUD_KEY_ID`, `CLICKHOUSE_CLOUD_KEY_SECRET`, `CLICKHOUSE_CLOUD_ORG_ID` | optional, all three or none: a ClickHouse Cloud API key (role Organization API Reader) and the organisation id, for the billing data source (its base URL holds the org). Without them the data source is skipped with a note; what the target Grafana already has is left as it is |
 | `FLEETSCOPE_API_URL` | written into the session dashboard's `api_url` variable, which builds the "Open timeline in Perfetto" link. The viewer's **browser** opens that link, not Grafana, so `http://localhost:4000` is right while the API runs on the laptop you open Grafana Cloud on |
 
 Safety rules, each tested: the token never goes over plain HTTP (except to localhost); a push to a
@@ -302,6 +320,163 @@ manual step (Administration > Default preferences > Interface theme = Dark).
    Perfetto links. If the variable is unset, the push also warns and the dashboards keep their
    committed `http://localhost:4000`. Run `pnpm grafana:push --dry-run`, then `pnpm grafana:push`.
 
+## Capacity: system logs, billing and alerts
+
+The Capacity dashboard (`fleetscope-capacity`) compares the load the fleet sends with what ClickHouse wrote,
+shows ClickHouse's memory and CPU against its limits and autoscaling, and the ClickHouse Cloud bill.
+
+### System tables, locally and in CI
+
+`system.part_log` and `system.asynchronous_metric_log` are what the dashboard reads. ClickHouse Cloud has both.
+The official image has them on by default (checked on 26.8.34.13); `infra/clickhouse/config.d/system-logs.xml`
+(mounted read-only by compose) writes them down anyway and keeps **14 days** (the default keeps them forever; the
+metric log alone was 56 million rows after a day). Changing the retention renames the old table to `part_log_0`
+once; drop it (`DROP TABLE system.part_log_0`). The compose ClickHouse also has `mem_limit: 4g` and `cpus: 2`, so
+`CGroupMemoryTotal` and `CGroupMaxCPU` exist and the utilisation percentages are real numbers instead of NULL.
+CI's service container cannot mount the file and runs the image defaults;
+`.github/scripts/check-clickhouse-system-logs.sh` (step in the integration job) fails the build if either table is
+unreadable or `part_log` has no `NewPart` row.
+
+### Billing: ClickHouse Cloud usage in Grafana
+
+Data source `clickhouse-cloud-api` ("ClickHouse Cloud API"): the **Infinity** plugin with basic auth (Key ID : Key
+secret) and the **organisation in its base URL**, `https://api.clickhouse.cloud/v1/organizations/<org>` (from
+`CLICKHOUSE_CLOUD_ORG_ID`). Panels and alert rules therefore use the relative URL `/usageCost?from_date=...&to_date=...`
+and need **no variable**: an alert rule has no dashboard variables, and Grafana would send `${ch_org}` as it is.
+`allowedHosts` is pinned to the one endpoint, `https://api.clickhouse.cloud/v1/organizations/<org>/usageCost`. Infinity
+matches `allowedHosts` **by prefix** (measured on 4.1.3 with the real API: a bare `https://api.clickhouse.cloud` let a request to
+`https://api.clickhouse.cloud.evil.example/...` leave Grafana, while the pinned entry and `https://api.clickhouse.cloud/`
+refused it, and the pinned entry refused `/services` too), so the pin is what limits where the key can be sent.
+
+`grafana:push` builds the data source from the environment (`src/billing.ts`) and, if the plugin is missing, installs the
+pinned version with `POST /api/plugins/yesoreyeram-infinity-datasource/install` (an installed plugin of another version is
+left alone and noted; if Grafana refuses the install, the data source is skipped and the note says to install it by hand:
+Administration > Plugins and data > Plugins > Infinity). **Without all three variables (key id, key secret, org id) the
+data source is skipped with a note, not an error.** What the target Grafana already has is left as it is: the alert rules
+that read the data source are pushed when the data source exists there, whatever this machine's environment says, and a
+billing group whose rules would all be skipped is not sent at all (a `PUT` with no rules would empty it). The key is stored
+in `secureJsonData`, never printed, never in a dashboard. Local Grafana preinstalls the plugin and provisions the same
+data source only if all three variables are set in the compose environment (the Grafana container copies
+`optional-provisioning/clickhouse-cloud-api.yaml` next to the other data sources at start).
+
+**The key and its role.** ClickHouse Cloud > Organization > API keys. `GET /v1/organizations/{id}/usageCost` needs the
+permission `control-plane:organization:view`. **The key must have the role "Organization API Reader"** (read-only on the
+organisation; ClickHouse Cloud has no "Developer" role), never Admin: everybody who may query the data source can make
+Grafana send requests under the pinned URL signed with this key, so the role is the last barrier. Rotate it from the same
+page. Verify the role of a key (never echo the values):
+
+```bash
+set -a; . <(tr -d '\r' < .env.cloud); set +a
+auth="$CLICKHOUSE_CLOUD_KEY_ID:$CLICKHOUSE_CLOUD_KEY_SECRET"; org="https://api.clickhouse.cloud/v1/organizations/$CLICKHOUSE_CLOUD_ORG_ID"
+curl -s -o /dev/null -w "read  %{http_code}\n" -u "$auth" "$org/usageCost?from_date=2026-10-24&to_date=2026-10-25"   # must be 200
+curl -s -o /dev/null -w "write %{http_code}\n" -u "$auth" -X PATCH -H "Content-Type: application/json" -d '{}' "$org"  # must be 403
+```
+
+A read of 200 and a write probe of 403 is the proof (an Admin key answers the `PATCH` with something other than 403). Eyal checked
+it on 2026-10-25 for the key in use (role Organization API Reader): 200 and 403.
+
+**The API** (OpenAPI spec `https://clickhouse.com/docs/_specs/cloud-openapi.json`, checked 2026-10-25, and called with a
+real key): `GET /v1/organizations/{organizationId}/usageCost?from_date=YYYY-MM-DD&to_date=YYYY-MM-DD`, UTC days,
+`to_date` inclusive and at most 30 days after `from_date` (31 days). Answer: `{"status":200,"requestId":...,"result":{"grandTotalCHC":17.326,"costs":[...]}}`
+with one record per **day and entity** (a service, a ClickPipe): `date`, `entityType`, `entityId`, `entityName`,
+`totalCHC`, `metrics{computeCHC,storageCHC,...}`, `locked` (false = the day is not final). Several entities per day, so sum
+`totalCHC` per `date`. **Today has no row yet** (billing lags), a future `to_date` is accepted, and the figures are
+ClickHouse credits (CHC); the alerts count 1 CHC as 1 USD, like the $300 trial credit.
+
+**An Infinity query for a panel** (verified on Grafana 13.2.4 with plugin 4.1.3 against the real API; the URL is relative
+to the data source's base URL, which already holds the organisation):
+
+```json
+{
+  "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "clickhouse-cloud-api" },
+  "refId": "A", "type": "json", "source": "url", "format": "table", "parser": "backend",
+  "url": "/usageCost?from_date=2026-10-24&to_date=2026-11-23",
+  "url_options": { "method": "GET" },
+  "root_selector": "result.costs",
+  "columns": [
+    { "selector": "date", "text": "date", "type": "timestamp" },
+    { "selector": "totalCHC", "text": "chc", "type": "number" }
+  ],
+  "summarizeExpression": "sum(chc)", "summarizeBy": "date", "summarizeAlias": "chc"
+}
+```
+
+That returns one row per day (`date` as time, `chc` as number). `parser` must be `backend` (or `jq-backend`): the
+default `simple` parser runs in the browser and cannot be used in an alert. For the trial credit, `grandTotalCHC`
+is `result.grandTotalCHC` (use `jq-backend` or a JSONata `root_selector`, as the Capacity panels do).
+
+### Alerts
+
+`alerts/*.json`: one **rule group per file**, in the official folder `fleetscope`:
+
+| File | Group | Evaluated | Rules |
+|---|---|---|---|
+| `capacity.json` | Fleetscope capacity | every minute | memory (average of the last whole minute, busiest replica) above 75% for 10 min (warning) and above 85% for 5 min (critical); CPU above 80% (10-minute average) for 10 min; limits changed in the last 30 min (info: autoscaling, fires and resolves); written vs sent differ by more than 5% over the last hour (for 15 min); no part written for 15 min |
+| `billing.json` | Fleetscope billing | every 15 min | trial credit left below $50 (300 minus usage since 2026-10-24); projected run-out before the trial ends on 2026-11-23, at the average of the last 3 full days |
+
+(Billing is its own group because a group has one interval and the billing API should not be called every minute.)
+
+**The SQL is the README's.** Each ClickHouse query starts with `-- snippet: capacity-alerts-...` and is a copy of
+that block of `packages/db/README.md`; `grafana:check` fails on any difference. The memory rules use
+`capacity-alerts-mem-pct-1m` (the last whole minute), so `for: 10m` means ten checks in a row; the 10-minute peak block
+`capacity-alerts-mem-pct` feeds the dashboard stat only. The queries return one nullable `value` (NULL = no data), so each
+rule sets `noDataState` on purpose: `OK` for the percentages (no limit means nothing to alert on), `Alerting` for "no rows
+written" (nothing for 24 h is an outage). The chain in every rule is query A, Reduce (last, drop NULLs) B, Threshold C.
+**No variables in a rule:** `grafana:check` rejects `${...}` and `$__...` anywhere in an alert, because alerting
+fills in none. The billing rules use `execErrState: Error`, so a revoked key or a changed API sends one email instead of
+going quiet.
+
+The run-out rule is the Capacity panel's projection: per-date sums of `totalCHC`; a day is full when its date is before
+today (UTC); the burn is the average of the last three full days; credit left is 300 minus `grandTotalCHC` (today has no
+row yet); the value is `floor(left / burn) - days from the start of today to 2026-11-23`, so below 0 means the credit
+ends before the trial does (-1: already used up; no full day or no spend: no answer, which is `OK`). It uses the
+`jq-backend` parser because jq has `now`.
+
+**Change an alert:** edit the JSON, `pnpm grafana:check`, pull request, then `pnpm grafana:push` (`--dry-run` first).
+Push uses `PUT /api/v1/provisioning/folder/fleetscope/rule-groups/<group>`: idempotent (it compares and says
+`created`, `updated` or `unchanged`), and a rule removed from the file is removed from Grafana. **Rules are read-only
+in the UI**: the push does not send `X-Disable-Provenance`, so Grafana marks them `provenance: api` and refuses UI edits
+(checked: `failed to update rule group: request affects resources created via provisioning API`). The repository is the only place to change them.
+
+**Pause an alert on purpose** (for example "no rows written" while `tools/live-traffic.ps1` is stopped): use a **silence**
+(Alerting > Silences, match `alertname`), which expires by itself. Do not edit the rule. Otherwise it repeats every repeat
+interval while nothing is written.
+
+**Where the emails go.** The rules name no contact point, so they use the notification policy tree: its default policy and
+the default contact point (`grafana-default-email`). Change who gets them in Grafana (Alerting > Contact points). The
+push does not touch contact points or policies. Check the address once after the first push; it is a manual step because
+it is account data, not code.
+
+**Locally, alerts go nowhere until you add a contact point.** A fresh Grafana OSS (the compose one) has no contact point:
+the default policy's receiver is empty, so a rule can fire and show in Alerting > Alert rules, but nothing is sent. (Grafana
+Cloud's stack comes with `grafana-default-email`; its address is account data, to be checked after the first Cloud push.) To
+try the alerts locally, create one in Alerting > Contact points and set it as the default policy's contact point; the push
+never creates contact points.
+
+**A backfill can trip the load-mismatch alert.** "Sent" is placed by an event's own time and "written" by when ClickHouse
+received it, so `db:seed`, `sim run --duration` longer than about an hour, or a fleet replaying a dead-letter file after a long
+outage moves rows between hours and `fs-capacity-load-mismatch` fires (measured: 10.4% for a 3 h simulator run) until the hour
+has passed. That is the comparison working, not a loss.
+
+**Cost note.** The capacity group queries ClickHouse every minute, around the clock. A ClickHouse Cloud service with
+idling switched on is kept awake by that, which costs credit when the fleet is stopped. Check the service's idle setting
+(Settings > Scaling); with idling on, lengthen the group `interval` in `capacity.json`, or set `isPaused: true` on its rules and push. A silence only mutes the
+emails; the rules keep querying, so the service still cannot idle.
+
+**Verified** (2026-10-25) on a throwaway Grafana 13.2.4 with the ClickHouse and Infinity plugins, the local ClickHouse and the
+real billing API:
+- `pnpm grafana:push` created the data source and both groups; a second push said `unchanged`; a push without the key left
+  the billing group (2 rules) and the data source as they were;
+- the credit rule evaluated through Grafana against the real API (HTTP 200, credit left 281.975 of 300, below-$50 false);
+- the run-out rule had no answer yet (no full day: today is the first billing day), and its arithmetic was checked on inline
+  data with the same query: 5 full days at 15.5 a day gives -16 (14 days of credit, 30 left), 5 a day gives +25, no spend
+  and only today's row give no answer, an used-up credit gives -1;
+- UI edits of the provisioned rules are refused.
+
+The scratch Grafana held the real key in its database, encrypted with Grafana's default `secret_key`, so the container
+and its volume were removed afterwards (`docker rm -f <name>`; `docker volume rm` for a named volume). Do the same after any
+test with a real key.
+
 ## Secret scanners and the development passwords
 
 `grafana_ro_dev_password`, `fleetscope_dev_admin` and the example passwords in `src/*.test.ts` are
@@ -320,5 +495,5 @@ for `.env.example` and `infra/grafana/*`. gitleaks keeps scanning those paths.
 
 `pnpm test` runs this package's unit tests (no Docker, no network; ClickHouse and Grafana are faked).
 They cover the macro expansion, variable handling, the dashboard rules and the whole push flow
-against an in-memory Grafana (folder lock, team folder, drift guard, pull). The real ClickHouse and the real Grafana are exercised by
+against an in-memory Grafana (folder lock, team folder, drift guard, pull, the Infinity plugin and billing data source, a keyless push that must not empty the billing group, alert group create/update/unchanged). The real ClickHouse and the real Grafana are exercised by
 `pnpm grafana:check` in CI and by hand, as described above.

@@ -12,6 +12,18 @@
 // "unchanged" for what is already right), and it never prints the token or the ClickHouse password.
 // HTTP API reference: https://grafana.com/docs/grafana/latest/developers/http_api/
 
+import {
+  type AlertFile,
+  type AlertGroupResult,
+  alertStructureProblems,
+  pushAlertGroups,
+} from "./alerts";
+import {
+  BILLING_DATASOURCE_UID,
+  type BillingConfig,
+  ensureInfinityPlugin,
+  type PluginResult,
+} from "./billing";
 import type { Fetch } from "./clickhouse-http";
 import {
   CLICKHOUSE_DATASOURCE_UID,
@@ -20,6 +32,7 @@ import {
   FOLDER_UID,
 } from "./dashboards";
 import { driftVerdict, identityFrom } from "./drift";
+import { GrafanaApiError, PushError } from "./errors";
 import {
   describeAccess,
   ensureFolderAccess,
@@ -37,19 +50,7 @@ export const DATASOURCE_TYPE = "grafana-clickhouse-datasource";
 /** The constant variable of the session dashboard that holds the API base URL (DESIGN.md 4.1). */
 export const API_URL_VARIABLE = "api_url";
 
-export class PushError extends Error {
-  override name = "PushError";
-}
-
-export class GrafanaApiError extends PushError {
-  override name = "GrafanaApiError";
-  constructor(
-    readonly status: number,
-    message: string,
-  ) {
-    super(message);
-  }
-}
+export { GrafanaApiError, PushError };
 
 // ---------------------------------------------------------------- configuration
 
@@ -253,6 +254,12 @@ export interface PushResult {
   teamFolder: Action;
   teamAccess: Action;
   dataSource: Action;
+  /** The Infinity plugin (billing data source): installed, found, or not available. */
+  infinityPlugin: PluginResult["state"] | "not-needed";
+  /** The ClickHouse Cloud API data source, or "skipped" when no API key is set. */
+  billingSource: Action | "skipped";
+  /** One entry per alert rule group file. */
+  alerts: AlertGroupResult[];
   dashboards: { uid: string; action: Action | "refused" | "adopted" }[];
   /** Dashboards that were not overwritten. `grafana:push` exits non-zero when this is not empty. */
   refused: Refusal[];
@@ -270,6 +277,10 @@ export interface PushOptions {
   client: GrafanaClient;
   dataSource: DataSourceSpec;
   dashboardFiles: DashboardFile[];
+  /** The ClickHouse Cloud billing data source, or why there is none. Default: skipped without a reason. */
+  billing?: BillingConfig;
+  /** infra/grafana/alerts/*.json: rule groups for the official folder. */
+  alertFiles?: AlertFile[];
   /** FLEETSCOPE_API_URL: written into the dashboards' `api_url` variable. */
   apiUrl: string | undefined;
   /** True when Grafana is on this machine, so a localhost API URL needs no warning. */
@@ -335,6 +346,15 @@ export async function pushToGrafana(options: PushOptions): Promise<PushResult> {
   if (broken.length > 0) {
     throw new PushError(
       `fix the dashboard files first (pnpm grafana:check):\n  ${broken.join("\n  ")}`,
+    );
+  }
+
+  const brokenAlerts = alertStructureProblems(options.alertFiles ?? []).map(
+    (p) => `${p.where}: ${p.message}`,
+  );
+  if (brokenAlerts.length > 0) {
+    throw new PushError(
+      `fix the alert files first (pnpm grafana:check):\n  ${brokenAlerts.join("\n  ")}`,
     );
   }
 
@@ -469,6 +489,50 @@ export async function pushToGrafana(options: PushOptions): Promise<PushResult> {
       `database ${String(shown.defaultDatabase)}, user ${String(shown.username)}, password ********)`,
   );
 
+  // 2b. The billing data source (Infinity plugin + ClickHouse Cloud API key). No key: skipped, not an error.
+  const billing: BillingConfig = options.billing ?? {
+    enabled: false,
+    reason: "billing is not configured",
+  };
+  let infinityPlugin: PushResult["infinityPlugin"] = "not-needed";
+  let billingSource: PushResult["billingSource"] = "skipped";
+  if (billing.enabled) {
+    const plugin = await ensureInfinityPlugin(client, { dryRun, read });
+    infinityPlugin = plugin.state;
+    log(
+      `plugin      yesoreyeram-infinity-datasource  ${plugin.state === "would-install" ? "would be installed" : plugin.state}${plugin.version ? ` (${plugin.version})` : ""}${plugin.note ? `: ${plugin.note}` : ""}`,
+    );
+    if (plugin.state === "unavailable") {
+      warnings.push("the Infinity plugin is not available, so the billing data source was skipped");
+      log(`warning     ${warnings[warnings.length - 1]}`);
+    } else {
+      const spec = billing.dataSource;
+      const existing = read ? await client.get(`/api/datasources/uid/${spec.uid}`) : undefined;
+      billingSource = isObject(existing) ? "updated" : "created";
+      if (!dryRun) {
+        if (billingSource === "updated")
+          await client.send("PUT", `/api/datasources/uid/${spec.uid}`, spec);
+        else await client.send("POST", "/api/datasources", spec);
+      }
+      log(
+        `data source ${spec.uid}  ${would}${billingSource}${billingSource === "updated" ? " (the key cannot be compared, so it is always sent again)" : ""}  (https://api.clickhouse.cloud/v1/organizations/<org>, only its /usageCost allowed, key ********)`,
+      );
+    }
+  } else {
+    log(`note        billing: ${billing.reason}`);
+  }
+  // Whether the alert rules that read the billing data source can go: decided by the TARGET Grafana, not by
+  // this machine's environment. A push without the key must not remove rules whose data source still exists.
+  let billingAvailable = billingSource !== "skipped";
+  if (!billingAvailable && read) {
+    billingAvailable = isObject(await client.get(`/api/datasources/uid/${BILLING_DATASOURCE_UID}`));
+    if (billingAvailable) {
+      log(
+        `note        billing: ${BILLING_DATASOURCE_UID} exists on this Grafana, so it is left as it is and its alert rules are pushed`,
+      );
+    }
+  }
+
   // 3. Dashboards. The drift guard compares the last author with the token's login (`me`).
 
   const results: PushResult["dashboards"] = [];
@@ -587,6 +651,16 @@ export async function pushToGrafana(options: PushOptions): Promise<PushResult> {
     }
   }
 
+  // 3b. Alert rules, after the data sources and the folder they refer to exist.
+  const skipDataSources = new Set<string>(billingAvailable ? [] : [BILLING_DATASOURCE_UID]);
+  const alerts = await pushAlertGroups(client, options.alertFiles ?? [], {
+    dryRun,
+    // A dry run that could not read the folder cannot tell created from updated; it reads whatever it can.
+    read,
+    skipDataSources,
+    log,
+  });
+
   // 4. Dark theme as the organisation default
   let theme: PushResult["theme"] = "updated";
   if (read) {
@@ -625,6 +699,9 @@ export async function pushToGrafana(options: PushOptions): Promise<PushResult> {
     teamFolder,
     teamAccess: teamResult.action,
     dataSource: sourceAction,
+    infinityPlugin,
+    billingSource,
+    alerts,
     dashboards: results,
     refused,
 

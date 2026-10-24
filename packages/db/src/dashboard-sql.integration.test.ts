@@ -270,7 +270,7 @@ async function readmeSnippets(): Promise<Map<string, string>> {
   const snippets = new Map<string, string>();
   for (const match of readme
     .replace(/\r\n/g, "\n")
-    .matchAll(/```sql name=([a-z-]+)\n([\s\S]*?)\n```/g)) {
+    .matchAll(/```sql name=([a-z0-9-]+)\n([\s\S]*?)\n```/g)) {
     snippets.set(match[1] as string, match[2] as string);
   }
   return snippets;
@@ -374,7 +374,7 @@ afterAll(async () => {
 });
 
 describe("README snippets", () => {
-  it("are all covered by this file, and none needs a SETTINGS clause", async () => {
+  it("are all covered by this file (the capacity-* ones by capacity.integration.test.ts), and none needs a SETTINGS clause", async () => {
     const snippets = await readmeSnippets();
     expect([...snippets.keys()].sort()).toEqual(
       [
@@ -383,6 +383,16 @@ describe("README snippets", () => {
         "actions-per-minute",
         "active-sessions",
         "browser-hours-and-cost",
+        "capacity-alerts-cpu-pct",
+        "capacity-alerts-limits-changed",
+        "capacity-alerts-load-mismatch-pct",
+        "capacity-alerts-mem-pct",
+        "capacity-alerts-mem-pct-1m",
+        "capacity-alerts-minutes-since-write",
+        "capacity-limit-changes",
+        "capacity-load",
+        "capacity-replicas",
+        "capacity-utilization",
         "compatibility-matrix",
         "cpu-mem-per-container",
         "engine-comparison",

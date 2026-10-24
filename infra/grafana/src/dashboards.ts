@@ -3,6 +3,8 @@
 // SQL out of panels, variables and annotations for the executing part of the check.
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { BILLING_DATASOURCE_UID } from "./billing";
+import { infinityQueryProblems } from "./infinity";
 import { asArray, asString, isObject, type JsonObject } from "./json";
 import { hasTransformations } from "./panel-fields";
 
@@ -177,7 +179,7 @@ function describeDatasourceProblem(
   present: boolean,
   where: string,
 ): Problem | undefined {
-  if (uid === CLICKHOUSE_DATASOURCE_UID) return undefined;
+  if (uid === CLICKHOUSE_DATASOURCE_UID || uid === BILLING_DATASOURCE_UID) return undefined;
   if (uid !== undefined && BUILT_IN_DATASOURCE_UIDS.has(uid)) return undefined;
   if (!present || uid === undefined) {
     return {
@@ -358,6 +360,11 @@ export function extractQueries(dashboard: JsonObject): Extracted {
           known.skipFields = known.skipFields || read.skipFields;
           dashboardReads.set(panel, known);
         }
+        continue;
+      }
+      if (effective.uid === BILLING_DATASOURCE_UID) {
+        // The ClickHouse Cloud API needs the key, which CI does not have: checked for shape, never run.
+        problems.push(...infinityQueryProblems(target, where));
         continue;
       }
       if (effective.uid !== CLICKHOUSE_DATASOURCE_UID) continue; // another built-in data source: nothing to run

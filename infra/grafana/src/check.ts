@@ -28,8 +28,10 @@ import {
   type VariableState,
 } from "./interpolate";
 import { formatInterval } from "./macros";
+import { CAPACITY_DASHBOARD_UID } from "./palette";
 import { unmatchedFieldReferences } from "./panel-fields";
 import { sessionFactsProblems } from "./session-facts";
+import { snippetCopyProblems } from "./snippet-copies";
 import { panelIntervalMs, parseIntervalMs, resolveTimeRange, type TimeRange } from "./time";
 import { textboxProblems } from "./variable-rules";
 
@@ -46,6 +48,11 @@ export interface CheckOptions {
    * SQL must equal it (R-M2-05). The CLI always passes it; a test may leave it out.
    */
   sessionFacts?: string;
+  /**
+   * Every named block of the README. When given, a query that names a block (`-- snippet: <name>`) must
+   * equal it, and on the Capacity dashboard every query must be a copy of some block (snippet-copies.ts).
+   */
+  snippets?: Map<string, string>;
 }
 
 export interface QueryRun {
@@ -389,6 +396,13 @@ export async function checkDashboards(options: CheckOptions): Promise<CheckRepor
       // Text boxes take any text: they may reach SQL only through percentencode (R-M2-19).
       for (const found of textboxProblems(query.sql, textboxes)) {
         report.problems.push({ where: query.where, message: found.message, detail: found.detail });
+      }
+      if (options.snippets !== undefined) {
+        const copy = snippetCopyProblems(query.sql, options.snippets, {
+          where: query.where,
+          requireCopy: dashboard.uid === CAPACITY_DASHBOARD_UID && query.kind !== "variable",
+        });
+        report.problems.push(...copy.problems);
       }
       if (options.sessionFacts !== undefined) {
         for (const found of sessionFactsProblems(query.sql, options.sessionFacts, dashboard.uid)) {

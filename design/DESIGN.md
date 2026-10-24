@@ -32,6 +32,15 @@ Grafana's theme supplies every neutral (canvas, panels, text, grid). Hue is used
 | `running` | `○ Running` | `#9AA9BB` | `#475569` |
 | `interrupted` | `■ Interrupted` | `#7D8DA1` | `#5F6E82` |
 
+**Capacity colours** (the Capacity dashboard only, 4.5). They are not engine or status colours and are used nowhere else. Okabe-Ito hues, no two series in one panel share one.
+
+| Meaning | Colour | Used for |
+|---|---|---|
+| ClickHouse wrote / used | `#0072B2` | `rows_written`, memory used, CPU used, replicas, credits |
+| Fleet sent | `#009E73` | `rows_sent` |
+| Limit | `#9AA9BB` | memory limit, CPU limit, the limit-change annotation (it is also the field default colour) |
+| Sessions | `#F0E442` | sessions started |
+
 Other colours (dark / light): gauge cells in tables use the approved neutral `--bar`, `#5B7491` / `#6B829E`. The field default colour for any series without an engine override is `#9AA9BB` / `#475569`. The annotations use the status colours: "Failed actions" is Failed, "Issues" is Degraded.
 
 - **Engines:** Okabe-Ito hues; every engine-vs-engine pair has ΔE ≥ 11 under protanopia and deuteranopia (DECISIONS.md). **Every time series line is solid** (product owner, 2026-10-24: dashed and dotted lines read as broken data). Series are told apart by colour, the legend and the tooltip; no two series in one panel share a colour. Engine series are always lines. Engine colours never colour text or cells, and engine names are written as in the API.
@@ -89,7 +98,7 @@ Other colours (dark / light): gauge cells in tables use the approved neutral `--
 
 ### 4.1 Shared settings
 
-- **Navigation:** tag all three dashboards `fleetscope`. Add dashboard links by tag that keep the time range and the variables. Set `graphTooltip: 1` (shared crosshair) and timezone browser.
+- **Navigation:** tag all three dashboards `fleetscope`. Add dashboard links by tag that keep the time range and the variables. Set `graphTooltip: 1` (shared crosshair) and timezone browser (Capacity is UTC, see 4.5).
 - **Time series:** line width 2, `spanNulls: false`, fill 0 (15 on session charts), points `auto` (Grafana draws a point only where a line can't, so a single sparse bucket stays visible; always, size 4, on session charts), legend as a list at the bottom, tooltip with all series sorted descending, min interval 1m.
 - **Stats:** graph mode none (no sparklines), text mode value, KPI value size 22. Verdicts use auto size, so they are the largest text on the page. A string stat needs Value options > Fields set to its column, because "Numeric fields" hides strings.
 - **Descriptions:** every panel has a one-sentence description with its definition from section 3. People see it under (i), and Grafana Assistant can read it.
@@ -192,6 +201,36 @@ Variables `session` and `api_url`, refresh off.
   - "Was the page waiting or working when it failed? Compare CPU with the Actions table."
   - "Is this an engine limitation (unsupported_api, metrics that are Not available) or a problem with the site?"
   - "Find other sessions in the last 24 hours with the same failure cause, and say which engines they ran on."
+
+### 4.5 Capacity (`fleetscope-capacity`)
+
+Is ClickHouse keeping up with the fleet, and how close is it to its limits? Range `now-3h`, refresh `1m`, min interval `1m`; no variables (the billing organisation is part of the `clickhouse-cloud-api` data source URL). The SQL is the `capacity-*` blocks of `packages/db/README.md`, pasted unchanged under a one-line comment. Every line is solid; a limit is its own line in its own colour, never a dashed one. Colours are the Capacity colours of section 2. Panels, top to bottom (w×h on the 24-column grid):
+
+| Section and panel (type, size) | Shows | Unit, thresholds |
+|---|---|---|
+| **Load vs ClickHouse** | | |
+| Rows sent vs rows written per minute ↗ (Time series, 9×8) | `rows_sent` (fleet, `#009E73`) and `rows_written` (ClickHouse, `#0072B2`) | `locale` |
+| Sessions started per minute ↗ (Time series, 8×8) | `sessions_started` (`#F0E442`) | `locale` |
+| Difference, last hour ↗ (Stat, 7×4) | `capacity-alerts-load-mismatch-pct`: the absolute difference between written and sent, as a share of sent, over the last 60 whole minutes, whatever the time picker says. About 0 is good. | `percent`, 1 decimal; base `#6EE7A8`, 1 → `#FFD95A`, 5 → `#FF7B7B`. Nothing sent or written: `—` in `#9AA9BB` |
+| How to read this (Text, 7×4) | The colour key, in one sentence | |
+| **ClickHouse utilization** | | |
+| Memory, % of limit and CPU, % of limit (Stats, 6×5 each) | `capacity-alerts-mem-pct` (peak of any replica) and `capacity-alerts-cpu-pct` (average of the busiest replica), both over the last 10 minutes | `percent`, 0 decimals; base `#6EE7A8`; Memory 75 → `#FFD95A`, 85 → `#FF7B7B` (ClickHouse refuses queries at about 90%); CPU 70 → `#FFD95A`, 85 → `#FF7B7B`. No limit: `Not available` in `#9AA9BB` |
+| Replicas (Stat, 6×5) and Replicas over time (Time series, 6×5) | The latest count, and its history (`#0072B2`) | `locale` |
+| Memory, used vs limit (Time series, 12×8) | `mem_used_gib` (`CGroupMemoryUsedWithoutPageCache`, `#0072B2`) and `mem_limit_gib` (`#9AA9BB`), one pair per replica | `suffix: GiB`, 1 decimal, y min 0 |
+| CPU, used vs limit (Time series, 12×8) | `cpu_used_cores` (`#0072B2`) and `cpu_limit_cores` (`#9AA9BB`) | `suffix: cores`, 2 decimals, y min 0 |
+| **Scaling events** | | |
+| Limits and replicas (State timeline, 24×6) | One row each for the memory limit, the CPU limit and replicas; a new box starts where the value changes. A missing limit is a box that says `Not available`. | Limits `#9AA9BB`, replicas `#0072B2` |
+| **Billing** (ClickHouse Cloud API, data source `clickhouse-cloud-api`) | | |
+| Credits used since 2026-10-24 (Stat, 9×4) and Credits left of $300 (Stat, 7×4) | Sum of `totalCHC`, and 300 minus that (assumes 1 credit = $1) | `suffix: credits`, 2 decimals |
+| Projected run-out vs trial end (Stat, 8×4) | The date the credits run out at the average of the last 3 full days, in words: `▲ 2026-11-07 · 16 days before trial end` or `✓ 2026-12-04 · 11 days after trial end` | Colour from the leading glyph: `▲` `#FF7B7B` (runs out before the trial ends), `✓` `#6EE7A8` |
+| Credits per day, last 30 days (Time series as bars, 24×8) | `totalCHC` per day (`#0072B2`) | `suffix: credits` |
+
+- **Annotation.** "Scaling changes" (dashboard level, `#9AA9BB`) marks every change of a limit or of the replica count, with the text from `capacity-limit-changes`, on all utilization charts.
+- **Honest data.** The load numbers come from `system.part_log` (rows ClickHouse wrote) and the fleet's own tables (rows sent), and cover **all sources**: this dashboard has no `source` or `engine` filter, because ClickHouse does not know them (a documented exception to the rule in `packages/db/README.md`; the text panel says so). A stat with nothing to divide prints `—`. A limit the server does not report (a local container has none) is NULL: a gap in the charts, `Not available` in the stats and the state timeline, never 0. `capacity-load` is zero-filled over the range, so an idle minute is a real 0 on the load charts; the replica, memory and CPU charts break the line where the server logged nothing (`insertNulls`) instead of joining the neighbours.
+- **Billing needs the API key.** Without the `clickhouse-cloud-api` data source (local, CI) the four billing panels show no data, and their descriptions say so. They are the only panels on another data source. The three stats read the API with the backend (JSONata) parser, so credits left and the run-out date are computed in the query, not in a transformation.
+- **Thresholds on this dashboard** are targets, so besides success rate they are the only places that use status colours: Difference (1% / 5%), Memory % (75% / 85%), CPU % (70% / 85%), run-out.
+- **Time zone and annotations.** This dashboard is UTC (`timezone: utc`), because ClickHouse Cloud bills by UTC day; its description says so. The dashed vertical lines of the Scaling changes annotation are Grafana's own marker style and can't be changed: the one exception to "every line is solid".
+- **Links.** The load panels link to Sessions with the same range; utilization and billing are not made of sessions and have no link. Dashboard links by tag, as on the others.
 
 ## 5. Perfetto timeline
 

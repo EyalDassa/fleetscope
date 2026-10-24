@@ -29,7 +29,8 @@ You (the main session) are the **tech lead** of a small team of subagents define
 - Dashboards: Grafana (Grafana Cloud free tier; local Grafana OSS in docker-compose on `localhost:3001`) with the official ClickHouse data source (UID `fleetscope-clickhouse`). Dashboards are JSON in `infra/grafana/dashboards/`, keep their UIDs, and are uploaded with `pnpm grafana:push`. Filters are Grafana variables and the time picker, so they live in the URL. Session timelines open in Perfetto via `GET /v1/sessions/:id/perfetto`.
 - Logging: pino (JSON). No `console.log` in committed code.
 - Tests: vitest for units, integration tests against a real ClickHouse (docker-compose locally, service container in CI), a CI check that executes every dashboard query, and the fleet smoke test with real browser containers.
-- Secrets only in `.env` (gitignored) and CI secrets. Provide `.env.example`. gitleaks runs in CI.
+- Secrets only in `.env` / `.env.cloud` (gitignored) and CI secrets. Provide `.env.example`. gitleaks runs in CI.
+- **Never print a secret file or value** (`cat`, `type`, `Get-Content`, `echo $TOKEN`, debug logs). Load env files with `set -a; . <(tr -d '\r' < .env.cloud); set +a` and check a variable by name only (`[ -n "$X" ] && echo set`). Anything printed lands in the session transcript.
 
 ## Data honesty
 - Every event carries `source: "real" | "sim"`. Every dashboard has a filter for it and never presents simulated data as real.

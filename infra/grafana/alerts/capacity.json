@@ -1,0 +1,468 @@
+{
+  "title": "Fleetscope capacity",
+  "interval": 60,
+  "rules": [
+    {
+      "uid": "fs-capacity-memory-warning",
+      "title": "ClickHouse memory above 75%",
+      "condition": "C",
+      "data": [
+        {
+          "refId": "A",
+          "relativeTimeRange": {
+            "from": 600,
+            "to": 0
+          },
+          "datasourceUid": "fleetscope-clickhouse",
+          "model": {
+            "refId": "A",
+            "datasource": {
+              "type": "grafana-clickhouse-datasource",
+              "uid": "fleetscope-clickhouse"
+            },
+            "editorType": "sql",
+            "format": 1,
+            "queryType": "table",
+            "rawSql": "-- snippet: capacity-alerts-mem-pct-1m\nSELECT maxOrNull(pct) AS value\nFROM\n(\n    SELECT\n        100 * avgIfOrNull(value, metric = 'CGroupMemoryUsedWithoutPageCache')\n            / nullIf(maxIfOrNull(value, metric = 'CGroupMemoryTotal'), 0) AS pct\n    FROM system.asynchronous_metric_log\n    WHERE event_time >= toStartOfMinute(now()) - INTERVAL 1 MINUTE\n      AND event_time < toStartOfMinute(now())\n      AND metric IN ('CGroupMemoryUsedWithoutPageCache', 'CGroupMemoryTotal')\n    GROUP BY hostname\n)",
+            "intervalMs": 1000,
+            "maxDataPoints": 43200
+          }
+        },
+        {
+          "refId": "B",
+          "datasourceUid": "__expr__",
+          "model": {
+            "refId": "B",
+            "datasource": {
+              "type": "__expr__",
+              "uid": "__expr__"
+            },
+            "type": "reduce",
+            "expression": "A",
+            "reducer": "last",
+            "settings": {
+              "mode": "dropNN"
+            }
+          }
+        },
+        {
+          "refId": "C",
+          "datasourceUid": "__expr__",
+          "model": {
+            "refId": "C",
+            "datasource": {
+              "type": "__expr__",
+              "uid": "__expr__"
+            },
+            "type": "threshold",
+            "expression": "B",
+            "conditions": [
+              {
+                "evaluator": {
+                  "type": "gt",
+                  "params": [75]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "for": "10m",
+      "noDataState": "OK",
+      "execErrState": "Error",
+      "annotations": {
+        "summary": "ClickHouse memory has been above 75% of its limit for 10 minutes",
+        "description": "The memory (without page cache) of the busiest replica, averaged over the last whole minute, was above 75% of its limit at every check for 10 minutes. ClickHouse starts refusing queries at about 90%. If this keeps up, ClickHouse Cloud may scale up (see the Capacity dashboard)."
+      },
+      "labels": {
+        "severity": "warning"
+      },
+      "isPaused": false
+    },
+    {
+      "uid": "fs-capacity-memory-critical",
+      "title": "ClickHouse memory above 85%",
+      "condition": "C",
+      "data": [
+        {
+          "refId": "A",
+          "relativeTimeRange": {
+            "from": 600,
+            "to": 0
+          },
+          "datasourceUid": "fleetscope-clickhouse",
+          "model": {
+            "refId": "A",
+            "datasource": {
+              "type": "grafana-clickhouse-datasource",
+              "uid": "fleetscope-clickhouse"
+            },
+            "editorType": "sql",
+            "format": 1,
+            "queryType": "table",
+            "rawSql": "-- snippet: capacity-alerts-mem-pct-1m\nSELECT maxOrNull(pct) AS value\nFROM\n(\n    SELECT\n        100 * avgIfOrNull(value, metric = 'CGroupMemoryUsedWithoutPageCache')\n            / nullIf(maxIfOrNull(value, metric = 'CGroupMemoryTotal'), 0) AS pct\n    FROM system.asynchronous_metric_log\n    WHERE event_time >= toStartOfMinute(now()) - INTERVAL 1 MINUTE\n      AND event_time < toStartOfMinute(now())\n      AND metric IN ('CGroupMemoryUsedWithoutPageCache', 'CGroupMemoryTotal')\n    GROUP BY hostname\n)",
+            "intervalMs": 1000,
+            "maxDataPoints": 43200
+          }
+        },
+        {
+          "refId": "B",
+          "datasourceUid": "__expr__",
+          "model": {
+            "refId": "B",
+            "datasource": {
+              "type": "__expr__",
+              "uid": "__expr__"
+            },
+            "type": "reduce",
+            "expression": "A",
+            "reducer": "last",
+            "settings": {
+              "mode": "dropNN"
+            }
+          }
+        },
+        {
+          "refId": "C",
+          "datasourceUid": "__expr__",
+          "model": {
+            "refId": "C",
+            "datasource": {
+              "type": "__expr__",
+              "uid": "__expr__"
+            },
+            "type": "threshold",
+            "expression": "B",
+            "conditions": [
+              {
+                "evaluator": {
+                  "type": "gt",
+                  "params": [85]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "for": "5m",
+      "noDataState": "OK",
+      "execErrState": "Error",
+      "annotations": {
+        "summary": "ClickHouse memory has been above 85% of its limit for 5 minutes",
+        "description": "The memory (without page cache) of the busiest replica, averaged over the last whole minute, was above 85% of its limit at every check for 5 minutes. ClickHouse refuses queries at about 90%, so queries and inserts can start failing with MEMORY_LIMIT_EXCEEDED."
+      },
+      "labels": {
+        "severity": "critical"
+      },
+      "isPaused": false
+    },
+    {
+      "uid": "fs-capacity-cpu-high",
+      "title": "ClickHouse CPU above 80%",
+      "condition": "C",
+      "data": [
+        {
+          "refId": "A",
+          "relativeTimeRange": {
+            "from": 600,
+            "to": 0
+          },
+          "datasourceUid": "fleetscope-clickhouse",
+          "model": {
+            "refId": "A",
+            "datasource": {
+              "type": "grafana-clickhouse-datasource",
+              "uid": "fleetscope-clickhouse"
+            },
+            "editorType": "sql",
+            "format": 1,
+            "queryType": "table",
+            "rawSql": "-- snippet: capacity-alerts-cpu-pct\nSELECT maxOrNull(pct) AS value\nFROM\n(\n    SELECT\n        100 * (avgIfOrNull(value, metric = 'CGroupUserTime') + avgIfOrNull(value, metric = 'CGroupSystemTime'))\n            / nullIf(maxIfOrNull(value, metric = 'CGroupMaxCPU'), 0) AS pct\n    FROM system.asynchronous_metric_log\n    WHERE event_time >= now() - INTERVAL 10 MINUTE\n      AND metric IN ('CGroupUserTime', 'CGroupSystemTime', 'CGroupMaxCPU')\n    GROUP BY hostname\n)",
+            "intervalMs": 1000,
+            "maxDataPoints": 43200
+          }
+        },
+        {
+          "refId": "B",
+          "datasourceUid": "__expr__",
+          "model": {
+            "refId": "B",
+            "datasource": {
+              "type": "__expr__",
+              "uid": "__expr__"
+            },
+            "type": "reduce",
+            "expression": "A",
+            "reducer": "last",
+            "settings": {
+              "mode": "dropNN"
+            }
+          }
+        },
+        {
+          "refId": "C",
+          "datasourceUid": "__expr__",
+          "model": {
+            "refId": "C",
+            "datasource": {
+              "type": "__expr__",
+              "uid": "__expr__"
+            },
+            "type": "threshold",
+            "expression": "B",
+            "conditions": [
+              {
+                "evaluator": {
+                  "type": "gt",
+                  "params": [80]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "for": "10m",
+      "noDataState": "OK",
+      "execErrState": "Error",
+      "annotations": {
+        "summary": "ClickHouse CPU is above 80% of its core limit",
+        "description": "The average CPU of the busiest replica over the last 10 minutes is above 80% of its limit, for 10 minutes."
+      },
+      "labels": {
+        "severity": "warning"
+      },
+      "isPaused": false
+    },
+    {
+      "uid": "fs-capacity-limits-changed",
+      "title": "ClickHouse limits changed (autoscaling)",
+      "condition": "C",
+      "data": [
+        {
+          "refId": "A",
+          "relativeTimeRange": {
+            "from": 600,
+            "to": 0
+          },
+          "datasourceUid": "fleetscope-clickhouse",
+          "model": {
+            "refId": "A",
+            "datasource": {
+              "type": "grafana-clickhouse-datasource",
+              "uid": "fleetscope-clickhouse"
+            },
+            "editorType": "sql",
+            "format": 1,
+            "queryType": "table",
+            "rawSql": "-- snippet: capacity-alerts-limits-changed\nSELECT\n    if(count() = 0, NULL,\n        toUInt8(uniqExact(mem_limit_gib) > 1 OR uniqExact(cpu_limit_cores) > 1 OR uniqExact(replicas) > 1)) AS value\nFROM\n(\n    SELECT\n        nullIf(maxIfOrNull(value, metric = 'CGroupMemoryTotal'), 0) AS mem_limit_gib,\n        nullIf(maxIfOrNull(value, metric = 'CGroupMaxCPU'), 0) AS cpu_limit_cores,\n        uniqExactIf(hostname, metric = 'Uptime') AS replicas\n    FROM system.asynchronous_metric_log\n    WHERE event_time >= now() - INTERVAL 30 MINUTE\n      AND metric IN ('CGroupMemoryTotal', 'CGroupMaxCPU', 'Uptime')\n    GROUP BY toStartOfMinute(event_time)\n)",
+            "intervalMs": 1000,
+            "maxDataPoints": 43200
+          }
+        },
+        {
+          "refId": "B",
+          "datasourceUid": "__expr__",
+          "model": {
+            "refId": "B",
+            "datasource": {
+              "type": "__expr__",
+              "uid": "__expr__"
+            },
+            "type": "reduce",
+            "expression": "A",
+            "reducer": "last",
+            "settings": {
+              "mode": "dropNN"
+            }
+          }
+        },
+        {
+          "refId": "C",
+          "datasourceUid": "__expr__",
+          "model": {
+            "refId": "C",
+            "datasource": {
+              "type": "__expr__",
+              "uid": "__expr__"
+            },
+            "type": "threshold",
+            "expression": "B",
+            "conditions": [
+              {
+                "evaluator": {
+                  "type": "gt",
+                  "params": [0.5]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "for": "0s",
+      "noDataState": "OK",
+      "execErrState": "Error",
+      "annotations": {
+        "summary": "ClickHouse memory limit, core limit or replica count changed in the last 30 minutes",
+        "description": "Autoscaling (or a restart) changed the service size. This alert resolves by itself 30 minutes after the last change."
+      },
+      "labels": {
+        "severity": "info"
+      },
+      "isPaused": false
+    },
+    {
+      "uid": "fs-capacity-load-mismatch",
+      "title": "Rows written differ from rows sent by more than 5%",
+      "condition": "C",
+      "data": [
+        {
+          "refId": "A",
+          "relativeTimeRange": {
+            "from": 600,
+            "to": 0
+          },
+          "datasourceUid": "fleetscope-clickhouse",
+          "model": {
+            "refId": "A",
+            "datasource": {
+              "type": "grafana-clickhouse-datasource",
+              "uid": "fleetscope-clickhouse"
+            },
+            "editorType": "sql",
+            "format": 1,
+            "queryType": "table",
+            "rawSql": "-- snippet: capacity-alerts-load-mismatch-pct\nWITH\n    toStartOfMinute(now()) - INTERVAL 1 MINUTE AS window_end,\n    window_end - INTERVAL 60 MINUTE AS window_start,\n    (SELECT count() FROM actions WHERE ts >= window_start AND ts < window_end)\n        + (SELECT count() FROM resource_samples WHERE ts >= window_start AND ts < window_end)\n        + (SELECT count() FROM network_requests WHERE ts >= window_start AND ts < window_end)\n        + (SELECT count() FROM issues WHERE ts >= window_start AND ts < window_end) AS sent,\n    (\n        SELECT sum(rows)\n        FROM system.part_log\n        WHERE event_type = 'NewPart'\n          AND database = currentDatabase()\n          AND error = 0\n          AND `table` IN ('actions', 'resource_samples', 'network_requests', 'issues')\n          AND event_time >= window_start AND event_time < window_end\n    ) AS written\nSELECT multiIf(\n    sent = 0 AND written = 0, NULL,\n    sent = 0, 100,\n    100 * abs(toInt64(written) - toInt64(sent)) / sent) AS value",
+            "intervalMs": 1000,
+            "maxDataPoints": 43200
+          }
+        },
+        {
+          "refId": "B",
+          "datasourceUid": "__expr__",
+          "model": {
+            "refId": "B",
+            "datasource": {
+              "type": "__expr__",
+              "uid": "__expr__"
+            },
+            "type": "reduce",
+            "expression": "A",
+            "reducer": "last",
+            "settings": {
+              "mode": "dropNN"
+            }
+          }
+        },
+        {
+          "refId": "C",
+          "datasourceUid": "__expr__",
+          "model": {
+            "refId": "C",
+            "datasource": {
+              "type": "__expr__",
+              "uid": "__expr__"
+            },
+            "type": "threshold",
+            "expression": "B",
+            "conditions": [
+              {
+                "evaluator": {
+                  "type": "gt",
+                  "params": [5]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "for": "15m",
+      "noDataState": "OK",
+      "execErrState": "Error",
+      "annotations": {
+        "summary": "ClickHouse wrote more than 5% fewer or more rows than the fleet sent over the last hour",
+        "description": "Compares the rows of actions, resource_samples, network_requests and issues with the NewPart rows in system.part_log for the last 60 whole minutes (all sources). It reads one replica; with several replicas it can be wrong (packages/db/README.md, Capacity)."
+      },
+      "labels": {
+        "severity": "warning"
+      },
+      "isPaused": false
+    },
+    {
+      "uid": "fs-capacity-no-writes",
+      "title": "No rows written to ClickHouse for 15 minutes",
+      "condition": "C",
+      "data": [
+        {
+          "refId": "A",
+          "relativeTimeRange": {
+            "from": 600,
+            "to": 0
+          },
+          "datasourceUid": "fleetscope-clickhouse",
+          "model": {
+            "refId": "A",
+            "datasource": {
+              "type": "grafana-clickhouse-datasource",
+              "uid": "fleetscope-clickhouse"
+            },
+            "editorType": "sql",
+            "format": 1,
+            "queryType": "table",
+            "rawSql": "-- snippet: capacity-alerts-minutes-since-write\nSELECT dateDiff('second', maxOrNull(event_time), now()) / 60 AS value\nFROM system.part_log\nWHERE event_type = 'NewPart'\n  AND error = 0\n  AND database = currentDatabase()\n  AND `table` IN ('sessions', 'actions', 'resource_samples', 'network_requests', 'issues')\n  AND event_time >= now() - INTERVAL 1 DAY",
+            "intervalMs": 1000,
+            "maxDataPoints": 43200
+          }
+        },
+        {
+          "refId": "B",
+          "datasourceUid": "__expr__",
+          "model": {
+            "refId": "B",
+            "datasource": {
+              "type": "__expr__",
+              "uid": "__expr__"
+            },
+            "type": "reduce",
+            "expression": "A",
+            "reducer": "last",
+            "settings": {
+              "mode": "dropNN"
+            }
+          }
+        },
+        {
+          "refId": "C",
+          "datasourceUid": "__expr__",
+          "model": {
+            "refId": "C",
+            "datasource": {
+              "type": "__expr__",
+              "uid": "__expr__"
+            },
+            "type": "threshold",
+            "expression": "B",
+            "conditions": [
+              {
+                "evaluator": {
+                  "type": "gt",
+                  "params": [15]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "for": "0s",
+      "noDataState": "Alerting",
+      "execErrState": "Error",
+      "annotations": {
+        "summary": "ClickHouse has written no new part of a Fleetscope table for more than 15 minutes",
+        "description": "Nothing reached the database: the fleet, the collector or the API may be stopped. The fleet is idle between runs, so this also fires when no run is expected. No answer at all (nothing written for 24 hours) counts as firing."
+      },
+      "labels": {
+        "severity": "warning"
+      },
+      "isPaused": false
+    }
+  ]
+}

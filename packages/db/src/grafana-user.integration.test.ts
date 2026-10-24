@@ -195,6 +195,96 @@ describe("the read-only Grafana user", () => {
     ).not.toBe("ok");
   });
 
+  it("may read only the columns the Capacity dashboard uses of the two system tables, and no other system table", async () => {
+    const reader = readerClient();
+    const read = (query: string) =>
+      outcome(() => reader.query({ query, format: "JSONEachRow" }).then((r) => r.json()));
+    expect(await read("SELECT count(event_time) FROM system.asynchronous_metric_log")).toBe("ok");
+    expect(
+      await read("SELECT hostname, metric, value FROM system.asynchronous_metric_log LIMIT 1"),
+    ).toBe("ok");
+    expect(
+      await read("SELECT event_type, database, `table`, rows, error FROM system.part_log LIMIT 1"),
+    ).toBe("ok");
+    // the columns that are not granted: the text of a failed insert, the query id, paths, ...
+    for (const column of ["exception", "query_id", "path_on_disk", "partition", "part_name"]) {
+      expect(await read(`SELECT ${column} FROM system.part_log LIMIT 1`), column).toBe(
+        "ACCESS_DENIED",
+      );
+    }
+    for (const column of ["key", "event_date"]) {
+      expect(
+        await read(`SELECT ${column} FROM system.asynchronous_metric_log LIMIT 1`),
+        column,
+      ).toBe("ACCESS_DENIED");
+    }
+    expect(await read("SELECT * FROM system.part_log LIMIT 1")).toBe("ACCESS_DENIED");
+    for (const table of ["query_log", "metric_log", "processes", "text_log", "grants"]) {
+      expect(await read(`SELECT count() FROM system.${table}`), table).toBe("ACCESS_DENIED");
+    }
+    // the cluster functions need READ ON REMOTE, which is deliberately not granted
+    expect(
+      await read(
+        "SELECT count(event_time) FROM clusterAllReplicas(default, system.asynchronous_metric_log)",
+      ),
+    ).toBe("ACCESS_DENIED");
+    const grants = await db.client.query({
+      query:
+        "SELECT access_type, database, `table`, `column` FROM system.grants WHERE user_name = {user:String} ORDER BY database, `table`, `column`",
+      query_params: { user },
+      format: "JSONEachRow",
+    });
+    const rows = (await grants.json()) as Array<{
+      database: string;
+      table: string | null;
+      column: string | null;
+    }>;
+    const columnsOf = (table: string) =>
+      rows.filter((r) => r.database === "system" && r.table === table).map((r) => r.column);
+    expect(columnsOf("asynchronous_metric_log")).toEqual([
+      "event_time",
+      "hostname",
+      "metric",
+      "value",
+    ]);
+    expect(columnsOf("part_log")).toEqual([
+      "database",
+      "error",
+      "event_time",
+      "event_type",
+      "rows",
+      "table",
+    ]);
+    expect(rows.filter((r) => r.database === db.config.database)).toHaveLength(1);
+    expect(rows.every((r) => r.database === db.config.database || r.database === "system")).toBe(
+      true,
+    );
+  });
+
+  it("takes back a table-level grant of an earlier version when it runs again", async () => {
+    const old = `${user}_old`;
+    await ensureGrafanaUser(db.client, { user: old, password, database: db.config.database });
+    try {
+      await db.client.command({ query: `GRANT SELECT ON system.part_log TO \`${old}\`` });
+      const reader = createReaderClient(db.config, old, password);
+      readers.push(reader);
+      const exception = () =>
+        outcome(() =>
+          reader
+            .query({
+              query: "SELECT exception FROM system.part_log LIMIT 1",
+              format: "JSONEachRow",
+            })
+            .then((r) => r.json()),
+        );
+      expect(await exception()).toBe("ok");
+      await ensureGrafanaUser(db.client, { user: old, password, database: db.config.database });
+      expect(await exception()).toBe("ACCESS_DENIED");
+    } finally {
+      await db.client.command({ query: `DROP USER IF EXISTS \`${old}\`` });
+    }
+  });
+
   it("is safe to run again, and running it again with a new password rotates it", async () => {
     await ensureGrafanaUser(db.client, { user, password, database: db.config.database });
     expect(

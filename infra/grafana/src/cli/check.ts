@@ -10,12 +10,14 @@
 // the time while the three dashboards are still being written. CI never passes it.
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { checkAlerts } from "../alerts";
 import { type CheckReport, checkDashboards, type FileReport } from "../check";
 import type { ClickHouseConnection } from "../clickhouse-http";
 import { connectionFromEnv } from "../connection";
 import type { Problem } from "../dashboards";
 import { complain, say } from "../out";
 import { readSessionFacts } from "../session-facts";
+import { readNamedSnippets } from "../snippet-copies";
 
 interface Args {
   dir: string;
@@ -28,6 +30,7 @@ interface Args {
 const README_PATH = fileURLToPath(new URL("../../../../packages/db/README.md", import.meta.url));
 
 const DEFAULT_DIR = fileURLToPath(new URL("../../dashboards", import.meta.url));
+const ALERTS_DIR = fileURLToPath(new URL("../../alerts", import.meta.url));
 
 function parseArgs(argv: string[]): Args {
   const args: Args = {
@@ -133,19 +136,44 @@ async function main(): Promise<number> {
     connection,
     allowDanglingLinks: args.allowDanglingLinks,
     sessionFacts,
+    snippets: readNamedSnippets(readme),
   });
-  if (report.files.length === 0) {
-    say(`no dashboards in ${args.dir}: nothing to check`);
-    return 0;
+  if (report.files.length > 0) print(report, args, relativeDir);
+  else say(`no dashboards in ${args.dir}: nothing to check`);
+
+  // Alert rules: the same SQL rules, run as the same read-only user.
+  const alerts = await checkAlerts({ dir: ALERTS_DIR, readme, connection });
+  if (alerts.files.length > 0) {
+    if (alerts.problems.length === 0) {
+      say(
+        `OK    alerts/ ${alerts.files.join(", ")}: ${alerts.ran.length} queries executed (billing queries are checked for shape only)`,
+      );
+      if (args.verbose) {
+        for (const run of alerts.ran) say(`        ${run.where}: value ${run.value}`);
+      }
+    } else {
+      complain(`FAIL  alerts/: ${alerts.problems.length} problem(s)`);
+      for (const problem of alerts.problems) {
+        printProblem(problem);
+        if (process.env.GITHUB_ACTIONS === "true") {
+          say(
+            `::error file=infra/grafana/alerts,title=${escapeProperty(problem.where)}::${escapeData(problem.message)}`,
+          );
+        }
+      }
+    }
   }
-  print(report, args, relativeDir);
-  if (report.problemCount > 0) {
+
+  const failedDashboards = report.files.filter((f) => f.problems.length > 0).length;
+  if (report.problemCount > 0 || alerts.problems.length > 0) {
     complain(
-      `\n${report.problemCount} problem(s) in ${report.files.filter((f) => f.problems.length > 0).length} dashboard(s)`,
+      `\n${report.problemCount} problem(s) in ${failedDashboards} dashboard(s), ${alerts.problems.length} in the alert rules`,
     );
     return 1;
   }
-  say(`\nall ${report.files.length} dashboard(s) OK, ${report.queriesRun} queries executed`);
+  say(
+    `\nall ${report.files.length} dashboard(s) and ${alerts.files.length} alert group(s) OK, ${report.queriesRun + alerts.ran.length} queries executed`,
+  );
   return 0;
 }
 

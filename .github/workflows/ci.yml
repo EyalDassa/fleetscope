@@ -72,6 +72,10 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
       - run: pnpm db:migrate
+      # The Capacity dashboard reads system.part_log and system.asynchronous_metric_log. The service
+      # container runs the image defaults (it cannot mount infra/clickhouse/config.d), so check they are on.
+      - name: ClickHouse system logs (part_log, asynchronous_metric_log) are readable
+        run: bash .github/scripts/check-clickhouse-system-logs.sh
       - run: pnpm test:integration
 
       # Dashboards are code: every query in infra/grafana/dashboards/*.json must run against the

@@ -21,12 +21,22 @@ services:
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-fleetscope_dev_password}
       CLICKHOUSE_DB: ${CLICKHOUSE_DATABASE:-fleetscope}
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    # A real limit, so ClickHouse reports it (system.asynchronous_metric_log: CGroupMemoryTotal and
+    # CGroupMaxCPU) and the Capacity dashboard shows utilisation against a limit instead of "not
+    # available". Without these the container sees the whole Docker Desktop VM and both are NULL.
+    # 4 GiB and 2 cores are enough for the dev data and the tests and leave the laptop usable. To
+    # change them, edit here; ClickHouse sizes its memory limit from the cgroup.
+    mem_limit: 4g
+    cpus: 2
     ulimits:
       nofile:
         soft: 262144
         hard: 262144
     volumes:
       - clickhouse_data:/var/lib/clickhouse
+      # system.part_log and system.asynchronous_metric_log for the Capacity dashboard, with a 14 day
+      # retention (see the file). Relative to the repository root, like the Grafana mounts below.
+      - ./infra/clickhouse/config.d/system-logs.xml:/etc/clickhouse-server/config.d/system-logs.xml:ro
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1"]
       interval: 5s
@@ -48,10 +58,18 @@ services:
       # Loopback only. 3001, not Grafana's usual 3000, because 3000 is often taken on a dev machine.
       - "127.0.0.1:${GRAFANA_PORT:-3001}:3000"
     environment:
-      # Official ClickHouse data source from Grafana Labs, pinned. _SYNC makes Grafana install it
-      # before it starts (the plain GF_PLUGINS_PREINSTALL installs in the background), so the
-      # provisioned data source below never meets a plugin that is not there yet.
-      GF_PLUGINS_PREINSTALL_SYNC: grafana-clickhouse-datasource@4.23.2
+      # Two data source plugins from Grafana Labs, both pinned (comma separated): ClickHouse, and
+      # Infinity (JSON from the ClickHouse Cloud billing API, for the Capacity dashboard). _SYNC makes
+      # Grafana install them before it starts (the plain GF_PLUGINS_PREINSTALL installs in the
+      # background), so a provisioned data source never meets a plugin that is not there yet.
+      GF_PLUGINS_PREINSTALL_SYNC: grafana-clickhouse-datasource@4.23.2,yesoreyeram-infinity-datasource@4.1.3
+      # Grafana reads its provisioning from a copy made at start (see the entrypoint below).
+      GF_PATHS_PROVISIONING: /tmp/provisioning
+      # ClickHouse Cloud API key and organisation id for the billing data source. Any unset (the default): no billing
+      # data source locally. See infra/grafana/README.md, "Billing".
+      CLICKHOUSE_CLOUD_KEY_ID: ${CLICKHOUSE_CLOUD_KEY_ID:-}
+      CLICKHOUSE_CLOUD_KEY_SECRET: ${CLICKHOUSE_CLOUD_KEY_SECRET:-}
+      CLICKHOUSE_CLOUD_ORG_ID: ${CLICKHOUSE_CLOUD_ORG_ID:-}
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-fleetscope_dev_admin}
       # Anyone who can reach 127.0.0.1:3001 can look at the dashboards without logging in,
@@ -75,11 +93,24 @@ services:
       CLICKHOUSE_DATABASE: ${CLICKHOUSE_DATABASE:-fleetscope}
       CLICKHOUSE_GRAFANA_USER: ${CLICKHOUSE_GRAFANA_USER:-grafana_ro}
       CLICKHOUSE_GRAFANA_PASSWORD: ${CLICKHOUSE_GRAFANA_PASSWORD:-grafana_ro_dev_password}
+    # Provisioning cannot be conditional, so the entrypoint copies the base files and adds the billing
+    # data source only when both API key variables are set. Then it runs the image's own entrypoint.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >-
+        mkdir -p /tmp/provisioning && cp -r /provisioning/base/. /tmp/provisioning/ &&
+        if [ -n "$$CLICKHOUSE_CLOUD_KEY_ID" ] && [ -n "$$CLICKHOUSE_CLOUD_KEY_SECRET" ] && [ -n "$$CLICKHOUSE_CLOUD_ORG_ID" ]; then
+        cp /provisioning/optional/clickhouse-cloud-api.yaml /tmp/provisioning/datasources/;
+        echo "fleetscope: billing data source clickhouse-cloud-api provisioned";
+        else echo "fleetscope: no CLICKHOUSE_CLOUD_KEY_ID/SECRET/ORG_ID, billing data source not provisioned"; fi;
+        exec /run.sh
     volumes:
       # Grafana's own database and the installed plugin.
       - grafana_data:/var/lib/grafana
       # Paths are relative to the repository root (pnpm infra:up passes --project-directory .).
-      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/provisioning:/provisioning/base:ro
+      - ./infra/grafana/optional-provisioning:/provisioning/optional:ro
       - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
     healthcheck:
       # 127.0.0.1, not localhost: busybox wget tries ::1 first and Grafana listens on IPv4 only.

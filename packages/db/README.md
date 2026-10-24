@@ -829,6 +829,376 @@ ORDER BY scenario, engine
 - Anything not in this list that you find different between a panel and a snippet is a bug in one of
   them, not a decision: fix both together.
 
+### Capacity: ClickHouse's own load and limits
+
+The "Fleetscope / Capacity" dashboard answers two questions: does the load the fleet sends match what
+ClickHouse says it wrote, and how close is ClickHouse to its own memory and CPU limits? The snippets
+read **two system tables** besides ours, `system.part_log` (one row per part ClickHouse writes or
+merges) and `system.asynchronous_metric_log` (one row per metric per second). The Grafana user gets
+`SELECT` on **only the columns the snippets use** of exactly these two tables (see "The read-only Grafana
+user"): `part_log(event_type, database, table, rows, error, event_time)` and
+`asynchronous_metric_log(hostname, event_time, metric, value)`. A new snippet that reads another column
+fails with `ACCESS_DENIED` until the column is added to `CAPACITY_SYSTEM_COLUMNS` in `grafana-user.ts`;
+a query must name a granted column (write `count(event_time)`, not a bare `count()`). Rules for this section:
+
+- **No `source` or `engine` filter.** `part_log` and the metric log know nothing about our columns, and
+  load is what the database sees, whoever sent it (real, sim, seed). The panels say "all sources". This
+  is the one exception to the "always filter on `source`" rule above, and it is why the mismatch below
+  is computed over all sources too.
+- **The filter is `event_time >= toStartOfMinute($__fromTime) AND event_time <= $__toTime`**, the same
+  snapping as the rollup (rule 4 above), so the first minute is whole.
+- **One replica.** A system table is local to the replica that answers (on ClickHouse Cloud too: the
+  service has a load balancer, and every replica logs only what it did). The snippets read the plain
+  tables because the Grafana user has no `READ ON REMOTE`, which `clusterAllReplicas(default, ...)`
+  needs. So with several replicas a panel shows the replica Grafana happened to reach, and the sent vs
+  written comparison only holds while one replica takes the inserts. Measured on Cloud: in the hour
+  that one replica did all the work, sent and written differed by 1 row of 11,610; in the hours before,
+  when other replicas took the inserts, `part_log` here held only `DownloadPart` rows for them and
+  written was 35 to 70% of sent. The fix is one grant (`GRANT READ ON REMOTE ON *.* TO grafana_ro`,
+  which lets the user read from any server the cluster functions can reach) and wrapping the table in
+  `clusterAllReplicas(default, system.part_log)`; not done, it widens the user. A replaced replica takes
+  its log with it, so no query can show the history of a replica that no longer exists.
+- Both tables are written asynchronously (`part_log` flushes every 7.5 s by default), so **the newest
+  10 or so seconds of a chart are incomplete**. The alerts below never look at the current minute.
+
+#### Load sent vs written (`capacity-load`)
+
+Per minute, **zero-filled over the selected range**: a minute with no events and no writes is a row
+of three zeros (`ORDER BY time WITH FILL`, `TO` is exclusive, so the minute that contains the end of
+the range is the last one). An idle minute is a true 0 here, unlike the utilization and limit
+snippets below, where a missing minute is NULL ("no data"). `rows_sent` counts the rows of the four append-only tables (`actions`, `resource_samples`,
+`network_requests`, `issues`) by their `ts`; `rows_written` sums the `rows` of every `NewPart` of those
+same four tables in this database; `sessions_started` counts sessions by `started_at`. Columns:
+`time, rows_sent, rows_written, sessions_started`.
+
+Why these definitions:
+
+- **One event is one row** in the four tables, so sent and written are the same quantity counted twice,
+  from the data and from ClickHouse's own log. A row that was inserted is in both; a row that was
+  rejected or dropped before ClickHouse is in neither, so this panel finds ClickHouse losing or
+  delaying writes (a part that never appears, a disabled `part_log`), not the collector dropping a
+  batch.
+- **`sessions` is left out of the comparison, and `sessions_started` is its own column.** A session is
+  two rows in the table (version 1 when it starts, version 2 when it ends), but `insertEvents` writes
+  only the ended row when the start and the end arrive in the same flush, and ReplacingMergeTree
+  later merges the pair into one. So neither the row count in the table nor "2 per session" says how
+  many rows were written. `sessions FINAL` gives one row per session, counted at `started_at` (the
+  ended row keeps the start's `started_at`).
+- **`fleet_minute` and its two materialized views are not counted.** `part_log` has a `NewPart` for
+  them too (that is the second insert behind every actions insert); filtering on the four table names
+  leaves them out, as it does `schema_migrations` and `pricing`.
+- **Only `NewPart` rows with `error = 0` count.** A repeated insert with the same
+  `insert_deduplication_token` is skipped by ClickHouse (no second copy of the rows in the table), but
+  `part_log` still logs it as a `NewPart` with the full `rows` and `error = 389` ("The part was
+  deduplicated"); an insert that failed is logged the same way with its own error code. Without the
+  `error = 0` filter every retried flush would count as written twice (found by the integration test).
+- **Merges and TTL do not matter.** The four tables are append-only, so a merge keeps every row, and a
+  merge is a `MergeParts` event in `part_log`, not a `NewPart`. A TTL drop would remove rows from
+  "sent" after 30 days, far outside any dashboard range.
+
+How the two numbers relate: **over a few hours they are equal up to the rows in flight at the two edges
+of the range**, which is the ingest delay times the rate (about 2 to 3 s of buffering and 7.5 s of
+`part_log` flush at the newest edge). At 3 rows/s that is a few dozen rows, under 0.5% of an hour.
+**Per minute they are not equal**, for a reason that no query can fix: sent is placed by the event's own
+`ts` and written by the time ClickHouse received it. They are the same minute for a live fleet, but an
+action is stamped when it *started* and its event arrives when it finished (seconds later; a 30 s
+timeout is a different minute), and a backfill (`db:seed`, a simulator run with its own clock) writes
+now what happened earlier. So read the per-minute chart as two lines that follow each other, and the
+alert (`capacity-alerts-load-mismatch-pct`) over an hour.
+
+Measured on 2026-10-24, last 60 minutes ending now: Cloud (26.6, one replica) sent 11,804, written
+11,748 (-56, -0.47%, the flush lag at the newest edge); the dev ClickHouse had no traffic in that hour
+(0 and 0), over 3 hours sent 1,648, written 1,674 (+26, +1.6%: seeds and sim runs stamped earlier than
+they were written).
+
+```sql name=capacity-load
+SELECT
+    minute AS time,
+    sum(rows_sent) AS rows_sent,
+    sum(rows_written) AS rows_written,
+    sum(sessions_started) AS sessions_started
+FROM
+(
+    SELECT toStartOfMinute(ts) AS minute, count() AS rows_sent, toUInt64(0) AS rows_written, toUInt64(0) AS sessions_started
+    FROM actions
+    WHERE ts >= toStartOfMinute($__fromTime) AND ts <= $__toTime
+    GROUP BY minute
+    UNION ALL
+    SELECT toStartOfMinute(ts), count(), 0, 0
+    FROM resource_samples
+    WHERE ts >= toStartOfMinute($__fromTime) AND ts <= $__toTime
+    GROUP BY 1
+    UNION ALL
+    SELECT toStartOfMinute(ts), count(), 0, 0
+    FROM network_requests
+    WHERE ts >= toStartOfMinute($__fromTime) AND ts <= $__toTime
+    GROUP BY 1
+    UNION ALL
+    SELECT toStartOfMinute(ts), count(), 0, 0
+    FROM issues
+    WHERE ts >= toStartOfMinute($__fromTime) AND ts <= $__toTime
+    GROUP BY 1
+    UNION ALL
+    SELECT toStartOfMinute(started_at), 0, 0, count()
+    FROM sessions FINAL
+    WHERE started_at >= toStartOfMinute($__fromTime) AND started_at <= $__toTime
+    GROUP BY 1
+    UNION ALL
+    SELECT toDateTime(toStartOfMinute(event_time), 'UTC'), 0, sum(rows), 0
+    FROM system.part_log
+    WHERE event_type = 'NewPart'
+      AND database = currentDatabase()
+      AND error = 0
+      AND `table` IN ('actions', 'resource_samples', 'network_requests', 'issues')
+      AND event_time >= toStartOfMinute($__fromTime) AND event_time <= $__toTime
+    GROUP BY 1
+)
+GROUP BY time
+ORDER BY time WITH FILL FROM toStartOfMinute($__fromTime) TO $__toTime STEP 60
+```
+
+#### Memory and CPU against the limits (`capacity-utilization`)
+
+One row per minute and replica. Columns: `time, replica, mem_used_gib, mem_limit_gib, cpu_used_cores,
+cpu_limit_cores`. `replica` is the first label of the host name (`c-tealaws-ds-15-server-tshu674-0`, not the
+whole `...svc.cluster.local`).
+
+- **Memory** is `CGroupMemoryUsedWithoutPageCache` and the limit `CGroupMemoryTotal`, both in GiB
+  (bytes / 2^30). Without the page cache, because the page cache is reclaimable: the kernel drops it
+  when the container needs memory, so it never causes an out-of-memory kill, while the number that is
+  left cannot be given back. The metric exists on Cloud 26.6 and local 26.8 and equals
+  `CGroupMemoryUsed` on both today (0.401 GiB), so the choice is about meaning, not today's numbers.
+  The minute shows the **peak** (`max`), because running out of memory is decided by the peak.
+- **CPU** is `CGroupUserTime + CGroupSystemTime`, the **average of the minute**, in cores. These two
+  metrics are already "cores busy" (checked on Cloud 26.6: 0.027 + 0.020 against
+  `CGroupUserTimeNormalized` + `CGroupSystemTimeNormalized` = 0.007 + 0.005 on 4 cores, and
+  0.012 x 4 = 0.048). The `...Normalized` ones are the same divided by the core limit, so using them
+  would need `CGroupMaxCPU` twice. The `OS...` metrics describe the whole host, not the container, and
+  are not used. `CGroupMaxCPU` is the limit in cores (4 on the Cloud service).
+- **A missing limit is NULL, not 0 and not the host's size.** The dev container has no memory limit
+  (`CGroupMemoryTotal` is 0, reported as NULL) and ClickHouse 26.8 does not publish `CGroupMaxCPU` at all
+  there, so on a laptop the two limits and every percentage built on them are NULL ("not available").
+  Setting `mem_limit` and `cpus` on the compose service would make them appear.
+- `-OrNull` aggregates: a metric that is not there in a minute is NULL, not 0.
+
+```sql name=capacity-utilization
+SELECT
+    toStartOfMinute(event_time) AS time,
+    splitByChar('.', hostname)[1] AS replica,
+    maxIfOrNull(value, metric = 'CGroupMemoryUsedWithoutPageCache') / 1073741824 AS mem_used_gib,
+    nullIf(maxIfOrNull(value, metric = 'CGroupMemoryTotal'), 0) / 1073741824 AS mem_limit_gib,
+    avgIfOrNull(value, metric = 'CGroupUserTime') + avgIfOrNull(value, metric = 'CGroupSystemTime') AS cpu_used_cores,
+    nullIf(maxIfOrNull(value, metric = 'CGroupMaxCPU'), 0) AS cpu_limit_cores
+FROM system.asynchronous_metric_log
+WHERE event_time >= toStartOfMinute($__fromTime) AND event_time <= $__toTime
+  AND metric IN ('CGroupMemoryUsedWithoutPageCache', 'CGroupMemoryTotal', 'CGroupUserTime', 'CGroupSystemTime', 'CGroupMaxCPU')
+GROUP BY time, replica
+ORDER BY time, replica
+```
+
+#### Replicas and autoscaling events
+
+Replicas per minute: the number of distinct host names that logged the `Uptime` metric (every ClickHouse
+server has it) in that minute. With the plain table this is the replica that answers (1), see "One
+replica" above; it counts all replicas only through `clusterAllReplicas`. Columns: `time, replicas`.
+
+```sql name=capacity-replicas
+SELECT
+    toStartOfMinute(event_time) AS time,
+    uniqExact(hostname) AS replicas
+FROM system.asynchronous_metric_log
+WHERE event_time >= toStartOfMinute($__fromTime) AND event_time <= $__toTime
+  AND metric = 'Uptime'
+GROUP BY time
+ORDER BY time
+```
+
+Annotations: one row where the memory limit, the CPU limit or the replica count differs from the
+**previous minute that has data** (a gap in the data is not a change). The first minute of the data
+has nothing to compare with and gives no row. Columns: `time, text`, for example `memory limit 16 -> 32
+GiB; CPU limit 4 -> 8 cores` or `replicas 1 -> 2` (the arrow is the Unicode right arrow). The query
+reads one minute before the range so that the first visible minute can be compared. A limit that
+is missing reads `none`.
+
+```sql name=capacity-limit-changes
+WITH
+    per_minute AS
+    (
+        SELECT
+            toStartOfMinute(event_time) AS minute,
+            nullIf(maxIfOrNull(value, metric = 'CGroupMemoryTotal'), 0) / 1073741824 AS mem_limit_gib,
+            nullIf(maxIfOrNull(value, metric = 'CGroupMaxCPU'), 0) AS cpu_limit_cores,
+            uniqExactIf(hostname, metric = 'Uptime') AS replicas
+        FROM system.asynchronous_metric_log
+        WHERE event_time >= toStartOfMinute($__fromTime) - INTERVAL 1 MINUTE AND event_time <= $__toTime
+          AND metric IN ('CGroupMemoryTotal', 'CGroupMaxCPU', 'Uptime')
+        GROUP BY minute
+    ),
+    with_previous AS
+    (
+        SELECT
+            minute,
+            mem_limit_gib,
+            cpu_limit_cores,
+            replicas,
+            lagInFrame(mem_limit_gib) OVER w AS prev_mem_limit_gib,
+            lagInFrame(cpu_limit_cores) OVER w AS prev_cpu_limit_cores,
+            lagInFrame(replicas) OVER w AS prev_replicas,
+            row_number() OVER (ORDER BY minute) AS n
+        FROM per_minute
+        WINDOW w AS (ORDER BY minute ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)
+    )
+SELECT
+    minute AS time,
+    arrayStringConcat(arrayFilter(part -> part != '',
+    [
+        if(ifNull(mem_limit_gib, -1) != ifNull(prev_mem_limit_gib, -1),
+            concat('memory limit ', ifNull(toString(round(prev_mem_limit_gib, 2)), 'none'), ' → ',
+                   ifNull(toString(round(mem_limit_gib, 2)), 'none'), ' GiB'), ''),
+        if(ifNull(cpu_limit_cores, -1) != ifNull(prev_cpu_limit_cores, -1),
+            concat('CPU limit ', ifNull(toString(round(prev_cpu_limit_cores, 2)), 'none'), ' → ',
+                   ifNull(toString(round(cpu_limit_cores, 2)), 'none'), ' cores'), ''),
+        if(replicas != prev_replicas, concat('replicas ', toString(prev_replicas), ' → ', toString(replicas)), '')
+    ]), '; ') AS text
+FROM with_previous
+WHERE n > 1 AND minute >= toStartOfMinute($__fromTime) AND text != ''
+ORDER BY time
+```
+
+#### Alert queries
+
+Six queries for Grafana alert rules, each **one row, one column `value`** (Nullable). They use `now()`,
+not the dashboard's time range, and **NULL means "no data"**, never a fake 0 (`maxOrNull`, `avgOrNull`,
+`if(... = 0, NULL, ...)`): set the rule's no-data state on purpose. Thresholds are the rule's business;
+suggested ones are in brackets. The query format is "Table"; use a Reduce (Last) expression.
+
+- `capacity-alerts-mem-pct`: the highest memory use of any replica in the last 10 minutes, as a
+  percentage of its limit (per replica and minute, so a limit that changed inside the window is
+  respected). NULL when there is no limit (dev). **It is a peak, so it suits the stat panel and not a
+  `for:` rule**: one second above the threshold keeps the value above it for the next 10 minutes.
+- `capacity-alerts-mem-pct-1m`: the memory use of the worst replica over the **last whole minute** (the
+  minute before the current one, so the unfinished minute and the 7.5 s metric-log flush are outside
+  it), as a percentage of its limit. It is the **average** of the minute's per-second samples, not the
+  maximum: memory is a slowly moving gauge, so the average is the level the replica held, and a
+  one-second blip changes it by 1/60. With the maximum a single second would again page for as long as
+  the rule's `for:` window needs minutes in a row, which is what this block exists to avoid. So a rule
+  with `for: 5m` here means five consecutive minutes above the threshold. NULL without a limit or
+  without data. [warning > 75, critical > 85 for 5 min: ClickHouse starts refusing queries at about
+  90% of the limit (`max_server_memory_usage` is 0.9 x the cgroup limit), so a critical threshold of
+  90 pages only when queries already fail]
+- `capacity-alerts-cpu-pct`: the average CPU of the worst replica over the last 10 minutes, as a
+  percentage of its core limit. NULL without a limit. [> 85 for 10 min]
+- `capacity-alerts-limits-changed`: 1 when the memory limit, the CPU limit or the replica count had
+  **more than one value in the last 30 minutes** (an autoscaling event), 0 when it was steady, NULL
+  when there is no data. This is "differs between now and 30 minutes ago" without the failure
+  mode of a gap: a service that scaled up 29 minutes ago and a service that scaled up and back both
+  report 1, and a replica that was replaced (its log starts from scratch) does not make the old value
+  disappear into a "no data" comparison. [= 1]
+- `capacity-alerts-load-mismatch-pct`: `100 * |written - sent| / sent` for the four append-only tables
+  over the 60 whole minutes that ended one minute ago (so the `part_log` flush lag and the minute in
+  progress are outside the window). NULL when both are 0 (an idle fleet), 100 when something was
+  written and nothing sent. Same single-replica caveat as `capacity-load`.  **A backfill trips it, and that is expected**: sent is placed by the event's own `ts` and written by
+  the time ClickHouse received it, so rows stamped earlier than the last hour but written inside it
+  (`sim run --duration 3h`, `db:seed`, a replayed dead-letter file) count as written and not as sent
+  (measured 10.36% against the 5% threshold). Silence the rule, or ignore it, while a backfill runs;
+  it is not a lost write. [> 5 for 15 min]
+- `capacity-alerts-minutes-since-write`: minutes since the last `NewPart` of any of our five tables
+  (`sessions` included). NULL when there was none in the last 24 hours. [> 15 only while a run is
+  expected; the fleet is idle between runs]
+
+```sql name=capacity-alerts-mem-pct
+SELECT maxOrNull(pct) AS value
+FROM
+(
+    SELECT
+        100 * maxIfOrNull(value, metric = 'CGroupMemoryUsedWithoutPageCache')
+            / nullIf(maxIfOrNull(value, metric = 'CGroupMemoryTotal'), 0) AS pct
+    FROM system.asynchronous_metric_log
+    WHERE event_time >= now() - INTERVAL 10 MINUTE
+      AND metric IN ('CGroupMemoryUsedWithoutPageCache', 'CGroupMemoryTotal')
+    GROUP BY toStartOfMinute(event_time), hostname
+)
+```
+
+```sql name=capacity-alerts-mem-pct-1m
+SELECT maxOrNull(pct) AS value
+FROM
+(
+    SELECT
+        100 * avgIfOrNull(value, metric = 'CGroupMemoryUsedWithoutPageCache')
+            / nullIf(maxIfOrNull(value, metric = 'CGroupMemoryTotal'), 0) AS pct
+    FROM system.asynchronous_metric_log
+    WHERE event_time >= toStartOfMinute(now()) - INTERVAL 1 MINUTE
+      AND event_time < toStartOfMinute(now())
+      AND metric IN ('CGroupMemoryUsedWithoutPageCache', 'CGroupMemoryTotal')
+    GROUP BY hostname
+)
+```
+
+```sql name=capacity-alerts-cpu-pct
+SELECT maxOrNull(pct) AS value
+FROM
+(
+    SELECT
+        100 * (avgIfOrNull(value, metric = 'CGroupUserTime') + avgIfOrNull(value, metric = 'CGroupSystemTime'))
+            / nullIf(maxIfOrNull(value, metric = 'CGroupMaxCPU'), 0) AS pct
+    FROM system.asynchronous_metric_log
+    WHERE event_time >= now() - INTERVAL 10 MINUTE
+      AND metric IN ('CGroupUserTime', 'CGroupSystemTime', 'CGroupMaxCPU')
+    GROUP BY hostname
+)
+```
+
+```sql name=capacity-alerts-limits-changed
+SELECT
+    if(count() = 0, NULL,
+        toUInt8(uniqExact(mem_limit_gib) > 1 OR uniqExact(cpu_limit_cores) > 1 OR uniqExact(replicas) > 1)) AS value
+FROM
+(
+    SELECT
+        nullIf(maxIfOrNull(value, metric = 'CGroupMemoryTotal'), 0) AS mem_limit_gib,
+        nullIf(maxIfOrNull(value, metric = 'CGroupMaxCPU'), 0) AS cpu_limit_cores,
+        uniqExactIf(hostname, metric = 'Uptime') AS replicas
+    FROM system.asynchronous_metric_log
+    WHERE event_time >= now() - INTERVAL 30 MINUTE
+      AND metric IN ('CGroupMemoryTotal', 'CGroupMaxCPU', 'Uptime')
+    GROUP BY toStartOfMinute(event_time)
+)
+```
+
+```sql name=capacity-alerts-load-mismatch-pct
+WITH
+    toStartOfMinute(now()) - INTERVAL 1 MINUTE AS window_end,
+    window_end - INTERVAL 60 MINUTE AS window_start,
+    (SELECT count() FROM actions WHERE ts >= window_start AND ts < window_end)
+        + (SELECT count() FROM resource_samples WHERE ts >= window_start AND ts < window_end)
+        + (SELECT count() FROM network_requests WHERE ts >= window_start AND ts < window_end)
+        + (SELECT count() FROM issues WHERE ts >= window_start AND ts < window_end) AS sent,
+    (
+        SELECT sum(rows)
+        FROM system.part_log
+        WHERE event_type = 'NewPart'
+          AND database = currentDatabase()
+          AND error = 0
+          AND `table` IN ('actions', 'resource_samples', 'network_requests', 'issues')
+          AND event_time >= window_start AND event_time < window_end
+    ) AS written
+SELECT multiIf(
+    sent = 0 AND written = 0, NULL,
+    sent = 0, 100,
+    100 * abs(toInt64(written) - toInt64(sent)) / sent) AS value
+```
+
+```sql name=capacity-alerts-minutes-since-write
+SELECT dateDiff('second', maxOrNull(event_time), now()) / 60 AS value
+FROM system.part_log
+WHERE event_type = 'NewPart'
+  AND error = 0
+  AND database = currentDatabase()
+  AND `table` IN ('sessions', 'actions', 'resource_samples', 'network_requests', 'issues')
+  AND event_time >= now() - INTERVAL 1 DAY
+```
+
 ## The read-only Grafana user
 
 Grafana connects as its own ClickHouse user, so a panel can never change data, even if someone pastes
@@ -847,7 +1217,17 @@ must be set explicitly, and the development password is refused even if it is se
 the default that is public in this repository can never become a real password.
 
 The script connects with the admin user (`CLICKHOUSE_USER`, which may manage users) and runs
-`CREATE USER IF NOT EXISTS`, `ALTER USER` (password and settings) and `GRANT SELECT ON <database>.*`.
+`CREATE USER IF NOT EXISTS`, `ALTER USER` (password and settings), `GRANT SELECT ON <database>.*` and,
+for the Capacity dashboard, column grants `GRANT SELECT(event_time, hostname, metric, value) ON
+system.asynchronous_metric_log` and `GRANT SELECT(database, error, event_time, event_type, rows, table)
+ON system.part_log` (see "Capacity"; it first revokes any table-level grant an earlier version made).
+Nothing else is granted: not the other columns of those tables (`part_log` also holds `query_id`,
+`exception`, which can quote the data of a failed insert, `path_on_disk`, `partition` and
+`ProfileEvents`), not the other system tables, and not `READ ON REMOTE`, which `clusterAllReplicas`
+would need. `part_log` still shows the names of every database's tables and their row counts, which is
+what the snippets read. A grant on a system table that does not exist (a server with `part_log` switched
+off) is accepted by ClickHouse, and the Capacity queries that read it fail with an unknown-table error,
+which is the honest answer.
 Run it again whenever you like: it is idempotent, and running it with a new password rotates the
 password. It refuses to touch the admin user's own name, never logs the password (it is passed as a
 query parameter, so it is not in the SQL text either, and ClickHouse does not write it to
