@@ -20,6 +20,7 @@ const sessionOf = (id: string): TimelineSession => ({
   region: "local",
   startup_ms: 1,
   connect_ms: 1,
+  routed_from: null,
   status: "success",
   started_at_ms: START,
   ended_at_ms: START + 1000,

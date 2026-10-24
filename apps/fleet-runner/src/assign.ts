@@ -42,7 +42,14 @@ export interface RoutedAssignment extends Assignment {
 }
 
 /** Lightest first: a routed session goes to the cheapest engine that can run it. */
-const LIGHTNESS_ORDER: readonly Engine[] = ["lightpanda", "chrome-headless-shell", "chromium"];
+export const LIGHTNESS_ORDER = ["lightpanda", "chrome-headless-shell", "chromium"] as const;
+
+// Compile-time guard: an engine added to ENGINES but not listed above would never be a routing
+// target. This line stops compiling until the new engine gets its place in the order.
+type EngineMissingFromLightnessOrder = Exclude<Engine, (typeof LIGHTNESS_ORDER)[number]>;
+const _everyEngineIsOrdered: [EngineMissingFromLightnessOrder] extends [never] ? true : never =
+  true;
+void _everyEngineIsOrdered;
 
 /** What the scenario needs and the engine lacks. Empty: the engine can run the scenario. */
 export function unmetNeeds(engine: Engine, scenario: ScenarioName) {

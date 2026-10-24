@@ -148,8 +148,11 @@ describe("session.started routed_from", () => {
 
   it("accepts a known engine and rejects an unknown one", () => {
     expect(
-      SessionStartedEvent.parse({ ...valid["session.started"], routed_from: "lightpanda" })
-        .routed_from,
+      SessionStartedEvent.parse({
+        ...valid["session.started"],
+        engine: "chromium",
+        routed_from: "lightpanda",
+      }).routed_from,
     ).toBe("lightpanda");
     expect(
       SessionStartedEvent.safeParse({ ...valid["session.started"], routed_from: "firefox" })
@@ -158,6 +161,16 @@ describe("session.started routed_from", () => {
     expect(
       SessionStartedEvent.safeParse({ ...valid["session.started"], routed_from: "" }).success,
     ).toBe(false);
+  });
+
+  it("rejects routed_from equal to engine: routed always means moved", () => {
+    const same = { ...valid["session.started"], engine: "lightpanda", routed_from: "lightpanda" };
+    const result = SessionStartedEvent.safeParse(same);
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.path).toEqual(["routed_from"]);
+    expect(FleetEvent.safeParse(same).success).toBe(false);
+    expect(EventBatch.safeParse([same]).success).toBe(false);
+    expect(SessionStartedEvent.safeParse({ ...same, engine: "chromium" }).success).toBe(true);
   });
 });
 

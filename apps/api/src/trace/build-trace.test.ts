@@ -25,6 +25,7 @@ function session(overrides: Partial<TimelineSession> = {}): TimelineSession {
     region: "local",
     startup_ms: 900,
     connect_ms: 400,
+    routed_from: null,
     status: "success",
     started_at_ms: START,
     ended_at_ms: START + 5000,
@@ -430,6 +431,17 @@ describe("buildTrace", () => {
     );
     const process = named(trace.traceEvents, "M").find((e) => e.name === "process_name");
     expect(process?.args.name).toBe("sess-abcdef12-3456 · chromium · SIM · Degraded");
+  });
+
+  it("says in the process name that a session was routed, and from which engine", () => {
+    const name = (overrides: Partial<TimelineSession>) =>
+      named(buildTrace(timeline({ session: session(overrides) })).traceEvents, "M").find(
+        (e) => e.name === "process_name",
+      )?.args.name;
+    expect(
+      name({ engine: "chrome-headless-shell", engine_version: null, routed_from: "lightpanda" }),
+    ).toBe("sess-abcdef12-3456 · chrome-headless-shell (routed from lightpanda) · REAL · Degraded");
+    expect(name({})).not.toContain("routed");
   });
 
   it("copies the session facts into metadata, and lists truncated tables", () => {

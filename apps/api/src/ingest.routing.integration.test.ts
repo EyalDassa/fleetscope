@@ -84,7 +84,9 @@ describe("routed_from over the API", () => {
   it.each(["lightpanda", "chrome-headless-shell", "chromium"])("accepts %s", async (engine) => {
     const id = sid("ok");
     const { post } = start();
-    const res = await post([started(id, "chromium", { routed_from: engine })]);
+    // routed_from must differ from engine (routed means moved), so run on another engine
+    const ran = engine === "chromium" ? "lightpanda" : "chromium";
+    const res = await post([started(id, ran, { routed_from: engine })]);
     expect(res.statusCode).toBe(202);
     await expect
       .poll(() => routedFrom(id), { timeout: 3000 })
@@ -100,6 +102,7 @@ describe("routed_from over the API", () => {
     ["a boolean", true],
     ["an array", ["lightpanda"]],
     ["an object", { engine: "lightpanda" }],
+    ["the engine that ran the session (routed means moved)", "chromium"],
   ])("answers 400 for %s and stores nothing of the batch", async (_name, value) => {
     const bad = sid("bad");
     const good = sid("good");

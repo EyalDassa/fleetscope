@@ -1,5 +1,12 @@
+import { ENGINES as SCHEMA_ENGINES } from "@fleetscope/schema";
 import { describe, expect, it } from "vitest";
-import { type Assignment, assignSession, routeSession, unmetNeeds } from "./assign";
+import {
+  type Assignment,
+  assignSession,
+  LIGHTNESS_ORDER,
+  routeSession,
+  unmetNeeds,
+} from "./assign";
 import { ENGINE_SPECS } from "./engines";
 import { SCENARIO_NAMES, SCENARIO_NEEDS } from "./scenarios";
 
@@ -31,6 +38,12 @@ describe("assignSession", () => {
   it("one engine still cycles every scenario", () => {
     const scenarios = [0, 1, 2].map((i) => assignSession(["chromium"], "mix", 0, i).scenario);
     expect(new Set(scenarios).size).toBe(3);
+  });
+});
+
+describe("LIGHTNESS_ORDER", () => {
+  it("lists every engine of the schema exactly once, so each can be a routing target", () => {
+    expect([...LIGHTNESS_ORDER].sort()).toEqual([...SCHEMA_ENGINES].sort());
   });
 });
 
