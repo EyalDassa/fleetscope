@@ -1,0 +1,34 @@
+<!--
+  Server settings for the system log tables the Capacity dashboard reads (mounted read-only into
+  /etc/clickhouse-server/config.d by infra/docker-compose.yml).
+
+  Both tables are on by default in the official image (checked on 26.8.34.13: config.xml has
+  <part_log> and <asynchronous_metric_log>). They are written out here anyway so that:
+    1. a future default change cannot silently switch them off locally while ClickHouse Cloud, which
+       always has them, keeps them (the Capacity dashboard and its alerts would then fail only here);
+    2. the local copy does not grow without limit. The defaults keep the rows forever; the
+       asynchronous metric log alone reached 56 million rows in a day of development.
+
+  system.part_log:             one row per part created, merged, downloaded or removed. The dashboard
+                               compares "rows the fleet sent" with "rows ClickHouse wrote" (NewPart rows).
+  system.asynchronous_metric_log: memory and CPU of the server every second (Cloud: also per replica).
+
+  ClickHouse Cloud manages these tables itself and ignores this file. CI uses the image defaults (a
+  service container cannot mount a file); .github/scripts/check-clickhouse-system-logs.sh fails the
+  build if either table is missing there.
+-->
+<clickhouse>
+    <part_log>
+        <database>system</database>
+        <table>part_log</table>
+        <partition_by>toYYYYMM(event_date)</partition_by>
+        <ttl>event_date + INTERVAL 14 DAY DELETE</ttl>
+        <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+    </part_log>
+    <asynchronous_metric_log>
+        <database>system</database>
+        <table>asynchronous_metric_log</table>
+        <ttl>event_date + INTERVAL 14 DAY DELETE</ttl>
+        <flush_interval_milliseconds>7000</flush_interval_milliseconds>
+    </asynchronous_metric_log>
+</clickhouse>

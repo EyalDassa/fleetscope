@@ -1,0 +1,180 @@
+{
+  "title": "Fleetscope billing",
+  "interval": 900,
+  "rules": [
+    {
+      "uid": "fs-billing-credits-low",
+      "title": "ClickHouse Cloud trial credit below $50",
+      "condition": "C",
+      "data": [
+        {
+          "refId": "A",
+          "relativeTimeRange": {
+            "from": 600,
+            "to": 0
+          },
+          "datasourceUid": "clickhouse-cloud-api",
+          "model": {
+            "refId": "A",
+            "datasource": {
+              "type": "yesoreyeram-infinity-datasource",
+              "uid": "clickhouse-cloud-api"
+            },
+            "type": "json",
+            "source": "url",
+            "format": "table",
+            "parser": "jq-backend",
+            "url": "/v1/organizations/${ch_org}/usageCost?from_date=2026-10-24&to_date=2026-11-23",
+            "url_options": {
+              "method": "GET"
+            },
+            "root_selector": "[{value: (300 - .result.grandTotalCHC)}]",
+            "columns": [
+              {
+                "selector": "value",
+                "text": "value",
+                "type": "number"
+              }
+            ]
+          }
+        },
+        {
+          "refId": "B",
+          "datasourceUid": "__expr__",
+          "model": {
+            "refId": "B",
+            "datasource": {
+              "type": "__expr__",
+              "uid": "__expr__"
+            },
+            "type": "reduce",
+            "expression": "A",
+            "reducer": "last",
+            "settings": {
+              "mode": "dropNN"
+            }
+          }
+        },
+        {
+          "refId": "C",
+          "datasourceUid": "__expr__",
+          "model": {
+            "refId": "C",
+            "datasource": {
+              "type": "__expr__",
+              "uid": "__expr__"
+            },
+            "type": "threshold",
+            "expression": "B",
+            "conditions": [
+              {
+                "evaluator": {
+                  "type": "lt",
+                  "params": [50]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "for": "0s",
+      "noDataState": "OK",
+      "execErrState": "KeepLast",
+      "annotations": {
+        "summary": "Less than 50 ClickHouse credits of the $300 trial are left",
+        "description": "300 minus the usage since 2026-10-24, from the ClickHouse Cloud API (1 credit is counted as 1 USD). Usage lags by about a day. Delete the service or add a card before the credit is gone."
+      },
+      "labels": {
+        "severity": "critical"
+      },
+      "isPaused": false
+    },
+    {
+      "uid": "fs-billing-trial-runout",
+      "title": "ClickHouse Cloud trial credit runs out before 2026-11-23",
+      "condition": "C",
+      "data": [
+        {
+          "refId": "A",
+          "relativeTimeRange": {
+            "from": 600,
+            "to": 0
+          },
+          "datasourceUid": "clickhouse-cloud-api",
+          "model": {
+            "refId": "A",
+            "datasource": {
+              "type": "yesoreyeram-infinity-datasource",
+              "uid": "clickhouse-cloud-api"
+            },
+            "type": "json",
+            "source": "url",
+            "format": "table",
+            "parser": "jq-backend",
+            "url": "/v1/organizations/${ch_org}/usageCost?from_date=2026-10-24&to_date=2026-11-23",
+            "url_options": {
+              "method": "GET"
+            },
+            "root_selector": "(.result.costs | group_by(.date) | map({date: .[0].date, chc: (map(.totalCHC) | add)}) | map(select(.date < (now | strftime(\"%Y-%m-%d\")))) | .[-3:]) as $full | if ($full | length) == 0 then [] else [{value: ((300 - .result.grandTotalCHC) - (($full | map(.chc) | add) / ($full | length)) * ((((\"2026-11-23T23:59:59Z\" | fromdateiso8601) - now) / 86400)))}] end",
+            "columns": [
+              {
+                "selector": "value",
+                "text": "value",
+                "type": "number"
+              }
+            ]
+          }
+        },
+        {
+          "refId": "B",
+          "datasourceUid": "__expr__",
+          "model": {
+            "refId": "B",
+            "datasource": {
+              "type": "__expr__",
+              "uid": "__expr__"
+            },
+            "type": "reduce",
+            "expression": "A",
+            "reducer": "last",
+            "settings": {
+              "mode": "dropNN"
+            }
+          }
+        },
+        {
+          "refId": "C",
+          "datasourceUid": "__expr__",
+          "model": {
+            "refId": "C",
+            "datasource": {
+              "type": "__expr__",
+              "uid": "__expr__"
+            },
+            "type": "threshold",
+            "expression": "B",
+            "conditions": [
+              {
+                "evaluator": {
+                  "type": "lt",
+                  "params": [0]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "for": "0s",
+      "noDataState": "OK",
+      "execErrState": "KeepLast",
+      "annotations": {
+        "summary": "At the average of the last 3 full days, the trial credit runs out before the trial ends on 2026-11-23",
+        "description": "The value is the credit left at the end of the trial at the current burn rate; below 0 means it runs out first. Lower the service size (ClickHouse Cloud > Settings > Scaling) or accept the end date. Fewer than one full day of history gives no answer."
+      },
+      "labels": {
+        "severity": "warning"
+      },
+      "isPaused": false
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+# The ClickHouse Cloud API data source (billing for the Capacity dashboard), local Grafana only.
+# NOT in provisioning/: the Grafana container copies this file next to the other data sources at start
+# only when CLICKHOUSE_CLOUD_KEY_ID and CLICKHOUSE_CLOUD_KEY_SECRET are both set (see the entrypoint in
+# infra/docker-compose.yml). Without a key the data source does not exist, instead of existing and
+# failing every query with 401.
+# `pnpm grafana:push` builds the same data source for Grafana Cloud (infra/grafana/src/billing.ts); keep
+# the two in sync. The UID is part of the contract with the Capacity dashboard.
+# Docs checked: https://grafana.com/docs/plugins/yesoreyeram-infinity-datasource/latest/configure/
+apiVersion: 1
+
+datasources:
+  - name: ClickHouse Cloud API
+    uid: clickhouse-cloud-api
+    type: yesoreyeram-infinity-datasource
+    access: proxy
+    editable: false
+    basicAuth: true
+    basicAuthUser: $CLICKHOUSE_CLOUD_KEY_ID
+    jsonData:
+      auth_method: basicAuth
+      # Infinity refuses every other host. Required whenever authentication is configured.
+      allowedHosts:
+        - https://api.clickhouse.cloud
+    secureJsonData:
+      basicAuthPassword: $CLICKHOUSE_CLOUD_KEY_SECRET

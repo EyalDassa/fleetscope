@@ -7,7 +7,14 @@
 //   - no rawSql uses ifNull(x, 0) or coalesce(x, 0) (a missing value must not turn into a 0)
 import { collectPanels, type Problem } from "./dashboards";
 import { asArray, asString, isObject, type JsonObject } from "./json";
-import { ALLOWED_COLOR_NAMES, ALLOWED_COLORS, ENGINES, FIELD_DEFAULT_COLOR } from "./palette";
+import {
+  ALLOWED_COLOR_NAMES,
+  allowedColorsFor,
+  CAPACITY_DASHBOARD_UID,
+  CAPACITY_ONLY_COLORS,
+  ENGINES,
+  FIELD_DEFAULT_COLOR,
+} from "./palette";
 import { codeOnly, findClosingParen, splitArgs, stripComments } from "./sql-text";
 
 const HEX_COLOR = /^#[0-9a-fA-F]{3,8}$/;
@@ -16,6 +23,7 @@ const COLOR_KEYS = new Set(["color", "fixedColor", "iconColor"]);
 /** Every hex colour, and every string under a colour key, anywhere in the dashboard. */
 function colorProblems(dashboard: JsonObject): Problem[] {
   const problems: Problem[] = [];
+  const allowed = allowedColorsFor(asString(dashboard.uid));
   const reported = new Set<string>();
   const report = (path: string, value: string, why: string): void => {
     const key = `${value}|${why}`;
@@ -26,8 +34,14 @@ function colorProblems(dashboard: JsonObject): Problem[] {
   const walk = (value: unknown, path: string, key: string): void => {
     if (typeof value === "string") {
       if (HEX_COLOR.test(value)) {
-        if (!ALLOWED_COLORS.has(value.toLowerCase())) {
-          report(path, value, "is not in the Dark palette of DESIGN.md section 2");
+        if (!allowed.has(value.toLowerCase())) {
+          report(
+            path,
+            value,
+            CAPACITY_ONLY_COLORS.has(value.toLowerCase())
+              ? `is a Capacity colour, allowed only on the dashboard with uid ${CAPACITY_DASHBOARD_UID}`
+              : "is not in the Dark palette of DESIGN.md section 2",
+          );
         }
       } else if (COLOR_KEYS.has(key) && !ALLOWED_COLOR_NAMES.has(value)) {
         report(
@@ -67,7 +81,11 @@ function overridePropertyValue(override: JsonObject, id: string): unknown {
   return property?.value;
 }
 
-function timeSeriesProblems(panel: JsonObject, where: string): Problem[] {
+function timeSeriesProblems(
+  panel: JsonObject,
+  where: string,
+  requireEngineOverrides: boolean,
+): Problem[] {
   const problems: Problem[] = [];
   const defaults = defaultsOf(panel);
   const custom = isObject(defaults.custom) ? defaults.custom : {};
@@ -87,7 +105,8 @@ function timeSeriesProblems(panel: JsonObject, where: string): Problem[] {
     });
   }
   const overrides = overridesOf(panel);
-  for (const engine of ENGINES) {
+  // The Capacity dashboard compares the fleet with ClickHouse; its series are not engines.
+  for (const engine of requireEngineOverrides ? ENGINES : []) {
     const override = overrides.find((o) => {
       const matcher = isObject(o.matcher) ? o.matcher : {};
       const options = asString(matcher.options)?.replace(/^\/|\/$/g, "");
@@ -280,7 +299,11 @@ export function designProblems(dashboard: JsonObject): Problem[] {
         });
       }
     }
-    if (type === "timeseries") problems.push(...timeSeriesProblems(panel, where));
+    if (type === "timeseries") {
+      problems.push(
+        ...timeSeriesProblems(panel, where, asString(dashboard.uid) !== CAPACITY_DASHBOARD_UID),
+      );
+    }
   }
   return problems;
 }

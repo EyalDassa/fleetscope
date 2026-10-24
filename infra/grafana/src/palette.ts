@@ -35,3 +35,34 @@ export const ALLOWED_COLORS: ReadonlySet<string> = new Set(
 
 /** Colour names that follow the theme and are allowed anyway (a threshold base). */
 export const ALLOWED_COLOR_NAMES: ReadonlySet<string> = new Set(["text", "transparent"]);
+
+/**
+ * Colours for the Capacity dashboard ("Fleetscope / Capacity") only. They mean something only there:
+ * the dashboard compares the fleet with ClickHouse, not engines with each other. Every other dashboard
+ * is refused these (the same hex on the Overview would read as an engine or a status).
+ */
+export const CAPACITY_DASHBOARD_UID = "fleetscope-capacity";
+export const CAPACITY_COLORS = {
+  /** What ClickHouse wrote or used. */
+  clickhouse: "#0072B2",
+  /** What the fleet sent. */
+  fleet: "#009E73",
+  /** A limit (solid line, never dashed). */
+  limit: "#9AA9BB",
+  /** Sessions. */
+  sessions: "#F0E442",
+} as const;
+
+/** Capacity-only colours that are not already in the shared palette (`limit` equals the neutral grey). */
+export const CAPACITY_ONLY_COLORS: ReadonlySet<string> = new Set(
+  [CAPACITY_COLORS.clickhouse, CAPACITY_COLORS.fleet, CAPACITY_COLORS.sessions].map((c) =>
+    c.toLowerCase(),
+  ),
+);
+
+/** The colours a dashboard may use: the shared palette, plus the capacity colours on the capacity dashboard. */
+export function allowedColorsFor(dashboardUid: string | undefined): ReadonlySet<string> {
+  return dashboardUid === CAPACITY_DASHBOARD_UID
+    ? new Set([...ALLOWED_COLORS, ...CAPACITY_ONLY_COLORS])
+    : ALLOWED_COLORS;
+}

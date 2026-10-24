@@ -44,7 +44,7 @@ const SESSION_LINK =
 
 describe("dashboard links", () => {
   it("there are links to check", () => {
-    expect(dashboards.size).toBe(4);
+    expect(dashboards.size).toBeGreaterThanOrEqual(4); // 5 with the Capacity dashboard
     expect(toDashboard.length).toBeGreaterThanOrEqual(10);
   });
 

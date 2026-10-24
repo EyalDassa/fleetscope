@@ -21,6 +21,12 @@ export interface FakeState {
   meta: Map<string, JsonObject>;
   /** The account behind the token (GET /api/user). */
   user: JsonObject;
+  /** Installed plugins by id (GET /api/plugins/:id/settings), with their version. */
+  plugins: Map<string, string>;
+  /** Whether POST /api/plugins/:id/install works (Grafana Cloud may refuse it). */
+  allowPluginInstall: boolean;
+  /** Alert rule groups by "folderUid/title", as the provisioning API stores them. */
+  ruleGroups: Map<string, JsonObject>;
   /** Who the version history says saved each dashboard last (GET .../versions, createdBy). */
   authors: Map<string, string>;
 }
@@ -57,6 +63,9 @@ export function fakeGrafana(): { fetchImpl: Fetch; state: FakeState } {
     healthy: true,
     permissions: new Map(),
     meta: new Map(),
+    plugins: new Map(),
+    allowPluginInstall: true,
+    ruleGroups: new Map(),
     authors: new Map(),
     // As Grafana reports a service account token (GET /api/user)
     user: { uid: "service-account:2", login: "sa-1-fleetscope-push", name: "fleetscope-push" },
@@ -97,6 +106,43 @@ export function fakeGrafana(): { fetchImpl: Fetch; state: FakeState } {
       return json(200, state.folders.get(String(body.uid)));
     }
     if (path === "/api/user") return json(200, state.user);
+    const pluginRoute = /^\/api\/plugins\/([^/]+)\/(settings|install)$/.exec(path);
+    if (pluginRoute) {
+      const id = pluginRoute[1] as string;
+      if (pluginRoute[2] === "settings") {
+        const version = state.plugins.get(id);
+        return version === undefined ? notFound : json(200, { id, info: { version } });
+      }
+      if (method === "POST") {
+        if (!state.allowPluginInstall)
+          return json(403, { message: "plugin installation is disabled" });
+        state.plugins.set(id, String(body?.version ?? "0.0.0"));
+        return json(200, { message: "Plugin installed" });
+      }
+    }
+    // Alert provisioning: what Grafana adds on the way back is added here too (provenance, ids, times), so
+    // a test proves that the comparison tolerates it.
+    const groupRoute = /^\/api\/v1\/provisioning\/folder\/([^/]+)\/rule-groups\/([^/]+)$/.exec(
+      path,
+    );
+    if (groupRoute) {
+      const key = `${decodeURIComponent(groupRoute[1] as string)}/${decodeURIComponent(groupRoute[2] as string)}`;
+      if (method === "GET") {
+        const stored = state.ruleGroups.get(key);
+        return stored ? json(200, stored) : notFound;
+      }
+      if (method === "PUT" && body) {
+        const rules = (Array.isArray(body.rules) ? body.rules : []).map((rule, i) => ({
+          ...(rule as JsonObject),
+          id: i + 1,
+          orgID: 1,
+          updated: "2026-10-25T00:00:00Z",
+          provenance: "api",
+        }));
+        state.ruleGroups.set(key, { ...body, rules });
+        return json(200, state.ruleGroups.get(key));
+      }
+    }
     const accessUid = at(/^\/api\/access-control\/folders\/([^/]+)$/);
     if (accessUid && method === "GET") {
       const rows = state.permissions.get(accessUid);
