@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # Fails unless every place that names the Playwright version agrees:
 #   1. the browser image Dockerfile (ARG PLAYWRIGHT_VERSION, and the FROM line that uses it),
-#   2. the image tag `fleetscope/playwright-chromium:<version>` in package.json (browsers:build),
-#      .env.example (FLEET_BROWSER_IMAGE), .github/workflows/ci.yml (fleet smoke job) and the
-#      runner's built-in default in apps/fleet-runner/src/config.ts (DEFAULT_BROWSER_IMAGE: it
-#      is what runs when nobody sets FLEET_BROWSER_IMAGE, so a stale one breaks connect() mid-run),
+#      and `ARG IMAGE_REVISION=<n>`: our image's own revision, so the tag is <version>-<n>,
+#   2. the image tag `fleetscope/playwright-chromium:<version>-<n>` in package.json (browsers:build),
+#      .env.example (FLEET_BROWSER_IMAGE_CHROMIUM), .github/workflows/ci.yml (fleet smoke job),
+#      infra/browsers/README.md, and the runner's built-in default (apps/fleet-runner/src/engines.ts,
+#      or config.ts before M3: it is what runs when nobody sets the env var, so a stale one breaks
+#      connect() mid-run). The runner files are optional here (warning); with --strict at least one
+#      of them must carry the tag.
 #   3. the `playwright` / `playwright-core` version pinned in the client packages
 #      (apps/fleet-runner and packages/collector).
 #
@@ -29,7 +32,8 @@ cd "$root"
 
 dockerfile="infra/browsers/chromium/Dockerfile"
 image_repo="fleetscope/playwright-chromium"
-tag_files=(package.json .env.example .github/workflows/ci.yml apps/fleet-runner/src/config.ts)
+tag_files=(package.json .env.example .github/workflows/ci.yml infra/browsers/README.md)
+runner_files=(apps/fleet-runner/src/engines.ts apps/fleet-runner/src/config.ts)
 client_manifests=(apps/fleet-runner/package.json packages/collector/package.json)
 
 errors=0
@@ -55,6 +59,21 @@ if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
 fi
 echo "Dockerfile:  $version ($dockerfile)"
 
+rev_lines=$(grep -E '^ARG IMAGE_REVISION=' "$dockerfile" || true)
+rev_count=$(printf '%s' "$rev_lines" | grep -c . || true)
+if [ "$rev_count" -ne 1 ]; then
+  echo "ERROR: expected exactly 1 'ARG IMAGE_REVISION=<n>' line in $dockerfile, found $rev_count" >&2
+  exit 1
+fi
+revision="${rev_lines#ARG IMAGE_REVISION=}"
+revision="${revision%"${revision##*[![:space:]]}"}"
+if ! printf '%s' "$revision" | grep -Eq '^[0-9]+$'; then
+  echo "ERROR: IMAGE_REVISION in $dockerfile must be a whole number, got '$revision'" >&2
+  exit 1
+fi
+image_tag="${version}-${revision}"
+echo "Image tag:   ${image_repo}:${image_tag}"
+
 # The base image must be built from the same version (otherwise the browsers would not match).
 from_count=$(grep -cE '^FROM mcr\.microsoft\.com/playwright:v\$\{PLAYWRIGHT_VERSION\}-[a-z]+' "$dockerfile" || true)
 if [ "$from_count" -ne 1 ]; then
@@ -62,24 +81,43 @@ if [ "$from_count" -ne 1 ]; then
 fi
 
 # --- 2. Image tag everywhere it is written down -----------------------------------------------
+# Prints the image tags a file names; fails the check on any tag that is not the expected one.
+check_tags() {
+  local file="$1" tags tag
+  tags=$(grep -oE "${image_repo}:[A-Za-z0-9._-]+" "$file" | sort -u || true)
+  if [ -z "$tags" ]; then
+    return 1
+  fi
+  while IFS= read -r tag; do
+    if [ "$tag" = "${image_repo}:${image_tag}" ]; then
+      echo "image tag:   $tag ($file)"
+    else
+      fail "$file has image tag $tag, expected ${image_repo}:${image_tag}"
+    fi
+  done <<< "$tags"
+}
+
 for file in "${tag_files[@]}"; do
   if [ ! -f "$file" ]; then
     fail "$file not found"
-    continue
+  elif ! check_tags "$file"; then
+    fail "$file does not mention the image tag ${image_repo}:${image_tag}"
   fi
-  tags=$(grep -oE "${image_repo}:[A-Za-z0-9._-]+" "$file" | sort -u || true)
-  if [ -z "$tags" ]; then
-    fail "$file does not mention the image tag ${image_repo}:${version}"
-    continue
-  fi
-  while IFS= read -r tag; do
-    if [ "$tag" = "${image_repo}:${version}" ]; then
-      echo "image tag:   $tag ($file)"
-    else
-      fail "$file has image tag $tag, expected ${image_repo}:${version}"
-    fi
-  done <<< "$tags"
 done
+
+# The runner's defaults: engines.ts arrives with M3 (config.ts held DEFAULT_BROWSER_IMAGE before).
+runner_tagged=0
+for file in "${runner_files[@]}"; do
+  [ -f "$file" ] || continue
+  if check_tags "$file"; then runner_tagged=1; fi
+done
+if [ "$runner_tagged" -eq 0 ]; then
+  if [ "$strict" -eq 1 ]; then
+    fail "none of ${runner_files[*]} names the image tag ${image_repo}:${image_tag} (--strict)"
+  else
+    echo "WARN: no runner file with the image tag yet (${runner_files[*]}), skipped (CI runs with --strict)"
+  fi
+fi
 
 # --- 3. Client packages -----------------------------------------------------------------------
 # Prints "<dependency section> <name> <spec>" for playwright and playwright-core in a package.json.
@@ -127,7 +165,7 @@ fi
 
 if [ "$errors" -ne 0 ]; then
   echo "FAILED: $errors problem(s). The Playwright client and the browser image must use the same version." >&2
-  echo "Change them together: $dockerfile, package.json, .env.example, .github/workflows/ci.yml and the client package.json files." >&2
+  echo "Change them together: $dockerfile, package.json, .env.example, .github/workflows/ci.yml, infra/browsers/README.md, the runner defaults and the client package.json files." >&2
   exit 1
 fi
-echo "OK: Playwright version $version is consistent"
+echo "OK: Playwright version $version, image tag ${image_repo}:${image_tag} are consistent"
