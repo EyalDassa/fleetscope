@@ -512,7 +512,7 @@
       "id": 7,
       "type": "stat",
       "title": "Memory, % of limit",
-      "description": "The highest memory use of any replica in the last 10 minutes, as a percentage of that replica's memory limit (the time picker does not change it). Yellow from 70%, red from 85%. Not available when the server reports no limit (a local container has none).",
+      "description": "The highest memory use of any replica in the last 10 minutes, as a percentage of that replica's memory limit (the time picker does not change it). Yellow from 75%, red from 85%: ClickHouse refuses queries at about 90%. Not available when the server reports no limit (a local container has none).",
       "gridPos": {
         "x": 0,
         "y": 10,
@@ -532,7 +532,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "-- Highest memory use of any replica in the last 10 minutes, as % of its limit (NULL without a limit).\nSELECT maxOrNull(pct) AS value\nFROM\n(\n    SELECT\n        100 * maxIfOrNull(value, metric = 'CGroupMemoryUsed')\n            / nullIf(maxIfOrNull(value, metric = 'CGroupMemoryTotal'), 0) AS pct\n    FROM system.asynchronous_metric_log\n    WHERE event_time >= now() - INTERVAL 10 MINUTE\n      AND metric IN ('CGroupMemoryUsed', 'CGroupMemoryTotal')\n    GROUP BY toStartOfMinute(event_time), hostname\n)\n",
+          "rawSql": "-- Highest memory use of any replica in the last 10 minutes, as % of its limit (NULL without a limit).\nSELECT maxOrNull(pct) AS value\nFROM\n(\n    SELECT\n        100 * maxIfOrNull(value, metric = 'CGroupMemoryUsedWithoutPageCache')\n            / nullIf(maxIfOrNull(value, metric = 'CGroupMemoryTotal'), 0) AS pct\n    FROM system.asynchronous_metric_log\n    WHERE event_time >= now() - INTERVAL 10 MINUTE\n      AND metric IN ('CGroupMemoryUsedWithoutPageCache', 'CGroupMemoryTotal')\n    GROUP BY toStartOfMinute(event_time), hostname\n)\n",
           "refId": "A",
           "pluginVersion": "4.23.2"
         }
@@ -575,7 +575,7 @@
               },
               {
                 "color": "#FFD95A",
-                "value": 70
+                "value": 75
               },
               {
                 "color": "#FF7B7B",
@@ -922,7 +922,7 @@
       "id": 11,
       "type": "timeseries",
       "title": "Memory, used vs limit",
-      "description": "All sources. Peak memory of the server's container in each minute (blue) against its memory limit (grey line), in GiB, per replica. A missing limit is a gap (a local container has none), never 0. Grey markers on the chart are scaling changes.",
+      "description": "All sources. Peak memory of the server's container without the page cache in each minute (blue) against its memory limit (grey line), in GiB, per replica. A missing limit is a gap (a local container has none), never 0. Grey markers on the chart are scaling changes.",
       "gridPos": {
         "x": 0,
         "y": 15,
@@ -943,7 +943,7 @@
           "editorType": "sql",
           "format": 0,
           "queryType": "timeseries",
-          "rawSql": "-- Memory and CPU of the server against its limits, per minute and replica; a missing limit is NULL.\nSELECT\n    toStartOfMinute(event_time) AS time,\n    splitByChar('.', hostname)[1] AS replica,\n    maxIfOrNull(value, metric = 'CGroupMemoryUsed') / 1073741824 AS mem_used_gib,\n    nullIf(maxIfOrNull(value, metric = 'CGroupMemoryTotal'), 0) / 1073741824 AS mem_limit_gib,\n    avgIfOrNull(value, metric = 'CGroupUserTime') + avgIfOrNull(value, metric = 'CGroupSystemTime') AS cpu_used_cores,\n    nullIf(maxIfOrNull(value, metric = 'CGroupMaxCPU'), 0) AS cpu_limit_cores\nFROM system.asynchronous_metric_log\nWHERE event_time >= toStartOfMinute($__fromTime) AND event_time <= $__toTime\n  AND metric IN ('CGroupMemoryUsed', 'CGroupMemoryTotal', 'CGroupUserTime', 'CGroupSystemTime', 'CGroupMaxCPU')\nGROUP BY time, replica\nORDER BY time, replica\n",
+          "rawSql": "-- Memory and CPU of the server against its limits, per minute and replica; a missing limit is NULL.\nSELECT\n    toStartOfMinute(event_time) AS time,\n    splitByChar('.', hostname)[1] AS replica,\n    maxIfOrNull(value, metric = 'CGroupMemoryUsedWithoutPageCache') / 1073741824 AS mem_used_gib,\n    nullIf(maxIfOrNull(value, metric = 'CGroupMemoryTotal'), 0) / 1073741824 AS mem_limit_gib,\n    avgIfOrNull(value, metric = 'CGroupUserTime') + avgIfOrNull(value, metric = 'CGroupSystemTime') AS cpu_used_cores,\n    nullIf(maxIfOrNull(value, metric = 'CGroupMaxCPU'), 0) AS cpu_limit_cores\nFROM system.asynchronous_metric_log\nWHERE event_time >= toStartOfMinute($__fromTime) AND event_time <= $__toTime\n  AND metric IN ('CGroupMemoryUsedWithoutPageCache', 'CGroupMemoryTotal', 'CGroupUserTime', 'CGroupSystemTime', 'CGroupMaxCPU')\nGROUP BY time, replica\nORDER BY time, replica\n",
           "refId": "A",
           "pluginVersion": "4.23.2"
         }
@@ -1098,7 +1098,7 @@
           "editorType": "sql",
           "format": 0,
           "queryType": "timeseries",
-          "rawSql": "-- Memory and CPU of the server against its limits, per minute and replica; a missing limit is NULL.\nSELECT\n    toStartOfMinute(event_time) AS time,\n    splitByChar('.', hostname)[1] AS replica,\n    maxIfOrNull(value, metric = 'CGroupMemoryUsed') / 1073741824 AS mem_used_gib,\n    nullIf(maxIfOrNull(value, metric = 'CGroupMemoryTotal'), 0) / 1073741824 AS mem_limit_gib,\n    avgIfOrNull(value, metric = 'CGroupUserTime') + avgIfOrNull(value, metric = 'CGroupSystemTime') AS cpu_used_cores,\n    nullIf(maxIfOrNull(value, metric = 'CGroupMaxCPU'), 0) AS cpu_limit_cores\nFROM system.asynchronous_metric_log\nWHERE event_time >= toStartOfMinute($__fromTime) AND event_time <= $__toTime\n  AND metric IN ('CGroupMemoryUsed', 'CGroupMemoryTotal', 'CGroupUserTime', 'CGroupSystemTime', 'CGroupMaxCPU')\nGROUP BY time, replica\nORDER BY time, replica\n",
+          "rawSql": "-- Memory and CPU of the server against its limits, per minute and replica; a missing limit is NULL.\nSELECT\n    toStartOfMinute(event_time) AS time,\n    splitByChar('.', hostname)[1] AS replica,\n    maxIfOrNull(value, metric = 'CGroupMemoryUsedWithoutPageCache') / 1073741824 AS mem_used_gib,\n    nullIf(maxIfOrNull(value, metric = 'CGroupMemoryTotal'), 0) / 1073741824 AS mem_limit_gib,\n    avgIfOrNull(value, metric = 'CGroupUserTime') + avgIfOrNull(value, metric = 'CGroupSystemTime') AS cpu_used_cores,\n    nullIf(maxIfOrNull(value, metric = 'CGroupMaxCPU'), 0) AS cpu_limit_cores\nFROM system.asynchronous_metric_log\nWHERE event_time >= toStartOfMinute($__fromTime) AND event_time <= $__toTime\n  AND metric IN ('CGroupMemoryUsedWithoutPageCache', 'CGroupMemoryTotal', 'CGroupUserTime', 'CGroupSystemTime', 'CGroupMaxCPU')\nGROUP BY time, replica\nORDER BY time, replica\n",
           "refId": "A",
           "pluginVersion": "4.23.2"
         }
@@ -1266,7 +1266,7 @@
           "editorType": "sql",
           "format": 0,
           "queryType": "timeseries",
-          "rawSql": "-- Memory and CPU of the server against its limits, per minute and replica; a missing limit is NULL.\nSELECT\n    toStartOfMinute(event_time) AS time,\n    splitByChar('.', hostname)[1] AS replica,\n    maxIfOrNull(value, metric = 'CGroupMemoryUsed') / 1073741824 AS mem_used_gib,\n    nullIf(maxIfOrNull(value, metric = 'CGroupMemoryTotal'), 0) / 1073741824 AS mem_limit_gib,\n    avgIfOrNull(value, metric = 'CGroupUserTime') + avgIfOrNull(value, metric = 'CGroupSystemTime') AS cpu_used_cores,\n    nullIf(maxIfOrNull(value, metric = 'CGroupMaxCPU'), 0) AS cpu_limit_cores\nFROM system.asynchronous_metric_log\nWHERE event_time >= toStartOfMinute($__fromTime) AND event_time <= $__toTime\n  AND metric IN ('CGroupMemoryUsed', 'CGroupMemoryTotal', 'CGroupUserTime', 'CGroupSystemTime', 'CGroupMaxCPU')\nGROUP BY time, replica\nORDER BY time, replica\n",
+          "rawSql": "-- Memory and CPU of the server against its limits, per minute and replica; a missing limit is NULL.\nSELECT\n    toStartOfMinute(event_time) AS time,\n    splitByChar('.', hostname)[1] AS replica,\n    maxIfOrNull(value, metric = 'CGroupMemoryUsedWithoutPageCache') / 1073741824 AS mem_used_gib,\n    nullIf(maxIfOrNull(value, metric = 'CGroupMemoryTotal'), 0) / 1073741824 AS mem_limit_gib,\n    avgIfOrNull(value, metric = 'CGroupUserTime') + avgIfOrNull(value, metric = 'CGroupSystemTime') AS cpu_used_cores,\n    nullIf(maxIfOrNull(value, metric = 'CGroupMaxCPU'), 0) AS cpu_limit_cores\nFROM system.asynchronous_metric_log\nWHERE event_time >= toStartOfMinute($__fromTime) AND event_time <= $__toTime\n  AND metric IN ('CGroupMemoryUsedWithoutPageCache', 'CGroupMemoryTotal', 'CGroupUserTime', 'CGroupSystemTime', 'CGroupMaxCPU')\nGROUP BY time, replica\nORDER BY time, replica\n",
           "refId": "A",
           "pluginVersion": "4.23.2"
         },
