@@ -49,6 +49,19 @@ describe("formatVariable", () => {
     expect(formatVariable(source, "singlequote")).toBe("'real'");
   });
 
+  it("percent-encodes like Grafana, so a quote or backslash cannot leave the SQL string (QA-M2-05)", () => {
+    const hostile = state({ name: "session", selected: ["x\\' OR 1=1 --"] });
+    const encoded = formatVariable(hostile, "percentencode");
+    expect(encoded).toBe("x%5C%27%20OR%201%3D1%20--");
+    expect(encoded).not.toMatch(/['\\ ]/);
+    // encodeURIComponent leaves ! ' ( ) * alone; Grafana does not
+    expect(formatVariable(state({ name: "s", selected: ["a!b'c(d)e*f"] }), "percentencode")).toBe(
+      "a%21b%27c%28d%29e%2Af",
+    );
+    // a list is written {a,b} before encoding
+    expect(formatVariable(engineAll, "percentencode")).toBe("%7Bchromium%2Clightpanda%7D");
+  });
+
   it("uses a custom All value untouched", () => {
     const all = state({ ...engineAll, allValue: ".*" });
     expect(formatVariable(all, undefined)).toBe(".*");

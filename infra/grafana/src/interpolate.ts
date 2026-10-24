@@ -38,6 +38,13 @@ export const ALL_VALUE = "$__all";
 const quote = (s: string, q: string, escapeValue: (v: string) => string): string =>
   `${q}${escapeValue(s)}${q}`;
 
+/** Grafana's encodeURIComponentStrict: encodeURIComponent, plus the characters it leaves alone: ! ' ( ) * */
+const percentEncode = (s: string): string =>
+  encodeURIComponent(s).replace(
+    /[!'()*]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+
 /** How a variable value is written into SQL. `fmt` is the part after the colon in ${var:fmt}. */
 export function formatVariable(state: VariableState, fmt: string | undefined): string {
   // With a custom "All" value, Grafana inserts that string untouched instead of the option list.
@@ -66,9 +73,13 @@ export function formatVariable(state: VariableState, fmt: string | undefined): s
       return values.map((v) => quote(v, '"', (s) => s.replace(/"/g, '\\"'))).join(",");
     case "sqlstring":
       return values.map((v) => quote(v, "'", (s) => s.replace(/'/g, "''"))).join(",");
+    case "percentencode":
+      // Grafana: encodeURIComponent, and also !'()* (which that function leaves alone); a list is
+      // written {a,b} first. Nothing in the result needs SQL escaping: no quote or backslash is left.
+      return percentEncode(isList ? `{${values.join(",")}}` : (values[0] ?? ""));
     default:
       throw new InterpolationError(
-        `variable format "${fmt}" is not supported by the check (supported: raw, csv, pipe, singlequote, doublequote, sqlstring, text)`,
+        `variable format "${fmt}" is not supported by the check (supported: raw, csv, pipe, singlequote, doublequote, sqlstring, percentencode, text)`,
       );
   }
 }
