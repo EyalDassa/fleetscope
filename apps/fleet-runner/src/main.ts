@@ -10,7 +10,7 @@ import { preflight } from "./preflight";
 import { createCollectors, runFleet } from "./run";
 import type { SessionResult } from "./session-runner";
 import { forceShutdown } from "./shutdown";
-import { formatSummary } from "./summary";
+import { engineLabel, formatSummary } from "./summary";
 
 const out = (text: string) => process.stdout.write(text);
 const err = (text: string) => process.stderr.write(text);
@@ -137,6 +137,7 @@ async function runCommand(args: string[]): Promise<number> {
       sessions: options.sessions,
       concurrency: options.concurrency,
       scenario: options.scenario,
+      routing: options.routing,
       seed: options.seed,
       agent: options.agentId,
       api: config.apiUrl,
@@ -174,7 +175,7 @@ async function runCommand(args: string[]): Promise<number> {
 export function batchLine(batch: number, results: readonly SessionResult[], ms: number): string {
   const sessions = [...results]
     .sort((a, b) => a.index - b.index)
-    .map((r) => `${r.engine}/${r.scenario}=${r.status}`)
+    .map((r) => `${engineLabel(r)}/${r.scenario}=${r.status}`)
     .join(", ");
   const first = results.length > 0 ? Math.min(...results.map((r) => r.index)) + 1 : 0;
   const last = first + results.length - 1;
@@ -223,6 +224,7 @@ async function trafficCommand(args: string[]): Promise<number> {
       periodSeconds: Math.round(periodMs / 1000),
       durationMs: options.durationMs,
       scenario: options.scenario,
+      routing: options.routing,
       seed: options.seed,
       agent: options.agentId,
       api: config.apiUrl,
@@ -231,6 +233,7 @@ async function trafficCommand(args: string[]): Promise<number> {
   );
 
   const results: SessionResult[] = [];
+  const warnedUnroutable = new Set<string>();
   let index = 0;
   let batch = 0;
   while (!signal.aborted && Date.now() < stopAt) {
@@ -245,6 +248,7 @@ async function trafficCommand(args: string[]): Promise<number> {
       live,
       firstIndex: index,
       closeCollectors: false,
+      warnedUnroutable,
     });
     index += batchSize;
     results.push(...run.results);

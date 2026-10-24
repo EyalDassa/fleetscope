@@ -1,5 +1,6 @@
 import type { Engine } from "@fleetscope/schema";
-import { SCENARIO_NAMES, type ScenarioName } from "./scenarios";
+import { ENGINE_SPECS } from "./engines";
+import { SCENARIO_NAMES, SCENARIO_NEEDS, type ScenarioName } from "./scenarios";
 
 export interface Assignment {
   engine: Engine;
@@ -29,4 +30,48 @@ export function assignSession(
     scenario: scenarios[Math.floor(at / engines.length)] as ScenarioName,
     engine: engines[at % engines.length] as Engine,
   };
+}
+
+/** `fixed`: the assignment is final. `by-scenario`: a scenario is moved off an engine that lacks what it needs. */
+export const ROUTING_POLICIES = ["fixed", "by-scenario"] as const;
+export type RoutingPolicy = (typeof ROUTING_POLICIES)[number];
+
+export interface RoutedAssignment extends Assignment {
+  /** The engine `assignSession` chose, when routing moved the session to another; else `null`. */
+  routedFrom: Engine | null;
+}
+
+/** Lightest first: a routed session goes to the cheapest engine that can run it. */
+const LIGHTNESS_ORDER: readonly Engine[] = ["lightpanda", "chrome-headless-shell", "chromium"];
+
+/** What the scenario needs and the engine lacks. Empty: the engine can run the scenario. */
+export function unmetNeeds(engine: Engine, scenario: ScenarioName) {
+  const lacks = ENGINE_SPECS[engine].lacks;
+  return SCENARIO_NEEDS[scenario].filter((need) => lacks.includes(need));
+}
+
+/**
+ * Applies the routing policy to an assignment. Pure: it does not log.
+ *
+ * With `by-scenario`, an assignment whose engine lacks something the scenario needs moves to the
+ * first engine of the run (in lightness order) that has all of it, and `routedFrom` names the engine
+ * it was taken from. If no engine of the run can run the scenario the assignment stays as it is
+ * (`routedFrom` null) and the session fails honestly on the engine that cannot do it; the caller
+ * can tell with `unmetNeeds`. With `fixed` nothing changes.
+ */
+export function routeSession(
+  assignment: Assignment,
+  engines: readonly Engine[],
+  policy: RoutingPolicy,
+): RoutedAssignment {
+  const unrouted = { ...assignment, routedFrom: null };
+  if (policy === "fixed" || unmetNeeds(assignment.engine, assignment.scenario).length === 0) {
+    return unrouted;
+  }
+  const capable = LIGHTNESS_ORDER.find(
+    (engine) => engines.includes(engine) && unmetNeeds(engine, assignment.scenario).length === 0,
+  );
+  return capable === undefined
+    ? unrouted
+    : { engine: capable, scenario: assignment.scenario, routedFrom: assignment.engine };
 }

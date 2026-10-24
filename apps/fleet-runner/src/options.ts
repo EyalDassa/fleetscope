@@ -1,6 +1,7 @@
 import { hostname } from "node:os";
 import { parseArgs } from "node:util";
 import { ENGINES, type Engine, SAFE_LABEL_PATTERN } from "@fleetscope/schema";
+import { ROUTING_POLICIES, type RoutingPolicy } from "./assign";
 import { SCENARIO_NAMES, type ScenarioName } from "./scenarios";
 
 export interface RunOptions {
@@ -10,6 +11,8 @@ export interface RunOptions {
   scenario: ScenarioName | "mix";
   seed: number;
   agentId: string;
+  /** `fixed`: every session runs on the engine it was assigned. `by-scenario`: see `routeSession`. */
+  routing: RoutingPolicy;
   /** A session still running after this long is cut off and ends as `timeout`. */
   sessionTimeoutMs: number;
 }
@@ -34,9 +37,13 @@ Options for "run":
   --scenario <name>         ${[...SCENARIO_NAMES, "mix"].join(" | ")}, default mix
   --seed <n>                makes the scenario choice and the chaos repeatable (default: random, printed)
   --agent <id>              agent_id on every event, default fleet-runner@<hostname>
+  --routing <policy>        fixed | by-scenario, default fixed. by-scenario runs a scenario only on an
+                            engine that can: heavy-page-crawl needs web workers, which Lightpanda does
+                            not run, so its sessions go to chrome-headless-shell (or chromium) and are
+                            recorded as routed (sessions.routed_from)
   --session-timeout <sec>   cut off a session that runs longer, default 120
 
-Options for "traffic" (also --engines, --agent, --scenario, --seed, --session-timeout):
+Options for "traffic" (also --engines, --agent, --scenario, --seed, --routing, --session-timeout):
   --rate <n>                sessions per minute, default 3
   --concurrency <n>         containers alive at the same time, default 2
   --duration <time>         stop after this long, e.g. 90s, 10m, 2h (default: until Ctrl+C)
@@ -95,6 +102,7 @@ export function parseRunArgs(
         scenario: { type: "string" },
         seed: { type: "string" },
         agent: { type: "string" },
+        routing: { type: "string" },
         "session-timeout": { type: "string" },
       },
       strict: true,
@@ -104,6 +112,12 @@ export function parseRunArgs(
     throw new UsageError(error instanceof Error ? error.message : String(error));
   }
 
+  const routing = values.routing ?? "fixed";
+  if (!(ROUTING_POLICIES as readonly string[]).includes(routing)) {
+    throw new UsageError(
+      `unknown routing "${routing}". Choose one of: ${ROUTING_POLICIES.join(", ")}`,
+    );
+  }
   const scenario = values.scenario ?? "mix";
   if (scenario !== "mix" && !(SCENARIO_NAMES as readonly string[]).includes(scenario)) {
     throw new UsageError(
@@ -128,6 +142,7 @@ export function parseRunArgs(
     scenario: scenario as RunOptions["scenario"],
     seed: values.seed === undefined ? randomSeed() : Number(values.seed),
     agentId,
+    routing: routing as RoutingPolicy,
     sessionTimeoutMs: positiveInt("session-timeout", values["session-timeout"], 120, 3600) * 1000,
   };
 }
@@ -170,6 +185,7 @@ export function parseTrafficArgs(
         scenario: { type: "string" },
         seed: { type: "string" },
         agent: { type: "string" },
+        routing: { type: "string" },
         "session-timeout": { type: "string" },
       },
       strict: true,
@@ -185,6 +201,7 @@ export function parseTrafficArgs(
       ...(values.concurrency !== undefined ? ["--concurrency", values.concurrency] : []),
       ...(values.scenario !== undefined ? ["--scenario", values.scenario] : []),
       ...(values.seed !== undefined ? ["--seed", values.seed] : []),
+      ...(values.routing !== undefined ? ["--routing", values.routing] : []),
       ...(values["session-timeout"] !== undefined
         ? ["--session-timeout", values["session-timeout"]]
         : []),

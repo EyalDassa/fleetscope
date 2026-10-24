@@ -8,6 +8,7 @@ function result(overrides: Partial<SessionResult>): SessionResult {
     index: 0,
     sessionId: "0123456789abcdef",
     engine: "chromium",
+    routedFrom: null,
     scenario: "login-and-search",
     status: "success",
     reason: null,
@@ -52,6 +53,25 @@ describe("formatSummary", () => {
     expect(text).toContain("Why not success:\n  #2 blocked: HTTP 403 for http://x/botwall");
     expect(text).toContain("2 sessions in 48.2s: success 1, blocked 1");
     expect(text).toContain("events: 118 sent, 2 duplicates, 0 dropped");
+  });
+
+  it("shows a routed session as 'engine (from other)' and counts it where it ran", () => {
+    const text = formatSummary(
+      [
+        result({ index: 0, engine: "chrome-headless-shell", routedFrom: "lightpanda" }),
+        result({ index: 1, engine: "lightpanda" }),
+      ],
+      delivery,
+      1000,
+    );
+    expect(text).toContain("chrome-headless-shell (from lightpanda)");
+    expect(text).toMatch(/^ {2}lightpanda\s+1 sessions/m);
+    expect(text).toMatch(/^ {2}chrome-headless-shell\s+1 sessions/m);
+    expect(text).toContain("routed: 1 of 2 sessions (lightpanda -> chrome-headless-shell 1)");
+  });
+
+  it("prints no routed line when nothing was routed", () => {
+    expect(formatSummary([result({})], delivery, 1000)).not.toContain("routed:");
   });
 
   it("shows sessions that never started as infra_error with dashes, and the reason", () => {

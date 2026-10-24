@@ -14,6 +14,10 @@ const timeToBrowser = (r: SessionResult): number | null =>
 const mean = (values: number[]): number | null =>
   values.length === 0 ? null : values.reduce((a, b) => a + b, 0) / values.length;
 
+/** `chrome-headless-shell (from lightpanda)` for a routed session, else just the engine. */
+export const engineLabel = (r: Pick<SessionResult, "engine" | "routedFrom">): string =>
+  r.routedFrom === null ? r.engine : `${r.engine} (from ${r.routedFrom})`;
+
 /** One row per engine: how its sessions ended and what it cost. */
 function engineTotals(results: readonly SessionResult[]): string[] {
   const engines = [...new Set(results.map((r) => r.engine))].sort();
@@ -50,7 +54,7 @@ export function formatSummary(
   const rows = ordered.map((r) => [
     String(r.index + 1),
     r.sessionId.slice(0, 8),
-    r.engine,
+    engineLabel(r),
     r.scenario,
     r.status,
     wasReported(r.status) ? seconds(r.durationMs) : "-",
@@ -91,7 +95,27 @@ export function formatSummary(
   for (const r of ordered) counts.set(r.status, (counts.get(r.status) ?? 0) + 1);
   const byStatus = [...counts].map(([status, n]) => `${status} ${n}`).join(", ");
   const totals = engineTotals(results);
-  if (totals.length > 0) lines.push("", "By engine:", ...totals);
+  if (totals.length > 0) {
+    lines.push(
+      "",
+      results.some((r) => r.routedFrom !== null)
+        ? "By engine (routed sessions count on the engine that ran them):"
+        : "By engine:",
+      ...totals,
+    );
+  }
+  const routed = results.filter((r) => r.routedFrom !== null);
+  if (routed.length > 0) {
+    const moves = new Map<string, number>();
+    for (const r of routed) {
+      const move = `${r.routedFrom} -> ${r.engine}`;
+      moves.set(move, (moves.get(move) ?? 0) + 1);
+    }
+    lines.push(
+      "",
+      `routed: ${routed.length} of ${results.length} sessions (${[...moves].map(([move, n]) => `${move} ${n}`).join(", ")})`,
+    );
+  }
   lines.push(
     "",
     `${results.length} sessions in ${seconds(elapsedMs)}: ${byStatus || "none"}${skipped > 0 ? `, ${skipped} not started (interrupted)` : ""}`,

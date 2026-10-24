@@ -21,6 +21,7 @@ function options(overrides: Partial<RunOptions> = {}): RunOptions {
     scenario: "mix",
     seed: 5,
     agentId: "test",
+    routing: "fixed",
     sessionTimeoutMs: 1000,
     ...overrides,
   };
@@ -37,6 +38,7 @@ function result(spec: SessionSpec): SessionResult {
     index: spec.index,
     sessionId: `s${spec.index}`,
     engine: spec.engine,
+    routedFrom: spec.routedFrom ?? null,
     scenario: spec.scenario,
     status: "success",
     reason: null,
@@ -113,6 +115,61 @@ describe("runFleet", () => {
       },
     });
     expect([...seen]).toEqual(["heavy-page-crawl"]);
+  });
+
+  describe("routing", () => {
+    const three = ["chromium", "chrome-headless-shell", "lightpanda"] as const;
+    const threeFleets = new Map(three.map((e) => [e, {} as DockerFleet])) as ReadonlyMap<
+      (typeof three)[number],
+      DockerFleet
+    >;
+    const run = async (routing: "fixed" | "by-scenario", engines = [...three]) => {
+      const specs: SessionSpec[] = [];
+      const warn = vi.fn();
+      await runFleet({
+        config,
+        options: options({ engines, sessions: 18, concurrency: 1, seed: 5, routing }),
+        fleets: threeFleets,
+        logger: { ...logger, warn } as unknown as typeof logger,
+        signal: new AbortController().signal,
+        collectors: new Map(engines.map((e) => [e, fakeCollector().collector])),
+        runSession: async (_deps, spec) => {
+          specs.push(spec);
+          return result(spec);
+        },
+      });
+      return { specs, warn };
+    };
+
+    it("by-scenario: no lightpanda heavy-page-crawl; those sessions run on headless-shell with routedFrom", async () => {
+      const { specs } = await run("by-scenario");
+      expect(
+        specs.filter((s) => s.engine === "lightpanda" && s.scenario === "heavy-page-crawl"),
+      ).toEqual([]);
+      const routed = specs.filter((s) => s.routedFrom);
+      expect(routed).toHaveLength(2); // 18 sessions = 2 blocks of 9 pairs
+      for (const s of routed) {
+        expect(s).toMatchObject({
+          engine: "chrome-headless-shell",
+          scenario: "heavy-page-crawl",
+          routedFrom: "lightpanda",
+        });
+      }
+    });
+
+    it("fixed: the assignment is run as it is", async () => {
+      const { specs } = await run("fixed");
+      expect(
+        specs.filter((s) => s.engine === "lightpanda" && s.scenario === "heavy-page-crawl"),
+      ).toHaveLength(2);
+      expect(specs.every((s) => !s.routedFrom)).toBe(true);
+    });
+
+    it("warns once per run when no engine of the run can run a scenario", async () => {
+      const { specs, warn } = await run("by-scenario", ["lightpanda"]);
+      expect(specs.every((s) => s.engine === "lightpanda" && !s.routedFrom)).toBe(true);
+      expect(warn).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("stops starting sessions after an interrupt, lets running ones finish, and counts the skipped", async () => {
