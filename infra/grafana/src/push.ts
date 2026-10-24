@@ -14,6 +14,7 @@ import {
   type DashboardFile,
   FOLDER_UID,
 } from "./dashboards";
+import { isLoopbackHost } from "./hosts";
 import { asArray, canonicalJson, isObject, type JsonObject } from "./json";
 
 export const FOLDER_TITLE = "Fleetscope";
@@ -37,12 +38,6 @@ export class GrafanaApiError extends PushError {
 }
 
 // ---------------------------------------------------------------- configuration
-
-const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1", "host.docker.internal"]);
-
-export function isLoopbackHost(hostname: string): boolean {
-  return LOOPBACK_HOSTS.has(hostname.toLowerCase());
-}
 
 /** The Grafana base URL without a trailing slash. A token only travels over HTTPS (or to localhost). */
 export function parseGrafanaUrl(raw: string): { url: string; local: boolean } {
