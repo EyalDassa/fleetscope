@@ -282,10 +282,21 @@ interface Window {
   intervalS: number;
   engines: string[];
   sources: string[];
-  causes?: string[];
+  /** What is typed in the `cause` text box. */
+  cause?: string;
   /** One bucket for the whole window, to see what a merge over several minutes gives. */
   singleBucket?: boolean;
 }
+
+/**
+ * Grafana's `percentencode` format: encodeURIComponent, and also `!'()*`, which that function leaves
+ * alone. The result has no quote and no backslash, so it cannot leave an SQL string.
+ */
+const percentEncode = (value: string): string =>
+  encodeURIComponent(value).replace(
+    /[!'()*]/g,
+    (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
 
 const quoteList = (values: string[]) => values.map((v) => `'${v}'`).join(",");
 
@@ -305,7 +316,7 @@ function expand(sql: string, w: Window): string {
     .replace(/\$__interval_s/g, String(w.intervalS))
     .replace(/\$\{engine:singlequote\}/g, quoteList(w.engines))
     .replace(/\$\{source:singlequote\}/g, quoteList(w.sources))
-    .replace(/\$\{cause:singlequote\}/g, quoteList(w.causes ?? []));
+    .replace(/\$\{cause:percentencode\}/g, percentEncode(w.cause ?? ""));
 }
 
 const ALL_ENGINES = ["chromium", "chrome-headless-shell", "lightpanda"];
@@ -768,13 +779,45 @@ describe("the session snippets", () => {
     expect(rows.find((r) => r.cause === "selector_not_found")?.engines).toBe("chromium 1");
   });
 
-  it("sessions-by-cause lists each session once for the causes chosen in the cause variable", async () => {
-    const rows = await run<{ session_id: string; cause: string }>("sessions-by-cause", {
-      ...baseWindow(),
-      causes: ["timeout", "blocked"],
-    });
-    expect(rows.map((r) => r.session_id).sort()).toEqual(["block1", "to1"]);
-    expect(await run("sessions-by-cause", { ...baseWindow(), causes: ["nope"] })).toEqual([]);
+  it("sessions-by-cause lists the sessions of the cause typed in the text box, each once", async () => {
+    const idsOf = async (cause: string) =>
+      (await run<{ session_id: string }>("sessions-by-cause", { ...baseWindow(), cause }))
+        .map((r) => r.session_id)
+        .sort();
+    expect(await idsOf("timeout")).toEqual(["to1"]);
+    expect(await idsOf("blocked")).toEqual(["block1"]);
+    expect(await idsOf("nope")).toEqual([]);
+    expect(await idsOf("")).toEqual([]); // an empty box matches no cause
+  });
+
+  it("sessions-by-cause: text typed into the box cannot leave the SQL string, backslash or not", async () => {
+    // These are the values that break `singlequote` (it escapes ' but not \). percentencode leaves
+    // no quote or backslash, so each one is just a cause that no session has.
+    for (const typed of [
+      "\\' OR 1=1 --",
+      "x' OR '1'='1",
+      "\\\\' OR 1=1 --",
+      "timeout\\",
+      "'; DROP TABLE sessions; --",
+      "%27 OR 1=1 --",
+      "a b",
+      "caf\u00e9",
+    ]) {
+      const rows = await run<{ session_id: string }>("sessions-by-cause", {
+        ...baseWindow(),
+        cause: typed,
+      });
+      expect(rows, typed).toEqual([]);
+    }
+    // and the sessions are still there
+    expect(await run("sessions-by-cause", { ...baseWindow(), cause: "timeout" })).toHaveLength(1);
+  });
+
+  it("percentEncode (the test's copy of Grafana's format) leaves no quote or backslash", () => {
+    for (const typed of ["'", "\\", "\\'", "!'()*", "a b'c\\d\"e"]) {
+      expect(percentEncode(typed), typed).toMatch(/^[A-Za-z0-9\-_.~%]*$/);
+    }
+    expect(percentEncode("a'b")).toBe("a%27b");
   });
 
   it("browser-hours-and-cost adds startup and connect time, counts a running session until now, and prices through pricing_current", async () => {

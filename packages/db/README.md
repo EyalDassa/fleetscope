@@ -78,13 +78,23 @@ Grafana reads ClickHouse directly with the official ClickHouse data source, as a
 panel lives in the dashboard JSON, and this section holds the rules that SQL must follow. It is the
 source of truth for the definitions in `design/DESIGN.md` section 3; if the two disagree, fix them
 together. The examples use the plugin's macros (`$__timeFilter(col)`, `$__timeInterval(col)`,
-`$__fromTime`, `$__toTime`, `$__interval_s`) and the dashboard variables `${engine:singlequote}`,
-`${source:singlequote}` and `${cause:singlequote}`. `src/dashboard-sql.integration.test.ts` runs every
+`$__fromTime`, `$__toTime`, `$__interval_s`), the multi-select variables `${engine:singlequote}` and
+`${source:singlequote}`, and the `cause` text box as `decodeURLComponent('${cause:percentencode}')`
+(see the second rule below). `src/dashboard-sql.integration.test.ts` runs every
 `sql name=...` block below against real ClickHouse as the read-only user, so these snippets are tested,
 not just written down.
 
 Rules for every panel:
 
+- **A free-text variable (a text box: `session`, `cause`) is written
+  `decodeURLComponent('${var:percentencode}')`, never `${var:singlequote}`.** Grafana's `singlequote`
+  turns `'` into `\'` and leaves a backslash alone, so a typed `\' OR 1=1 --` becomes `\\' OR 1=1 --`
+  and ClickHouse reads that as "a backslash, then the end of the string": the rest is SQL (QA-M2-05).
+  `percentencode` leaves nothing in the value that can end a string (it escapes `!'()*` as well as
+  everything `encodeURIComponent` escapes), and ClickHouse decodes it when the query runs. The
+  multi-select variables (`engine`, `source`, `status`, `agent`, `scenario`) are different: their values
+  come from a fixed list or from stored values that the schema restricts to safe labels (below), not
+  from what a person types, so `singlequote` is fine there.
 - **No `SETTINGS` clause.** The Grafana user is `readonly = 1`, so a query that sets a setting
   (`SETTINGS join_use_nulls = 1`) is refused. The queries below are written to not need one.
 - **Always filter on `source`**, and show the variable. Real and simulated data are never mixed
@@ -602,8 +612,9 @@ GROUP BY engine
 ORDER BY engine
 ```
 
-The Sessions list filtered by a `cause` dashboard variable (one cause per session, so a session is
-listed once; the variable's values are the `cause` column of the query above):
+The Sessions list filtered by the `cause` text box (one cause per session, so a session is listed
+once; the value is a `cause` of the query above, and the Top failure causes links fill the box). A text
+box is free text, so it is `decodeURLComponent('${cause:percentencode}')`:
 
 ```sql name=sessions-by-cause
 WITH facts AS (/* session-facts */)
@@ -617,7 +628,7 @@ SELECT
     cause_from,
     reason
 FROM facts
-WHERE $__timeFilter(started_at) AND cause IN (${cause:singlequote})
+WHERE $__timeFilter(started_at) AND cause = decodeURLComponent('${cause:percentencode}')
 ORDER BY started_at DESC
 LIMIT 1000
 ```
