@@ -333,11 +333,11 @@ describe("what counts as a missing browser API", () => {
     expect(isMissingApiError({ name: "Error", message: "Network request failed" })).toBe(false);
   });
 
-  // QA-M1-03 (forward-looking, DEFERRED to M3 by the lead): the same page, on an engine without crypto.subtle, throws
+  // QA-M1-03 (fixed in M3): the same page, on an engine without crypto.subtle, throws
   // "TypeError: Cannot read properties of undefined (reading 'digest')" (the README of the demo
-  // site shows exactly this message). The collector ignores it, so the WebCrypto gap would not
-  // show up in the compatibility matrix. The same goes for "X is not a constructor".
-  it.fails("QA-M1-03: recognises a missing crypto.subtle (TypeError ... reading 'digest')", () => {
+  // site shows exactly this message). Without the rule the WebCrypto gap would not show up in the
+  // compatibility matrix. The same goes for "X is not a constructor".
+  it("QA-M1-03: recognises a missing crypto.subtle (TypeError ... reading 'digest')", () => {
     expect(
       isMissingApiError({
         name: "TypeError",
@@ -346,7 +346,7 @@ describe("what counts as a missing browser API", () => {
     ).toBe(true);
   });
 
-  it.fails("QA-M1-03: recognises 'X is not a constructor' for a global that exists but is not usable", () => {
+  it("QA-M1-03: recognises 'X is not a constructor' for a global that exists but is not usable", () => {
     expect(
       isMissingApiError({
         name: "TypeError",

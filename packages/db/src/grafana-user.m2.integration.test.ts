@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ClickHouseClient } from "./client";
 import { ensureGrafanaUser } from "./grafana-user";
-import { createReaderClient, createTestDatabase, type TestDatabase } from "./testing";
+import { createReaderClient, createTestDatabase, type TestDatabase, testPassword } from "./testing";
 
 /**
  * QA M2: the read-only Grafana user, from the outside. The backend's own test checks the grants and
@@ -15,7 +15,7 @@ let other: TestDatabase;
 let admin: ClickHouseClient;
 let reader: ReturnType<typeof createReaderClient>;
 const user = `fleetscope_ro_qa_${randomBytes(4).toString("hex")}`;
-const password = "qa-readonly-password";
+const password = testPassword();
 
 beforeAll(async () => {
   db = await createTestDatabase();

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildDataSource, GrafanaApiError, GrafanaClient, parseGrafanaUrl } from "./push";
+import { testPassword } from "./test-fixtures";
 
 /**
  * QA M2: the safety rules of `grafana:push`, tried with the addresses people actually type. The
@@ -7,12 +8,15 @@ import { buildDataSource, GrafanaApiError, GrafanaClient, parseGrafanaUrl } from
  * see qa/m2-report.md. These tests need neither Docker nor a network.
  */
 
+const GRAFANA_PW = testPassword();
+const ADMIN_PW = testPassword();
+
 const env = (url: string): NodeJS.ProcessEnv => ({
   CLICKHOUSE_URL: url,
   CLICKHOUSE_GRAFANA_USER: "grafana_ro",
-  CLICKHOUSE_GRAFANA_PASSWORD: "a-real-password",
+  CLICKHOUSE_GRAFANA_PASSWORD: GRAFANA_PW,
   CLICKHOUSE_USER: "fleetscope",
-  CLICKHOUSE_PASSWORD: "admin-secret",
+  CLICKHOUSE_PASSWORD: ADMIN_PW,
   CLICKHOUSE_DATABASE: "fleetscope",
 });
 
@@ -86,9 +90,9 @@ describe("the ClickHouse address for a remote Grafana", () => {
       secure: true,
       username: "grafana_ro",
     });
-    expect(JSON.stringify(source.jsonData)).not.toContain("a-real-password");
-    expect(JSON.stringify(source)).not.toContain("admin-secret");
-    expect(source.secureJsonData).toEqual({ password: "a-real-password" });
+    expect(JSON.stringify(source.jsonData)).not.toContain(GRAFANA_PW);
+    expect(JSON.stringify(source)).not.toContain(ADMIN_PW);
+    expect(source.secureJsonData).toEqual({ password: GRAFANA_PW });
   });
 
   it("refuses to run without the read-only user, even when the admin user is set", () => {
@@ -102,7 +106,7 @@ describe("the ClickHouse address for a remote Grafana", () => {
 
 describe("errors never carry the token", () => {
   it("a 401 and a network failure name the request, not the Authorization header", async () => {
-    const token = "glsa_secret_token_value_1234567890";
+    const token = `glsa_${testPassword()}`;
     const refused = new GrafanaClient(
       "https://stack.grafana.net",
       token,

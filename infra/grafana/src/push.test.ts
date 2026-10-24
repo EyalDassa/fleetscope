@@ -13,7 +13,7 @@ import {
 } from "./push";
 import { dashboardJson, testPassword } from "./test-fixtures";
 
-const TOKEN = "glsa_super_secret_token_value";
+const TOKEN = `glsa_${testPassword()}`;
 const PASSWORD = testPassword();
 const env = {
   CLICKHOUSE_URL: "https://abc.eu-central-1.aws.clickhouse.cloud:8443",
