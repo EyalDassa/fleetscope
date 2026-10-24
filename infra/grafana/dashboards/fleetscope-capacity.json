@@ -1,0 +1,1898 @@
+{
+  "uid": "fleetscope-capacity",
+  "title": "Fleetscope / Capacity",
+  "description": "Is ClickHouse keeping up with the fleet? Rows sent vs rows written, memory and CPU against the limits, scaling events and the ClickHouse Cloud trial credits.",
+  "tags": [
+    "fleetscope"
+  ],
+  "style": "dark",
+  "timezone": "browser",
+  "editable": true,
+  "graphTooltip": 1,
+  "refresh": "1m",
+  "schemaVersion": 41,
+  "time": {
+    "from": "now-3h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "links": [
+    {
+      "type": "dashboards",
+      "title": "Fleetscope",
+      "tags": [
+        "fleetscope"
+      ],
+      "asDropdown": false,
+      "includeVars": true,
+      "keepTime": true,
+      "icon": "external link",
+      "targetBlank": false,
+      "tooltip": "",
+      "url": ""
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "type": "constant",
+        "name": "ch_org",
+        "label": "ClickHouse Cloud organization",
+        "query": "set-by-grafana-push",
+        "current": {
+          "text": "set-by-grafana-push",
+          "value": "set-by-grafana-push"
+        },
+        "options": [
+          {
+            "text": "set-by-grafana-push",
+            "value": "set-by-grafana-push",
+            "selected": true
+          }
+        ],
+        "hide": 2
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "fleetscope-clickhouse"
+        },
+        "enable": true,
+        "iconColor": "#9AA9BB",
+        "name": "Scaling changes",
+        "target": {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "-- A row where the memory limit, CPU limit or replica count differs from the previous minute with data.\nWITH\n    per_minute AS\n    (\n        SELECT\n            toStartOfMinute(event_time) AS minute,\n            nullIf(maxIfOrNull(value, metric = 'CGroupMemoryTotal'), 0) / 1073741824 AS mem_limit_gib,\n            nullIf(maxIfOrNull(value, metric = 'CGroupMaxCPU'), 0) AS cpu_limit_cores,\n            uniqExactIf(hostname, metric = 'Uptime') AS replicas\n        FROM system.asynchronous_metric_log\n        WHERE event_time >= toStartOfMinute($__fromTime) - INTERVAL 1 MINUTE AND event_time <= $__toTime\n          AND metric IN ('CGroupMemoryTotal', 'CGroupMaxCPU', 'Uptime')\n        GROUP BY minute\n    ),\n    with_previous AS\n    (\n        SELECT\n            minute,\n            mem_limit_gib,\n            cpu_limit_cores,\n            replicas,\n            lagInFrame(mem_limit_gib) OVER w AS prev_mem_limit_gib,\n            lagInFrame(cpu_limit_cores) OVER w AS prev_cpu_limit_cores,\n            lagInFrame(replicas) OVER w AS prev_replicas,\n            row_number() OVER (ORDER BY minute) AS n\n        FROM per_minute\n        WINDOW w AS (ORDER BY minute ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)\n    )\nSELECT\n    minute AS time,\n    arrayStringConcat(arrayFilter(part -> part != '',\n    [\n        if(ifNull(mem_limit_gib, -1) != ifNull(prev_mem_limit_gib, -1),\n            concat('memory limit ', ifNull(toString(round(prev_mem_limit_gib, 2)), 'none'), ' → ',\n                   ifNull(toString(round(mem_limit_gib, 2)), 'none'), ' GiB'), ''),\n        if(ifNull(cpu_limit_cores, -1) != ifNull(prev_cpu_limit_cores, -1),\n            concat('CPU limit ', ifNull(toString(round(prev_cpu_limit_cores, 2)), 'none'), ' → ',\n                   ifNull(toString(round(cpu_limit_cores, 2)), 'none'), ' cores'), ''),\n        if(replicas != prev_replicas, concat('replicas ', toString(prev_replicas), ' → ', toString(replicas)), '')\n    ]), '; ') AS text\nFROM with_previous\nWHERE n > 1 AND minute >= toStartOfMinute($__fromTime) AND text != ''\nORDER BY time\n",
+          "refId": "Anno",
+          "pluginVersion": "4.23.2"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Load vs ClickHouse",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Rows sent vs rows written per minute ↗",
+      "description": "Rows the fleet sent (green, counted in actions, resource_samples, network_requests and issues) and rows ClickHouse wrote for them (blue, NewPart rows of system.part_log), per minute, all sources (system tables know no source or engine filter). Sent is placed by the event time and written by the time ClickHouse received it, so per minute the lines follow each other but do not match exactly; over an hour they do. The lines follow each other; in a single minute they can differ at the edges. A gap means no rows in that minute. Click to open Sessions with this range.",
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 9,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "interval": "1m",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "timeseries",
+          "rawSql": "-- Rows the fleet sent vs rows ClickHouse wrote (system.part_log), and sessions started, per minute; all sources.\nSELECT\n    minute AS time,\n    sum(rows_sent) AS rows_sent,\n    sum(rows_written) AS rows_written,\n    sum(sessions_started) AS sessions_started\nFROM\n(\n    SELECT toStartOfMinute(ts) AS minute, count() AS rows_sent, toUInt64(0) AS rows_written, toUInt64(0) AS sessions_started\n    FROM actions\n    WHERE ts >= toStartOfMinute($__fromTime) AND ts <= $__toTime\n    GROUP BY minute\n    UNION ALL\n    SELECT toStartOfMinute(ts), count(), 0, 0\n    FROM resource_samples\n    WHERE ts >= toStartOfMinute($__fromTime) AND ts <= $__toTime\n    GROUP BY 1\n    UNION ALL\n    SELECT toStartOfMinute(ts), count(), 0, 0\n    FROM network_requests\n    WHERE ts >= toStartOfMinute($__fromTime) AND ts <= $__toTime\n    GROUP BY 1\n    UNION ALL\n    SELECT toStartOfMinute(ts), count(), 0, 0\n    FROM issues\n    WHERE ts >= toStartOfMinute($__fromTime) AND ts <= $__toTime\n    GROUP BY 1\n    UNION ALL\n    SELECT toStartOfMinute(started_at), 0, 0, count()\n    FROM sessions FINAL\n    WHERE started_at >= toStartOfMinute($__fromTime) AND started_at <= $__toTime\n    GROUP BY 1\n    UNION ALL\n    SELECT toDateTime(toStartOfMinute(event_time), 'UTC'), 0, sum(rows), 0\n    FROM system.part_log\n    WHERE event_type = 'NewPart'\n      AND database = currentDatabase()\n      AND error = 0\n      AND `table` IN ('actions', 'resource_samples', 'network_requests', 'issues')\n      AND event_time >= toStartOfMinute($__fromTime) AND event_time <= $__toTime\n    GROUP BY 1\n)\nGROUP BY time\nORDER BY time\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#9AA9BB"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "lineInterpolation": "linear",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "showPoints": "auto",
+            "pointSize": 5,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisPlacement": "auto",
+            "axisBorderShow": false,
+            "axisSoftMin": 0,
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "insertNulls": 90000
+          },
+          "unit": "locale",
+          "decimals": 0,
+          "min": 0,
+          "noValue": "No data in this range",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "links": [
+            {
+              "title": "Sessions in this range",
+              "url": "/d/fleetscope-sessions?${__url_time_range}",
+              "targetBlank": false
+            }
+          ]
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/rows_sent/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#009E73"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "solid"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Rows sent (fleet)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/rows_written/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#0072B2"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "solid"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Rows written (ClickHouse)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/sessions_started/"
+            },
+            "properties": [
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": true,
+                  "tooltip": true,
+                  "viz": true
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc",
+          "hideZeros": false
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Sessions started per minute ↗",
+      "description": "Sessions that started in each minute, real and simulated together (count of sessions FINAL by started_at), all sources. A gap means no session started in that minute. Click to open Sessions with this range.",
+      "gridPos": {
+        "x": 9,
+        "y": 1,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "interval": "1m",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "timeseries",
+          "rawSql": "-- Rows the fleet sent vs rows ClickHouse wrote (system.part_log), and sessions started, per minute; all sources.\nSELECT\n    minute AS time,\n    sum(rows_sent) AS rows_sent,\n    sum(rows_written) AS rows_written,\n    sum(sessions_started) AS sessions_started\nFROM\n(\n    SELECT toStartOfMinute(ts) AS minute, count() AS rows_sent, toUInt64(0) AS rows_written, toUInt64(0) AS sessions_started\n    FROM actions\n    WHERE ts >= toStartOfMinute($__fromTime) AND ts <= $__toTime\n    GROUP BY minute\n    UNION ALL\n    SELECT toStartOfMinute(ts), count(), 0, 0\n    FROM resource_samples\n    WHERE ts >= toStartOfMinute($__fromTime) AND ts <= $__toTime\n    GROUP BY 1\n    UNION ALL\n    SELECT toStartOfMinute(ts), count(), 0, 0\n    FROM network_requests\n    WHERE ts >= toStartOfMinute($__fromTime) AND ts <= $__toTime\n    GROUP BY 1\n    UNION ALL\n    SELECT toStartOfMinute(ts), count(), 0, 0\n    FROM issues\n    WHERE ts >= toStartOfMinute($__fromTime) AND ts <= $__toTime\n    GROUP BY 1\n    UNION ALL\n    SELECT toStartOfMinute(started_at), 0, 0, count()\n    FROM sessions FINAL\n    WHERE started_at >= toStartOfMinute($__fromTime) AND started_at <= $__toTime\n    GROUP BY 1\n    UNION ALL\n    SELECT toDateTime(toStartOfMinute(event_time), 'UTC'), 0, sum(rows), 0\n    FROM system.part_log\n    WHERE event_type = 'NewPart'\n      AND database = currentDatabase()\n      AND error = 0\n      AND `table` IN ('actions', 'resource_samples', 'network_requests', 'issues')\n      AND event_time >= toStartOfMinute($__fromTime) AND event_time <= $__toTime\n    GROUP BY 1\n)\nGROUP BY time\nORDER BY time\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#9AA9BB"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "lineInterpolation": "linear",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "showPoints": "auto",
+            "pointSize": 5,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisPlacement": "auto",
+            "axisBorderShow": false,
+            "axisSoftMin": 0,
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "insertNulls": 90000
+          },
+          "unit": "locale",
+          "decimals": 0,
+          "min": 0,
+          "noValue": "No data in this range",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "links": [
+            {
+              "title": "Sessions in this range",
+              "url": "/d/fleetscope-sessions?${__url_time_range}",
+              "targetBlank": false
+            }
+          ]
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/sessions_started/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#F0E442"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "solid"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Sessions started"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/rows_/"
+            },
+            "properties": [
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": true,
+                  "tooltip": true,
+                  "viz": true
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc",
+          "hideZeros": false
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Difference, last hour ↗",
+      "description": "|rows written − rows sent| as a percentage of rows sent, all sources, over the 60 whole minutes that ended a minute ago (the time picker does not change it). About 0% is good: ClickHouse writes what the fleet sends. Yellow from 1%, red from 5%. — means nothing was sent or written. Click to open Sessions for the last hour.",
+      "gridPos": {
+        "x": 17,
+        "y": 1,
+        "w": 7,
+        "h": 4
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "-- Rows written vs rows sent over the last 60 whole minutes, |difference| as % of sent (NULL when idle).\nWITH\n    toStartOfMinute(now()) - INTERVAL 1 MINUTE AS window_end,\n    window_end - INTERVAL 60 MINUTE AS window_start,\n    (SELECT count() FROM actions WHERE ts >= window_start AND ts < window_end)\n        + (SELECT count() FROM resource_samples WHERE ts >= window_start AND ts < window_end)\n        + (SELECT count() FROM network_requests WHERE ts >= window_start AND ts < window_end)\n        + (SELECT count() FROM issues WHERE ts >= window_start AND ts < window_end) AS sent,\n    (\n        SELECT sum(rows)\n        FROM system.part_log\n        WHERE event_type = 'NewPart'\n          AND database = currentDatabase()\n          AND error = 0\n          AND `table` IN ('actions', 'resource_samples', 'network_requests', 'issues')\n          AND event_time >= window_start AND event_time < window_end\n    ) AS written\nSELECT multiIf(\n    sent = 0 AND written = 0, NULL,\n    sent = 0, 100,\n    100 * abs(toInt64(written) - toInt64(sent)) / sent) AS value\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "—",
+                  "color": "#9AA9BB",
+                  "index": 90
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "—",
+                  "color": "#9AA9BB",
+                  "index": 91
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#6EE7A8",
+                "value": null
+              },
+              {
+                "color": "#FFD95A",
+                "value": 1
+              },
+              {
+                "color": "#FF7B7B",
+                "value": 5
+              }
+            ]
+          },
+          "noValue": "—",
+          "unit": "percent",
+          "decimals": 1,
+          "links": [
+            {
+              "title": "Sessions, last hour",
+              "url": "/d/fleetscope-sessions?from=now-1h&to=now",
+              "targetBlank": false
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/^value$/",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "text": {
+          "valueSize": 22
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "text",
+      "title": "How to read this",
+      "description": "What the colours and the sections mean.",
+      "gridPos": {
+        "x": 17,
+        "y": 5,
+        "w": 7,
+        "h": 4
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "All sources, real and simulated. Green: sent. Blue: written or used. Grey: a limit. Yellow: sessions. Not available is never 0."
+      }
+    },
+    {
+      "id": 6,
+      "type": "row",
+      "title": "ClickHouse utilization",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 9,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Memory, % of limit",
+      "description": "The highest memory use of any replica in the last 10 minutes, as a percentage of that replica's memory limit (the time picker does not change it). Yellow from 70%, red from 85%. Not available when the server reports no limit (a local container has none).",
+      "gridPos": {
+        "x": 0,
+        "y": 10,
+        "w": 6,
+        "h": 5
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "-- Highest memory use of any replica in the last 10 minutes, as % of its limit (NULL without a limit).\nSELECT maxOrNull(pct) AS value\nFROM\n(\n    SELECT\n        100 * maxIfOrNull(value, metric = 'CGroupMemoryUsed')\n            / nullIf(maxIfOrNull(value, metric = 'CGroupMemoryTotal'), 0) AS pct\n    FROM system.asynchronous_metric_log\n    WHERE event_time >= now() - INTERVAL 10 MINUTE\n      AND metric IN ('CGroupMemoryUsed', 'CGroupMemoryTotal')\n    GROUP BY toStartOfMinute(event_time), hostname\n)\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "Not available",
+                  "color": "#9AA9BB",
+                  "index": 90
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "Not available",
+                  "color": "#9AA9BB",
+                  "index": 91
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#6EE7A8",
+                "value": null
+              },
+              {
+                "color": "#FFD95A",
+                "value": 70
+              },
+              {
+                "color": "#FF7B7B",
+                "value": 85
+              }
+            ]
+          },
+          "noValue": "Not available",
+          "unit": "percent",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/^value$/",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "text": {
+          "valueSize": 22
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "stat",
+      "title": "CPU, % of limit",
+      "description": "The average CPU of the busiest replica over the last 10 minutes, as a percentage of its core limit (the time picker does not change it). Yellow from 70%, red from 85%. Not available when the server reports no CPU limit (a local container has none).",
+      "gridPos": {
+        "x": 6,
+        "y": 10,
+        "w": 6,
+        "h": 5
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "-- Average CPU of the busiest replica in the last 10 minutes, as % of its core limit (NULL without a limit).\nSELECT maxOrNull(pct) AS value\nFROM\n(\n    SELECT\n        100 * (avgIfOrNull(value, metric = 'CGroupUserTime') + avgIfOrNull(value, metric = 'CGroupSystemTime'))\n            / nullIf(maxIfOrNull(value, metric = 'CGroupMaxCPU'), 0) AS pct\n    FROM system.asynchronous_metric_log\n    WHERE event_time >= now() - INTERVAL 10 MINUTE\n      AND metric IN ('CGroupUserTime', 'CGroupSystemTime', 'CGroupMaxCPU')\n    GROUP BY hostname\n)\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "Not available",
+                  "color": "#9AA9BB",
+                  "index": 90
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "Not available",
+                  "color": "#9AA9BB",
+                  "index": 91
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#6EE7A8",
+                "value": null
+              },
+              {
+                "color": "#FFD95A",
+                "value": 70
+              },
+              {
+                "color": "#FF7B7B",
+                "value": 85
+              }
+            ]
+          },
+          "noValue": "Not available",
+          "unit": "percent",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/^value$/",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "text": {
+          "valueSize": 22
+        }
+      }
+    },
+    {
+      "id": 9,
+      "type": "stat",
+      "title": "Replicas",
+      "description": "Replicas that logged in the latest minute of the time range. System tables are per replica, so this is the replica Grafana reaches: 1 today, as we run one replica (see packages/db/README.md, One replica).",
+      "gridPos": {
+        "x": 12,
+        "y": 10,
+        "w": 6,
+        "h": 5
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "-- Replicas that logged the Uptime metric, per minute.\nSELECT\n    toStartOfMinute(event_time) AS time,\n    uniqExact(hostname) AS replicas\nFROM system.asynchronous_metric_log\nWHERE event_time >= toStartOfMinute($__fromTime) AND event_time <= $__toTime\n  AND metric = 'Uptime'\nGROUP BY time\nORDER BY time\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#0072B2"
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "Not available",
+                  "color": "#9AA9BB",
+                  "index": 90
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "Not available",
+                  "color": "#9AA9BB",
+                  "index": 91
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "Not available",
+          "unit": "locale",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/^replicas$/",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "text": {
+          "valueSize": 22
+        }
+      }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Replicas over time",
+      "description": "Replicas that logged in each minute (the replica Grafana reaches; we run one). A step marks a scale-up or scale-down; a gap means the server logged nothing.",
+      "gridPos": {
+        "x": 18,
+        "y": 10,
+        "w": 6,
+        "h": 5
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "interval": "1m",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "timeseries",
+          "rawSql": "-- Replicas that logged the Uptime metric, per minute.\nSELECT\n    toStartOfMinute(event_time) AS time,\n    uniqExact(hostname) AS replicas\nFROM system.asynchronous_metric_log\nWHERE event_time >= toStartOfMinute($__fromTime) AND event_time <= $__toTime\n  AND metric = 'Uptime'\nGROUP BY time\nORDER BY time\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#9AA9BB"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "lineInterpolation": "linear",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "showPoints": "auto",
+            "pointSize": 5,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisPlacement": "auto",
+            "axisBorderShow": false,
+            "axisSoftMin": 0,
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "insertNulls": 90000
+          },
+          "unit": "locale",
+          "decimals": 0,
+          "min": 0,
+          "noValue": "No data in this range",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/replicas/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#0072B2"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "solid"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Replicas"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc",
+          "hideZeros": false
+        }
+      }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Memory, used vs limit",
+      "description": "All sources. Peak memory of the server's container in each minute (blue) against its memory limit (grey line), in GiB, per replica. A missing limit is a gap (a local container has none), never 0. Grey markers on the chart are scaling changes.",
+      "gridPos": {
+        "x": 0,
+        "y": 15,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "interval": "1m",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "timeseries",
+          "rawSql": "-- Memory and CPU of the server against its limits, per minute and replica; a missing limit is NULL.\nSELECT\n    toStartOfMinute(event_time) AS time,\n    splitByChar('.', hostname)[1] AS replica,\n    maxIfOrNull(value, metric = 'CGroupMemoryUsed') / 1073741824 AS mem_used_gib,\n    nullIf(maxIfOrNull(value, metric = 'CGroupMemoryTotal'), 0) / 1073741824 AS mem_limit_gib,\n    avgIfOrNull(value, metric = 'CGroupUserTime') + avgIfOrNull(value, metric = 'CGroupSystemTime') AS cpu_used_cores,\n    nullIf(maxIfOrNull(value, metric = 'CGroupMaxCPU'), 0) AS cpu_limit_cores\nFROM system.asynchronous_metric_log\nWHERE event_time >= toStartOfMinute($__fromTime) AND event_time <= $__toTime\n  AND metric IN ('CGroupMemoryUsed', 'CGroupMemoryTotal', 'CGroupUserTime', 'CGroupSystemTime', 'CGroupMaxCPU')\nGROUP BY time, replica\nORDER BY time, replica\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#9AA9BB"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "lineInterpolation": "linear",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "showPoints": "auto",
+            "pointSize": 5,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisPlacement": "auto",
+            "axisBorderShow": false,
+            "axisSoftMin": 0,
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "insertNulls": 90000
+          },
+          "unit": "suffix: GiB",
+          "decimals": 1,
+          "min": 0,
+          "noValue": "No data in this range",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/mem_used_gib/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#0072B2"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "solid"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Memory used (${__field.labels.replica})"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/mem_limit_gib/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#9AA9BB"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "solid"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Memory limit (${__field.labels.replica})"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/cpu_/"
+            },
+            "properties": [
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": true,
+                  "tooltip": true,
+                  "viz": true
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc",
+          "hideZeros": false
+        }
+      }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "CPU, used vs limit",
+      "description": "All sources. Average CPU cores busy in each minute (blue) against the CPU limit (grey line), per replica. A missing limit is a gap (a local container has none), never 0. Grey markers on the chart are scaling changes.",
+      "gridPos": {
+        "x": 12,
+        "y": 15,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "interval": "1m",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "timeseries",
+          "rawSql": "-- Memory and CPU of the server against its limits, per minute and replica; a missing limit is NULL.\nSELECT\n    toStartOfMinute(event_time) AS time,\n    splitByChar('.', hostname)[1] AS replica,\n    maxIfOrNull(value, metric = 'CGroupMemoryUsed') / 1073741824 AS mem_used_gib,\n    nullIf(maxIfOrNull(value, metric = 'CGroupMemoryTotal'), 0) / 1073741824 AS mem_limit_gib,\n    avgIfOrNull(value, metric = 'CGroupUserTime') + avgIfOrNull(value, metric = 'CGroupSystemTime') AS cpu_used_cores,\n    nullIf(maxIfOrNull(value, metric = 'CGroupMaxCPU'), 0) AS cpu_limit_cores\nFROM system.asynchronous_metric_log\nWHERE event_time >= toStartOfMinute($__fromTime) AND event_time <= $__toTime\n  AND metric IN ('CGroupMemoryUsed', 'CGroupMemoryTotal', 'CGroupUserTime', 'CGroupSystemTime', 'CGroupMaxCPU')\nGROUP BY time, replica\nORDER BY time, replica\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#9AA9BB"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "lineInterpolation": "linear",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "showPoints": "auto",
+            "pointSize": 5,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisPlacement": "auto",
+            "axisBorderShow": false,
+            "axisSoftMin": 0,
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "insertNulls": 90000
+          },
+          "unit": "suffix: cores",
+          "decimals": 2,
+          "min": 0,
+          "noValue": "No data in this range",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/cpu_used_cores/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#0072B2"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "solid"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "CPU used (${__field.labels.replica})"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/cpu_limit_cores/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#9AA9BB"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "solid"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "CPU limit (${__field.labels.replica})"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/mem_/"
+            },
+            "properties": [
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": true,
+                  "tooltip": true,
+                  "viz": true
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc",
+          "hideZeros": false
+        }
+      }
+    },
+    {
+      "id": 13,
+      "type": "row",
+      "title": "Scaling events",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 23,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 14,
+      "type": "state-timeline",
+      "title": "Limits and replicas",
+      "description": "One row each for the memory limit (GiB), the CPU limit (cores) and the replica count. A new box starts where the value changes, which is a scaling event. Not available means the server reports no limit (a local container has none).",
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 24,
+        "h": 6
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "interval": "1m",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "timeseries",
+          "rawSql": "-- Memory and CPU of the server against its limits, per minute and replica; a missing limit is NULL.\nSELECT\n    toStartOfMinute(event_time) AS time,\n    splitByChar('.', hostname)[1] AS replica,\n    maxIfOrNull(value, metric = 'CGroupMemoryUsed') / 1073741824 AS mem_used_gib,\n    nullIf(maxIfOrNull(value, metric = 'CGroupMemoryTotal'), 0) / 1073741824 AS mem_limit_gib,\n    avgIfOrNull(value, metric = 'CGroupUserTime') + avgIfOrNull(value, metric = 'CGroupSystemTime') AS cpu_used_cores,\n    nullIf(maxIfOrNull(value, metric = 'CGroupMaxCPU'), 0) AS cpu_limit_cores\nFROM system.asynchronous_metric_log\nWHERE event_time >= toStartOfMinute($__fromTime) AND event_time <= $__toTime\n  AND metric IN ('CGroupMemoryUsed', 'CGroupMemoryTotal', 'CGroupUserTime', 'CGroupSystemTime', 'CGroupMaxCPU')\nGROUP BY time, replica\nORDER BY time, replica\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        },
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "timeseries",
+          "rawSql": "-- Replicas that logged the Uptime metric, per minute.\nSELECT\n    toStartOfMinute(event_time) AS time,\n    uniqExact(hostname) AS replicas\nFROM system.asynchronous_metric_log\nWHERE event_time >= toStartOfMinute($__fromTime) AND event_time <= $__toTime\n  AND metric = 'Uptime'\nGROUP BY time\nORDER BY time\n",
+          "refId": "B",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#9AA9BB"
+          },
+          "custom": {
+            "fillOpacity": 70,
+            "lineWidth": 0,
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            }
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "Not available",
+                  "color": "transparent",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "No data in this range"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/mem_limit_gib/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#9AA9BB"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Memory limit (GiB) · ${__field.labels.replica}"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/cpu_limit_cores/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#9AA9BB"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "CPU limit (cores) · ${__field.labels.replica}"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/replicas/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#0072B2"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Replicas"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/mem_used_gib|cpu_used_cores/"
+            },
+            "properties": [
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": true,
+                  "tooltip": true,
+                  "viz": true
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "mergeValues": true,
+        "showValue": "auto",
+        "alignValue": "left",
+        "rowHeight": 0.8,
+        "legend": {
+          "showLegend": false,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 15,
+      "type": "row",
+      "title": "Billing (ClickHouse Cloud)",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 30,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 16,
+      "type": "stat",
+      "title": "Credits used since 2026-10-24",
+      "description": "Sum of totalCHC over all entities from the ClickHouse Cloud usage API, from 2026-10-24 (the start of the trial) to today. The newest days may not be final yet. Billing reads the ClickHouse Cloud API through the Infinity data source `clickhouse-cloud-api`, which needs the API key; without it (local, CI) this panel shows no data.",
+      "gridPos": {
+        "x": 0,
+        "y": 31,
+        "w": 9,
+        "h": 4
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "clickhouse-cloud-api"
+      },
+      "timeFrom": "1h",
+      "hideTimeOverride": true,
+      "targets": [
+        {
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "clickhouse-cloud-api"
+          },
+          "refId": "A",
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "/v1/organizations/${ch_org}/usageCost",
+          "url_options": {
+            "method": "GET",
+            "data": "",
+            "params": [
+              {
+                "key": "from_date",
+                "value": "2026-10-24"
+              },
+              {
+                "key": "to_date",
+                "value": "${__to:date:YYYY-MM-DD}"
+              }
+            ]
+          },
+          "root_selector": "$map([1], function($x) { { \"credits_used\": $sum($$.result.costs.totalCHC) } })",
+          "columns": [
+            {
+              "selector": "credits_used",
+              "text": "credits_used",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#9AA9BB"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "No data",
+          "unit": "suffix: credits",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/^credits_used$/",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "text": {
+          "valueSize": 22
+        }
+      }
+    },
+    {
+      "id": 17,
+      "type": "stat",
+      "title": "Credits left of $300",
+      "description": "$300 minus the credits used since 2026-10-24. Assumes 1 credit = $1. Billing reads the ClickHouse Cloud API through the Infinity data source `clickhouse-cloud-api`, which needs the API key; without it (local, CI) this panel shows no data.",
+      "gridPos": {
+        "x": 9,
+        "y": 31,
+        "w": 7,
+        "h": 4
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "clickhouse-cloud-api"
+      },
+      "timeFrom": "1h",
+      "hideTimeOverride": true,
+      "targets": [
+        {
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "clickhouse-cloud-api"
+          },
+          "refId": "A",
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "/v1/organizations/${ch_org}/usageCost",
+          "url_options": {
+            "method": "GET",
+            "data": "",
+            "params": [
+              {
+                "key": "from_date",
+                "value": "2026-10-24"
+              },
+              {
+                "key": "to_date",
+                "value": "${__to:date:YYYY-MM-DD}"
+              }
+            ]
+          },
+          "root_selector": "$map([1], function($x) { { \"credits_left\": 300 - $sum($$.result.costs.totalCHC) } })",
+          "columns": [
+            {
+              "selector": "credits_left",
+              "text": "credits_left",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#9AA9BB"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "No data",
+          "unit": "suffix: credits",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/^credits_left$/",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "text": {
+          "valueSize": 22
+        }
+      }
+    },
+    {
+      "id": 18,
+      "type": "stat",
+      "title": "Projected run-out vs trial end",
+      "description": "The date the credits run out (trial ends 2026-11-23) if the next days cost what the last 3 full days cost on average (today is not counted), and how many days before or after the trial end (2026-11-23) that is. ▲ red: runs out before the trial ends. ✓ green: lasts through the trial end. Billing reads the ClickHouse Cloud API through the Infinity data source `clickhouse-cloud-api`, which needs the API key; without it (local, CI) this panel shows no data.",
+      "gridPos": {
+        "x": 16,
+        "y": 31,
+        "w": 8,
+        "h": 4
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "clickhouse-cloud-api"
+      },
+      "timeFrom": "1h",
+      "hideTimeOverride": true,
+      "targets": [
+        {
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "clickhouse-cloud-api"
+          },
+          "refId": "A",
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "/v1/organizations/${ch_org}/usageCost",
+          "url_options": {
+            "method": "GET",
+            "data": "",
+            "params": [
+              {
+                "key": "from_date",
+                "value": "2026-10-24"
+              },
+              {
+                "key": "to_date",
+                "value": "${__to:date:YYYY-MM-DD}"
+              }
+            ]
+          },
+          "root_selector": "(\n  $daily := $sort($map($distinct(result.costs.date), function($d) { { \"date\": $d, \"totalCHC\": $sum($$.result.costs[date = $d].totalCHC) } }), function($a, $b) { $a.date > $b.date });\n  $today := $substringBefore($now(), \"T\");\n  $full := $daily[date < $today];\n  $n := $count($full);\n  $last := $n > 3 ? $full[[($n - 3)..($n - 1)]] : $full;\n  $avg := $count($last) > 0 ? $average($last.totalCHC) : null;\n  $left := 300 - $sum($daily.totalCHC);\n  $end := \"2026-11-23\";\n  $day := 86400000;\n  $text := $count($daily) = 0 ? \"Not available\" :\n    $left <= 0 ? \"▲ Credits used up\" :\n    $avg = null ? \"Not available\" :\n    $avg <= 0 ? \"✓ No spend in the last full days\" :\n    (\n      $out := $fromMillis($toMillis($today) + $floor($left / $avg) * $day, \"[Y0001]-[M01]-[D01]\");\n      $diff := $round(($toMillis($end) - $toMillis($out)) / $day);\n      $diff > 0 ? \"▲ \" & $out & \" · \" & $diff & \" days before trial end\" :\n      $diff = 0 ? \"✓ \" & $out & \" · on the trial end date\" :\n      \"✓ \" & $out & \" · \" & (-$diff) & \" days after trial end\"\n    );\n  $map([1], function($x) { { \"run_out\": $text } })\n)",
+          "columns": [
+            {
+              "selector": "run_out",
+              "text": "run_out",
+              "type": "string"
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "regex",
+              "options": {
+                "pattern": "^▲.*",
+                "result": {
+                  "color": "#FF7B7B",
+                  "index": 0
+                }
+              }
+            },
+            {
+              "type": "regex",
+              "options": {
+                "pattern": "^✓.*",
+                "result": {
+                  "color": "#6EE7A8",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/^run_out$/",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "text": {
+          "valueSize": 22
+        }
+      }
+    },
+    {
+      "id": 19,
+      "type": "timeseries",
+      "title": "Credits per day, last 30 days",
+      "description": "ClickHouse credits (totalCHC) spent each day over the last 30 days, from the ClickHouse Cloud usage API, summed over all services and entities of the day. The newest days may not be final yet. Billing reads the ClickHouse Cloud API through the Infinity data source `clickhouse-cloud-api`, which needs the API key; without it (local, CI) this panel shows no data.",
+      "gridPos": {
+        "x": 0,
+        "y": 35,
+        "w": 24,
+        "h": 8
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "clickhouse-cloud-api"
+      },
+      "interval": "1d",
+      "targets": [
+        {
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "clickhouse-cloud-api"
+          },
+          "refId": "A",
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "/v1/organizations/${ch_org}/usageCost",
+          "url_options": {
+            "method": "GET",
+            "data": "",
+            "params": [
+              {
+                "key": "from_date",
+                "value": "${__from:date:YYYY-MM-DD}"
+              },
+              {
+                "key": "to_date",
+                "value": "${__to:date:YYYY-MM-DD}"
+              }
+            ]
+          },
+          "root_selector": "$map($distinct(result.costs.date), function($d) { { \"date\": $d, \"totalCHC\": $sum($$.result.costs[date = $d].totalCHC) } })",
+          "columns": [
+            {
+              "selector": "date",
+              "text": "date",
+              "type": "timestamp"
+            },
+            {
+              "selector": "totalCHC",
+              "text": "totalCHC",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#9AA9BB"
+          },
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "lineInterpolation": "linear",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "showPoints": "never",
+            "pointSize": 5,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisPlacement": "auto",
+            "axisBorderShow": false,
+            "axisSoftMin": 0,
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "barAlignment": 0
+          },
+          "unit": "suffix: credits",
+          "decimals": 2,
+          "min": 0,
+          "noValue": "No data",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/totalCHC/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#0072B2"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "solid"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Credits per day"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc",
+          "hideZeros": false
+        }
+      },
+      "timeFrom": "30d",
+      "hideTimeOverride": true
+    }
+  ]
+}
