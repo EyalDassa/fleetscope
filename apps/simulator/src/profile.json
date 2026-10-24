@@ -1,38 +1,38 @@
 {
   "version": 1,
-  "generated_at": "2026-10-24T14:28:42.682Z",
-  "method": "pnpm sim calibrate: distributions (median and 95th percentile, sampled log-normal) of the real sessions (source='real', interrupted and running left out) in the local ClickHouse. Real sessions per engine: chromium 63, chrome-headless-shell 0, lightpanda 0. An engine with fewer than 10 gets Chromium's numbers with the priors of apps/simulator/src/priors.ts (basis: \"prior\"). Memory starts at most 80% of the way to the peak (real sessions are too short to show the climb). Failure mixes of real Chromium runs include the fleet runner's chaos mode, so they are not the failure rate of the web.",
+  "generated_at": "2026-10-24T15:00:48.114Z",
+  "method": "pnpm sim calibrate: distributions (median and 95th percentile, sampled log-normal) of the real sessions (source='real', interrupted and running left out) in the local ClickHouse. Real sessions per engine: chromium 85, chrome-headless-shell 26, lightpanda 36. An engine with fewer than 10 gets Chromium's numbers with the priors of apps/simulator/src/priors.ts (basis: \"prior\"). Memory starts at most 80% of the way to the peak (real sessions are too short to show the climb). Failure mixes of real Chromium runs include the fleet runner's chaos mode, so they are not the failure rate of the web.",
   "engines": {
     "chromium": {
-      "basis": "real",
-      "real_sessions": 63,
-      "note": "measured from 63 real sessions",
+      "basis": "measured",
+      "real_sessions": 85,
+      "note": "measured from 85 real sessions",
       "engine_version": "156.0.8078.4",
       "startup_ms": {
-        "p50": 5563,
-        "p95": 20473.7
+        "p50": 5770,
+        "p95": 20629.8
       },
       "connect_ms": {
-        "p50": 294,
-        "p95": 6323.1
+        "p50": 373,
+        "p95": 6333
       },
       "cpu_pct": {
-        "p50": 78.51,
-        "p95": 230.9
+        "p50": 81.21,
+        "p95": 225.99
       },
       "heap_mb": {
-        "p50": 4.24,
+        "p50": 3.81,
         "p95": 7.41
       },
       "scenarios": {
         "checkout-form": {
           "duration_ms": {
-            "p50": 1324,
-            "p95": 2744.45
+            "p50": 1303,
+            "p95": 2720.6
           },
           "peak_mem_mib": {
-            "p50": 223.08,
-            "p95": 237.73
+            "p50": 217.92,
+            "p95": 236.86
           },
           "base_ratio": 0.8,
           "steps": [
@@ -41,8 +41,8 @@
               "per_session": 3,
               "target": "localhost",
               "latency_ms": {
-                "p50": 79,
-                "p95": 192.2
+                "p50": 80,
+                "p95": 208.7
               }
             },
             {
@@ -50,8 +50,8 @@
               "per_session": 5,
               "target": "[data-testid=\"checkout-address\"]",
               "latency_ms": {
-                "p50": 23,
-                "p95": 45.15
+                "p50": 24,
+                "p95": 46
               }
             },
             {
@@ -59,8 +59,8 @@
               "per_session": 3,
               "target": "[data-testid=\"add-to-cart\"]",
               "latency_ms": {
-                "p50": 144,
-                "p95": 267.55
+                "p50": 148,
+                "p95": 275.3
               }
             },
             {
@@ -69,153 +69,79 @@
               "target": "[data-testid=\"item-title\"]",
               "latency_ms": {
                 "p50": 11,
-                "p95": 23.35
+                "p95": 23
               }
             }
           ],
           "network": {
-            "requests": 1.83,
+            "requests": 1.77,
             "domain": "localhost",
             "duration_ms": {
-              "p50": 12.5,
-              "p95": 32.25
+              "p50": 13,
+              "p95": 76.2
             },
             "bytes": {
-              "p50": 2476,
-              "p95": 3006.55
+              "p50": 2475,
+              "p95": 2663.9
             },
             "bytes_reported": 1,
             "resource_types": {
-              "document": 44
+              "document": 55
             }
           },
           "failures": [
             {
-              "p": 0.125,
+              "p": 0.0968,
               "status": "blocked",
               "error_code": "captcha",
               "reason": "captcha on http://localhost:3100/botwall?rate=0.2&seed=189678",
               "at": 0.08
             },
             {
-              "p": 0.0417,
+              "p": 0.0968,
               "status": "blocked",
               "error_code": "http_403",
-              "reason": "HTTP 403 for http://localhost:3100/botwall?rate=0.2&seed=113912",
+              "reason": "HTTP 403 for http://localhost:3100/botwall?rate=0.2&seed=101437",
               "at": 0.08
-            }
-          ]
-        },
-        "login-and-search": {
-          "duration_ms": {
-            "p50": 1944,
-            "p95": 2480.75
-          },
-          "peak_mem_mib": {
-            "p50": 221.45,
-            "p95": 231.47
-          },
-          "base_ratio": 0.8,
-          "steps": [
-            {
-              "action_type": "fill",
-              "per_session": 2,
-              "target": "[data-testid=\"login-pass\"]",
-              "latency_ms": {
-                "p50": 26.5,
-                "p95": 109.7
-              }
-            },
-            {
-              "action_type": "goto",
-              "per_session": 2.56,
-              "target": "localhost",
-              "latency_ms": {
-                "p50": 84,
-                "p95": 406
-              }
-            },
-            {
-              "action_type": "click",
-              "per_session": 2.56,
-              "target": "[data-testid=\"login-submit\"]",
-              "latency_ms": {
-                "p50": 139,
-                "p95": 364.3
-              }
-            },
-            {
-              "action_type": "extract",
-              "per_session": 2,
-              "target": "[data-testid=\"item-title\"]",
-              "latency_ms": {
-                "p50": 11,
-                "p95": 25.45
-              }
-            }
-          ],
-          "network": {
-            "requests": 1.55,
-            "domain": "localhost",
-            "duration_ms": {
-              "p50": 12,
-              "p95": 64
-            },
-            "bytes": {
-              "p50": 2697,
-              "p95": 2697
-            },
-            "bytes_reported": 1,
-            "resource_types": {
-              "document": 31
-            }
-          },
-          "failures": [
-            {
-              "p": 0.2,
-              "status": "failed",
-              "error_code": "selector_not_found",
-              "reason": "selector not found: [data-testid=\"flaky-button\"] (page.click: Timeout 1500ms exceeded.)",
-              "at": 1
             }
           ]
         },
         "heavy-page-crawl": {
           "duration_ms": {
-            "p50": 3922,
-            "p95": 8274.8
+            "p50": 4858.5,
+            "p95": 14672.65
           },
           "peak_mem_mib": {
-            "p50": 337.08,
-            "p95": 418.07
+            "p50": 357.16,
+            "p95": 427.74
           },
-          "base_ratio": 0.72,
+          "base_ratio": 0.7,
           "steps": [
             {
               "action_type": "goto",
-              "per_session": 5.79,
+              "per_session": 5.86,
               "target": "localhost",
               "latency_ms": {
-                "p50": 435.5,
-                "p95": 2529.05
+                "p50": 465.5,
+                "p95": 3639.15
               }
             },
             {
               "action_type": "eval",
-              "per_session": 2.79,
+              "per_session": 2.86,
               "target": "document.getElementsByTagName('*').length",
               "latency_ms": {
-                "p50": 10,
+                "p50": 11,
                 "p95": 23
               }
             },
             {
               "action_type": "extract",
-              "per_session": 3.79,
+              "per_session": 4.07,
               "target": "[data-testid=\"heavy-summary\"]",
               "latency_ms": {
                 "p50": 11,
-                "p95": 30.45
+                "p95": 30.35
               }
             },
             {
@@ -223,8 +149,8 @@
               "per_session": 1,
               "target": "[data-testid=\"js-result\"][data-status=\"done\"]",
               "latency_ms": {
-                "p50": 19,
-                "p95": 55.3
+                "p50": 19.5,
+                "p95": 54.3
               }
             },
             {
@@ -232,144 +158,38 @@
               "per_session": 1,
               "target": "localhost",
               "latency_ms": {
-                "p50": 76,
-                "p95": 247.7
+                "p50": 72.5,
+                "p95": 218.05
               }
             }
           ],
           "network": {
-            "requests": 47.84,
+            "requests": 52.71,
             "domain": "localhost",
             "duration_ms": {
-              "p50": 234,
-              "p95": 1024.4
+              "p50": 249,
+              "p95": 1159.5
             },
             "bytes": {
-              "p50": 503,
+              "p50": 502,
               "p95": 518
             },
             "bytes_reported": 1,
             "resource_types": {
-              "document": 30,
-              "image": 879
+              "document": 46,
+              "image": 1430
             }
           },
           "failures": []
-        }
-      }
-    },
-    "chrome-headless-shell": {
-      "basis": "prior",
-      "real_sessions": 0,
-      "derived_from": "chromium",
-      "note": "prior: startup x1.0 (the browser launches inside the container, so its time is in startup_ms instead of connect_ms), connect 150 ms, memory x0.75, cpu x0.9, latency x0.95, heap x0.9; failures as Chromium",
-      "engine_version": "156.0.8078.48",
-      "startup_ms": {
-        "p50": 5563,
-        "p95": 20473.7
-      },
-      "connect_ms": {
-        "p50": 150,
-        "p95": 400
-      },
-      "cpu_pct": {
-        "p50": 70.66,
-        "p95": 207.81
-      },
-      "heap_mb": {
-        "p50": 3.82,
-        "p95": 6.67
-      },
-      "scenarios": {
-        "checkout-form": {
-          "duration_ms": {
-            "p50": 1257.8,
-            "p95": 2607.23
-          },
-          "peak_mem_mib": {
-            "p50": 167.31,
-            "p95": 178.3
-          },
-          "base_ratio": 0.8,
-          "steps": [
-            {
-              "action_type": "goto",
-              "per_session": 3,
-              "target": "localhost",
-              "latency_ms": {
-                "p50": 75.05,
-                "p95": 182.59
-              }
-            },
-            {
-              "action_type": "fill",
-              "per_session": 5,
-              "target": "[data-testid=\"checkout-address\"]",
-              "latency_ms": {
-                "p50": 21.85,
-                "p95": 42.89
-              }
-            },
-            {
-              "action_type": "click",
-              "per_session": 3,
-              "target": "[data-testid=\"add-to-cart\"]",
-              "latency_ms": {
-                "p50": 136.8,
-                "p95": 254.17
-              }
-            },
-            {
-              "action_type": "extract",
-              "per_session": 2,
-              "target": "[data-testid=\"item-title\"]",
-              "latency_ms": {
-                "p50": 10.45,
-                "p95": 22.18
-              }
-            }
-          ],
-          "network": {
-            "requests": 1.83,
-            "domain": "localhost",
-            "duration_ms": {
-              "p50": 11.88,
-              "p95": 30.64
-            },
-            "bytes": {
-              "p50": 2476,
-              "p95": 3006.55
-            },
-            "bytes_reported": 1,
-            "resource_types": {
-              "document": 44
-            }
-          },
-          "failures": [
-            {
-              "p": 0.125,
-              "status": "blocked",
-              "error_code": "captcha",
-              "reason": "captcha on http://localhost:3100/botwall?rate=0.2&seed=189678",
-              "at": 0.08
-            },
-            {
-              "p": 0.0417,
-              "status": "blocked",
-              "error_code": "http_403",
-              "reason": "HTTP 403 for http://localhost:3100/botwall?rate=0.2&seed=113912",
-              "at": 0.08
-            }
-          ]
         },
         "login-and-search": {
           "duration_ms": {
-            "p50": 1846.8,
-            "p95": 2356.71
+            "p50": 1197.5,
+            "p95": 2381.5
           },
           "peak_mem_mib": {
-            "p50": 166.09,
-            "p95": 173.6
+            "p50": 218.48,
+            "p95": 230.62
           },
           "base_ratio": 0.8,
           "steps": [
@@ -378,26 +198,26 @@
               "per_session": 2,
               "target": "[data-testid=\"login-pass\"]",
               "latency_ms": {
-                "p50": 25.17,
-                "p95": 104.22
+                "p50": 29.5,
+                "p95": 95.3
               }
             },
             {
               "action_type": "goto",
-              "per_session": 2.56,
+              "per_session": 2.45,
               "target": "localhost",
               "latency_ms": {
-                "p50": 79.8,
-                "p95": 385.7
+                "p50": 100,
+                "p95": 331.9
               }
             },
             {
               "action_type": "click",
-              "per_session": 2.56,
+              "per_session": 2.45,
               "target": "[data-testid=\"login-submit\"]",
               "latency_ms": {
-                "p50": 132.05,
-                "p95": 346.09
+                "p50": 146,
+                "p95": 340.65
               }
             },
             {
@@ -405,17 +225,17 @@
               "per_session": 2,
               "target": "[data-testid=\"item-title\"]",
               "latency_ms": {
-                "p50": 10.45,
-                "p95": 24.18
+                "p50": 11,
+                "p95": 24.85
               }
             }
           ],
           "network": {
-            "requests": 1.55,
+            "requests": 1.46,
             "domain": "localhost",
             "duration_ms": {
-              "p50": 11.4,
-              "p95": 60.8
+              "p50": 13,
+              "p95": 55.6
             },
             "bytes": {
               "p50": 2697,
@@ -423,55 +243,211 @@
             },
             "bytes_reported": 1,
             "resource_types": {
-              "document": 31
+              "document": 38
             }
           },
           "failures": [
             {
-              "p": 0.2,
+              "p": 0.1538,
               "status": "failed",
               "error_code": "selector_not_found",
               "reason": "selector not found: [data-testid=\"flaky-button\"] (page.click: Timeout 1500ms exceeded.)",
               "at": 1
             }
           ]
-        },
-        "heavy-page-crawl": {
+        }
+      }
+    },
+    "chrome-headless-shell": {
+      "basis": "measured",
+      "real_sessions": 26,
+      "note": "measured from 26 real sessions",
+      "engine_version": "156.0.8078.48",
+      "startup_ms": {
+        "p50": 8261,
+        "p95": 20863.75
+      },
+      "connect_ms": {
+        "p50": 67,
+        "p95": 99.75
+      },
+      "cpu_pct": {
+        "p50": 94.81,
+        "p95": 213.56
+      },
+      "heap_mb": {
+        "p50": 4.59,
+        "p95": 7.47
+      },
+      "scenarios": {
+        "login-and-search": {
           "duration_ms": {
-            "p50": 3725.9,
-            "p95": 7861.06
+            "p50": 1837.5,
+            "p95": 2883.15
           },
           "peak_mem_mib": {
-            "p50": 252.81,
-            "p95": 313.55
+            "p50": 75.94,
+            "p95": 109.38
           },
-          "base_ratio": 0.72,
+          "base_ratio": 0.64,
           "steps": [
             {
-              "action_type": "goto",
-              "per_session": 5.79,
-              "target": "localhost",
+              "action_type": "fill",
+              "per_session": 2,
+              "target": "[data-testid=\"login-pass\"]",
               "latency_ms": {
-                "p50": 413.73,
-                "p95": 2402.6
+                "p50": 72.5,
+                "p95": 83.25
               }
             },
             {
-              "action_type": "eval",
-              "per_session": 2.79,
-              "target": "document.getElementsByTagName('*').length",
+              "action_type": "goto",
+              "per_session": 2.25,
+              "target": "localhost",
               "latency_ms": {
-                "p50": 9.5,
-                "p95": 21.85
+                "p50": 162.5,
+                "p95": 302.75
+              }
+            },
+            {
+              "action_type": "click",
+              "per_session": 2.25,
+              "target": "[data-testid=\"login-submit\"]",
+              "latency_ms": {
+                "p50": 346,
+                "p95": 953.6
               }
             },
             {
               "action_type": "extract",
-              "per_session": 3.79,
+              "per_session": 2,
+              "target": "[data-testid=\"item-title\"]",
+              "latency_ms": {
+                "p50": 8,
+                "p95": 14.5
+              }
+            }
+          ],
+          "network": {
+            "requests": 1.13,
+            "domain": "localhost",
+            "duration_ms": {
+              "p50": 20,
+              "p95": 49.4
+            },
+            "bytes": {
+              "p50": 2697,
+              "p95": 2697
+            },
+            "bytes_reported": 1,
+            "resource_types": {
+              "document": 9
+            }
+          },
+          "failures": []
+        },
+        "checkout-form": {
+          "duration_ms": {
+            "p50": 2475.5,
+            "p95": 3866.8
+          },
+          "peak_mem_mib": {
+            "p50": 117.82,
+            "p95": 121.07
+          },
+          "base_ratio": 0.45,
+          "steps": [
+            {
+              "action_type": "goto",
+              "per_session": 3,
+              "target": "localhost",
+              "latency_ms": {
+                "p50": 161.5,
+                "p95": 350.6
+              }
+            },
+            {
+              "action_type": "fill",
+              "per_session": 5,
+              "target": "[data-testid=\"checkout-address\"]",
+              "latency_ms": {
+                "p50": 77,
+                "p95": 193.55
+              }
+            },
+            {
+              "action_type": "click",
+              "per_session": 3,
+              "target": "[data-testid=\"add-to-cart\"]",
+              "latency_ms": {
+                "p50": 388,
+                "p95": 1113.6
+              }
+            },
+            {
+              "action_type": "extract",
+              "per_session": 2,
+              "target": "[data-testid=\"item-title\"]",
+              "latency_ms": {
+                "p50": 10,
+                "p95": 17.2
+              }
+            }
+          ],
+          "network": {
+            "requests": 2,
+            "domain": "localhost",
+            "duration_ms": {
+              "p50": 15,
+              "p95": 31
+            },
+            "bytes": {
+              "p50": 1314,
+              "p95": 2477
+            },
+            "bytes_reported": 1,
+            "resource_types": {
+              "document": 20
+            }
+          },
+          "failures": []
+        },
+        "heavy-page-crawl": {
+          "duration_ms": {
+            "p50": 8655.5,
+            "p95": 11394.7
+          },
+          "peak_mem_mib": {
+            "p50": 278.8,
+            "p95": 323.67
+          },
+          "base_ratio": 0.3,
+          "steps": [
+            {
+              "action_type": "goto",
+              "per_session": 6,
+              "target": "localhost",
+              "latency_ms": {
+                "p50": 832.5,
+                "p95": 3394.75
+              }
+            },
+            {
+              "action_type": "eval",
+              "per_session": 3,
+              "target": "document.getElementsByTagName('*').length",
+              "latency_ms": {
+                "p50": 15.5,
+                "p95": 58.5
+              }
+            },
+            {
+              "action_type": "extract",
+              "per_session": 4.75,
               "target": "[data-testid=\"heavy-summary\"]",
               "latency_ms": {
-                "p50": 10.45,
-                "p95": 28.93
+                "p50": 13,
+                "p95": 52
               }
             },
             {
@@ -479,8 +455,8 @@
               "per_session": 1,
               "target": "[data-testid=\"js-result\"][data-status=\"done\"]",
               "latency_ms": {
-                "p50": 18.05,
-                "p95": 52.54
+                "p50": 13.5,
+                "p95": 106
               }
             },
             {
@@ -488,26 +464,26 @@
               "per_session": 1,
               "target": "localhost",
               "latency_ms": {
-                "p50": 72.2,
-                "p95": 235.31
+                "p50": 136,
+                "p95": 221.5
               }
             }
           ],
           "network": {
-            "requests": 47.84,
+            "requests": 46.13,
             "domain": "localhost",
             "duration_ms": {
-              "p50": 222.3,
-              "p95": 973.18
+              "p50": 325,
+              "p95": 1226
             },
             "bytes": {
-              "p50": 503,
+              "p50": 502,
               "p95": 518
             },
             "bytes_reported": 1,
             "resource_types": {
-              "document": 30,
-              "image": 879
+              "document": 13,
+              "image": 356
             }
           },
           "failures": []
@@ -515,114 +491,32 @@
       }
     },
     "lightpanda": {
-      "basis": "prior",
-      "real_sessions": 0,
-      "derived_from": "chromium",
-      "note": "prior: startup x0.45, connect 40 ms, memory x0.1, cpu x0.35, latency x0.6, no JS heap, half of the request sizes unreported; fails checkout-form and js-heavy pages with unsupported_feature / unsupported_api",
-      "engine_version": "124.0.6367.29",
+      "basis": "measured",
+      "real_sessions": 36,
+      "note": "measured from 36 real sessions",
+      "engine_version": "1.0.2",
       "startup_ms": {
-        "p50": 2503.35,
-        "p95": 9213.17
+        "p50": 7839.5,
+        "p95": 18416.25
       },
       "connect_ms": {
-        "p50": 40,
-        "p95": 120
+        "p50": 36,
+        "p95": 105
       },
       "cpu_pct": {
-        "p50": 27.48,
-        "p95": 80.82
+        "p50": 1.47,
+        "p95": 23.35
       },
       "heap_mb": null,
       "scenarios": {
-        "checkout-form": {
-          "duration_ms": {
-            "p50": 794.4,
-            "p95": 1646.67
-          },
-          "peak_mem_mib": {
-            "p50": 22.31,
-            "p95": 23.77
-          },
-          "base_ratio": 0.8,
-          "steps": [
-            {
-              "action_type": "goto",
-              "per_session": 3,
-              "target": "localhost",
-              "latency_ms": {
-                "p50": 47.4,
-                "p95": 115.32
-              }
-            },
-            {
-              "action_type": "fill",
-              "per_session": 5,
-              "target": "[data-testid=\"checkout-address\"]",
-              "latency_ms": {
-                "p50": 13.8,
-                "p95": 27.09
-              }
-            },
-            {
-              "action_type": "click",
-              "per_session": 3,
-              "target": "[data-testid=\"add-to-cart\"]",
-              "latency_ms": {
-                "p50": 86.4,
-                "p95": 160.53
-              }
-            },
-            {
-              "action_type": "extract",
-              "per_session": 2,
-              "target": "[data-testid=\"item-title\"]",
-              "latency_ms": {
-                "p50": 6.6,
-                "p95": 14.01
-              }
-            }
-          ],
-          "network": {
-            "requests": 1.83,
-            "domain": "localhost",
-            "duration_ms": {
-              "p50": 7.5,
-              "p95": 19.35
-            },
-            "bytes": {
-              "p50": 2476,
-              "p95": 3006.55
-            },
-            "bytes_reported": 0.5,
-            "resource_types": {
-              "document": 44
-            }
-          },
-          "failures": [
-            {
-              "p": 0.55,
-              "status": "failed",
-              "error_code": "unsupported_feature",
-              "reason": "Page.captureScreenshot is not supported by this engine (-32601)",
-              "at": 0.5
-            },
-            {
-              "p": 0.2,
-              "status": "failed",
-              "error_code": "unsupported_api",
-              "reason": "TypeError: IntersectionObserver is not defined",
-              "at": 0.4
-            }
-          ]
-        },
         "login-and-search": {
           "duration_ms": {
-            "p50": 1166.4,
-            "p95": 1488.45
+            "p50": 591,
+            "p95": 1313.6
           },
           "peak_mem_mib": {
-            "p50": 22.15,
-            "p95": 23.15
+            "p50": 8.1,
+            "p95": 34.5
           },
           "base_ratio": 0.8,
           "steps": [
@@ -631,8 +525,8 @@
               "per_session": 2,
               "target": "[data-testid=\"login-pass\"]",
               "latency_ms": {
-                "p50": 15.9,
-                "p95": 65.82
+                "p50": 24.5,
+                "p95": 54.4
               }
             },
             {
@@ -640,8 +534,8 @@
               "per_session": 2.56,
               "target": "localhost",
               "latency_ms": {
-                "p50": 50.4,
-                "p95": 243.6
+                "p50": 67,
+                "p95": 174.1
               }
             },
             {
@@ -649,8 +543,8 @@
               "per_session": 2.56,
               "target": "[data-testid=\"login-submit\"]",
               "latency_ms": {
-                "p50": 83.4,
-                "p95": 218.58
+                "p50": 98,
+                "p95": 201.8
               }
             },
             {
@@ -658,80 +552,147 @@
               "per_session": 2,
               "target": "[data-testid=\"item-title\"]",
               "latency_ms": {
-                "p50": 6.6,
-                "p95": 15.27
+                "p50": 7,
+                "p95": 22.45
               }
             }
           ],
           "network": {
-            "requests": 1.55,
+            "requests": 1.6,
             "domain": "localhost",
             "duration_ms": {
-              "p50": 7.2,
-              "p95": 38.4
+              "p50": 39,
+              "p95": 1000
             },
             "bytes": {
-              "p50": 2697,
-              "p95": 2697
+              "p50": 2531,
+              "p95": 2531
             },
-            "bytes_reported": 0.5,
+            "bytes_reported": 1,
             "resource_types": {
-              "document": 31
+              "document": 16
             }
           },
           "failures": [
             {
               "p": 0.1,
               "status": "failed",
-              "error_code": "unsupported_api",
-              "reason": "TypeError: crypto.subtle is undefined",
-              "at": 0.5
+              "error_code": "selector_not_found",
+              "reason": "selector not found: [data-testid=\"flaky-button\"] (page.click: Timeout 1500ms exceeded.)",
+              "at": 1
+            }
+          ]
+        },
+        "checkout-form": {
+          "duration_ms": {
+            "p50": 1080.5,
+            "p95": 1525.35
+          },
+          "peak_mem_mib": {
+            "p50": 10.5,
+            "p95": 11.57
+          },
+          "base_ratio": 0.8,
+          "steps": [
+            {
+              "action_type": "goto",
+              "per_session": 3,
+              "target": "localhost",
+              "latency_ms": {
+                "p50": 74,
+                "p95": 200.15
+              }
             },
             {
-              "p": 0.03,
-              "status": "failed",
-              "error_code": "selector_not_found",
-              "reason": "selector not found",
-              "at": 0.5
+              "action_type": "fill",
+              "per_session": 5,
+              "target": "[data-testid=\"checkout-address\"]",
+              "latency_ms": {
+                "p50": 26,
+                "p95": 103.1
+              }
+            },
+            {
+              "action_type": "click",
+              "per_session": 3,
+              "target": "[data-testid=\"add-to-cart\"]",
+              "latency_ms": {
+                "p50": 139.5,
+                "p95": 250.5
+              }
+            },
+            {
+              "action_type": "extract",
+              "per_session": 2,
+              "target": "[data-testid=\"item-title\"]",
+              "latency_ms": {
+                "p50": 9,
+                "p95": 25.6
+              }
+            }
+          ],
+          "network": {
+            "requests": 1.62,
+            "domain": "localhost",
+            "duration_ms": {
+              "p50": 32,
+              "p95": 106
+            },
+            "bytes": {
+              "p50": 2189,
+              "p95": 2311
+            },
+            "bytes_reported": 1,
+            "resource_types": {
+              "document": 21
+            }
+          },
+          "failures": [
+            {
+              "p": 0.2308,
+              "status": "blocked",
+              "error_code": "http_403",
+              "reason": "HTTP 403 for http://localhost:3100/botwall?rate=0.2&seed=774488",
+              "at": 0.08
             }
           ]
         },
         "heavy-page-crawl": {
           "duration_ms": {
-            "p50": 2353.2,
-            "p95": 4964.88
+            "p50": 5970,
+            "p95": 7069.2
           },
           "peak_mem_mib": {
-            "p50": 33.71,
-            "p95": 41.81
+            "p50": 14.96,
+            "p95": 23.62
           },
-          "base_ratio": 0.72,
+          "base_ratio": 0.8,
           "steps": [
             {
               "action_type": "goto",
-              "per_session": 5.79,
+              "per_session": 5.8,
               "target": "localhost",
               "latency_ms": {
-                "p50": 261.3,
-                "p95": 1517.43
+                "p50": 109,
+                "p95": 834.2
               }
             },
             {
               "action_type": "eval",
-              "per_session": 2.79,
+              "per_session": 2.8,
               "target": "document.getElementsByTagName('*').length",
               "latency_ms": {
-                "p50": 6,
-                "p95": 13.8
+                "p50": 11.5,
+                "p95": 28.35
               }
             },
             {
               "action_type": "extract",
-              "per_session": 3.79,
+              "per_session": 3.8,
               "target": "[data-testid=\"heavy-summary\"]",
               "latency_ms": {
-                "p50": 6.6,
-                "p95": 18.27
+                "p50": 18,
+                "p95": 115.5
               }
             },
             {
@@ -739,8 +700,8 @@
               "per_session": 1,
               "target": "[data-testid=\"js-result\"][data-status=\"done\"]",
               "latency_ms": {
-                "p50": 11.4,
-                "p95": 33.18
+                "p50": 4421,
+                "p95": 4439.4
               }
             },
             {
@@ -748,42 +709,41 @@
               "per_session": 1,
               "target": "localhost",
               "latency_ms": {
-                "p50": 45.6,
-                "p95": 148.62
+                "p50": 128,
+                "p95": 154
               }
             }
           ],
           "network": {
-            "requests": 47.84,
+            "requests": 1.85,
             "domain": "localhost",
             "duration_ms": {
-              "p50": 140.4,
-              "p95": 614.64
+              "p50": 42,
+              "p95": 1000
             },
             "bytes": {
-              "p50": 503,
-              "p95": 518
+              "p50": 2590,
+              "p95": 5958
             },
-            "bytes_reported": 0.5,
+            "bytes_reported": 1,
             "resource_types": {
-              "document": 30,
-              "image": 879
+              "document": 24
             }
           },
           "failures": [
             {
-              "p": 0.45,
-              "status": "failed",
-              "error_code": "unsupported_api",
-              "reason": "ReferenceError: ResizeObserver is not defined",
-              "at": 0.5
-            },
-            {
-              "p": 0.1,
+              "p": 0.3077,
               "status": "timeout",
               "error_code": "timeout",
-              "reason": "navigation timeout",
-              "at": 0.6
+              "reason": "webWorker: timeout after 3000ms",
+              "at": 1
+            },
+            {
+              "p": 0.3077,
+              "status": "failed",
+              "error_code": "unsupported_api",
+              "reason": "webWorker: timeout after 3000ms",
+              "at": 1
             }
           ]
         }

@@ -1,5 +1,11 @@
-import type { ClickHouseClient } from "@fleetscope/db";
-import { ENGINES, type Engine } from "@fleetscope/schema";
+import type {
+  CalibrationAction,
+  CalibrationData,
+  CalibrationRequest,
+  CalibrationSample,
+  CalibrationSession,
+} from "@fleetscope/db";
+import { ENGINES, type Engine, ERROR_CODES, type ErrorCode } from "@fleetscope/schema";
 import { deriveEngine, deriveScenario, MIN_REAL_SESSIONS, PRIORS } from "./priors";
 import type {
   Profile,
@@ -16,76 +22,12 @@ import { type Dist, fitDist, round } from "./rng";
  * sessions is derived from Chromium's with the documented priors (priors.ts).
  */
 
-// Raw rows ----------------------------------------------------------------------------------------
-
-export interface RawSession {
-  session_id: string;
-  engine: string;
-  scenario: string;
-  status: string;
-  reason: string | null;
-  engine_version: string | null;
-  startup_ms: number;
-  connect_ms: number;
-  duration_ms: number;
-}
-export interface RawAction {
-  session_id: string;
-  seq: number;
-  action_type: string;
-  target: string;
-  duration_ms: number;
-  ok: boolean;
-  error_code: string | null;
-}
-export interface RawSample {
-  session_id: string;
-  origin: string;
-  cpu_pct: number | null;
-  mem_mb: number | null;
-  js_heap_mb: number | null;
-}
-export interface RawRequest {
-  session_id: string;
-  domain: string;
-  bytes: number | null;
-  duration_ms: number;
-  resource_type: string;
-}
-export interface RawData {
-  sessions: RawSession[];
-  actions: RawAction[];
-  samples: RawSample[];
-  requests: RawRequest[];
-}
-
-const GOOD_SESSIONS = `
-  SELECT session_id FROM sessions FINAL
-  WHERE source = 'real' AND status != 'running'
-    AND NOT (status = 'failed' AND ifNull(reason, '') = 'interrupted')`;
-
-/** Everything needed, as plain rows (a few thousand at most, so it is fine to read them all). */
-export async function readRawData(client: ClickHouseClient): Promise<RawData> {
-  const rows = async <T>(query: string): Promise<T[]> =>
-    (await client.query({ query, format: "JSONEachRow" })).json<T>();
-  return {
-    sessions: await rows<RawSession>(`
-      SELECT session_id, engine, scenario, status, reason, engine_version,
-             startup_ms, connect_ms, ifNull(duration_ms, 0) AS duration_ms
-      FROM sessions FINAL WHERE session_id IN (${GOOD_SESSIONS})`),
-    actions: await rows<RawAction>(`
-      SELECT session_id, seq, action_type, target, duration_ms, ok, error_code
-      FROM actions WHERE source = 'real' AND session_id IN (${GOOD_SESSIONS})
-      ORDER BY session_id, seq`),
-    samples: await rows<RawSample>(`
-      SELECT session_id, origin, cpu_pct, mem_mb, js_heap_mb
-      FROM resource_samples WHERE source = 'real' AND session_id IN (${GOOD_SESSIONS})
-      ORDER BY session_id, ts`),
-    requests: await rows<RawRequest>(`
-      SELECT session_id, domain, bytes, duration_ms, resource_type
-      FROM network_requests WHERE source = 'real' AND session_id IN (${GOOD_SESSIONS})`),
-  };
-}
+// Raw rows come from @fleetscope/db (readCalibrationData); the names below keep the code short.
+export type RawSession = CalibrationSession;
+export type RawAction = CalibrationAction;
+export type RawSample = CalibrationSample;
+export type RawRequest = CalibrationRequest;
+export type RawData = CalibrationData;
 
 // Pure calculation ----------------------------------------------------------------------------------
 
@@ -119,6 +61,17 @@ function groupBy<T>(items: T[], key: (item: T) => string): Map<string, T[]> {
 }
 
 const MIN_SCENARIO_SESSIONS = 3;
+
+/**
+ * The engine version of the NEWEST session. Not the most common one: when the runner changes how it
+ * reads a version (Lightpanda used to report Chrome's number from browser.version(), now its own from
+ * /json/version), older sessions would outvote the right value.
+ */
+export function latestVersion(sessions: RawSession[]): string | null {
+  let newest: RawSession | undefined;
+  for (const s of sessions) if (!newest || s.started_at > newest.started_at) newest = s;
+  return newest?.engine_version || null;
+}
 
 /** The profile of one scenario of one engine, from its real sessions. */
 export function scenarioProfile(sessions: RawSession[], data: RawData): ProfileScenario {
@@ -178,7 +131,11 @@ export function scenarioProfile(sessions: RawSession[], data: RawData): ProfileS
   );
   const failures: ProfileFailure[] = [];
   for (const [key, list] of failuresByClass) {
-    const [status, code] = key.split("|") as [ProfileFailure["status"], string];
+    const [status, rawCode] = key.split("|") as [ProfileFailure["status"], string];
+    // A code outside the shared vocabulary (an old or foreign row) becomes "unknown".
+    const code: ErrorCode = (ERROR_CODES as readonly string[]).includes(rawCode)
+      ? (rawCode as ErrorCode)
+      : "unknown";
     const ats = list.map((s) => {
       const failed = data.actions.find((a) => a.session_id === s.session_id && !a.ok);
       return failed ? Math.min(1, (failed.seq + 1) / planLength) : 1;
@@ -243,14 +200,10 @@ export function engineProfile(
     if (own) scenarios[name] = own;
   }
   return {
-    basis: "real",
+    basis: "measured",
     real_sessions: sessions.length,
     note: `measured from ${sessions.length} real sessions`,
-    engine_version:
-      mode(
-        sessions.map((s) => s.engine_version ?? ""),
-        "",
-      ) || null,
+    engine_version: latestVersion(sessions),
     startup_ms: fit(sessions.map((s) => s.startup_ms)),
     connect_ms: fit(sessions.map((s) => s.connect_ms)),
     cpu_pct: fit(cpus),
@@ -282,10 +235,7 @@ export function buildProfile(data: RawData, now: Date = new Date()): Profile {
       deriveEngine(
         chromium,
         prior,
-        mode(
-          data.sessions.filter((s) => s.engine === engine).map((s) => s.engine_version ?? ""),
-          "",
-        ) || null,
+        latestVersion(data.sessions.filter((s) => s.engine === engine)),
       );
   }
   const counts = ENGINES.map((e) => `${e} ${engines[e].real_sessions}`).join(", ");

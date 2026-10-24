@@ -1,4 +1,4 @@
-import type { Engine } from "@fleetscope/schema";
+import type { Engine, ErrorCode } from "@fleetscope/schema";
 import type { ProfileEngine, ProfileFailure, ProfileScenario } from "./profile";
 import type { Dist } from "./rng";
 
@@ -38,7 +38,7 @@ export interface Prior {
 const failure = (
   p: number,
   status: ProfileFailure["status"],
-  error_code: string,
+  error_code: ErrorCode,
   reason: string,
   at: number,
 ): ProfileFailure => ({ p, status, error_code, reason, at });

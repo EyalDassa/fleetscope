@@ -1,10 +1,19 @@
 import { readFileSync } from "node:fs";
-import { ENGINES, EventBatch, type FleetEvent, SAFE_LABEL_PATTERN } from "@fleetscope/schema";
+import {
+  ENGINES,
+  ERROR_CODES,
+  type ErrorCode,
+  EventBatch,
+  type FleetEvent,
+  ISSUE_FOR_CODE,
+  SAFE_LABEL_PATTERN,
+} from "@fleetscope/schema";
 import { describe, expect, it } from "vitest";
-import { buildProfile, type RawData } from "./calibrate";
-import { generateSession, ISSUE_FOR_CODE } from "./generate";
+import { buildProfile, latestVersion, type RawData } from "./calibrate";
+import { generateSession } from "./generate";
+import { LiveStream } from "./live";
 import { pairFor, parseDuration, planRun, simAgentId } from "./plan";
-import { batchSessions, postBatch } from "./post";
+import { batchSessions, PostError, postBatch } from "./post";
 import { assertProfile, type Profile, scenariosOf } from "./profile";
 import { createRng, fitDist, sampleDist } from "./rng";
 
@@ -12,7 +21,8 @@ const profile: Profile = assertProfile(
   JSON.parse(readFileSync(new URL("./profile.json", import.meta.url), "utf8")),
 );
 const NOW = Date.UTC(2026, 9, 24, 12, 0, 0);
-const strip = (events: FleetEvent[]) => events.map(({ event_id: _id, ...rest }) => rest);
+const strip = (events: FleetEvent[]) =>
+  events.map(({ event_id: _id, session_id: _sid, ...rest }) => rest);
 
 describe("generateSession", () => {
   const plan = {
@@ -75,7 +85,9 @@ describe("generateSession", () => {
       expect(lastAction?.type === "action" && lastAction.ok).toBe(false);
       const code = lastAction?.type === "action" ? lastAction.error_code : null;
       const issue = events.find((e) => e.type === "issue");
-      expect(issue?.type === "issue" ? issue.kind : undefined).toBe(ISSUE_FOR_CODE[code as string]);
+      expect(issue?.type === "issue" ? issue.kind : undefined).toBe(
+        ISSUE_FOR_CODE[code as ErrorCode] ?? undefined,
+      );
     }
     expect(seen).toBeGreaterThan(50);
   });
@@ -297,6 +309,7 @@ describe("buildProfile", () => {
       status: i < 9 ? "success" : "failed",
       reason: i < 9 ? null : "selector not found",
       engine_version: "156.0.1.2",
+      started_at: `2026-10-24 12:00:${String(10 + i)}`,
       startup_ms: 1000 + i * 100,
       connect_ms: 500,
       duration_ms: 2000 + i * 10,
@@ -344,7 +357,7 @@ describe("buildProfile", () => {
     };
     const built = buildProfile(data, new Date(NOW));
     expect(built.engines.chromium).toMatchObject({
-      basis: "real",
+      basis: "measured",
       real_sessions: 12,
       engine_version: "156.0.1.2",
     });
@@ -365,5 +378,119 @@ describe("buildProfile", () => {
     expect(
       built.engines["chrome-headless-shell"].scenarios["login-and-search"]?.peak_mem_mib.p50,
     ).toBe(150);
+  });
+});
+
+describe("session ids (R-M3-04)", () => {
+  it("two runs with the same seed have the same content but disjoint session ids", () => {
+    const options = {
+      sessions: 20,
+      windowMs: 600_000,
+      seed: 42,
+      now: NOW,
+      engines: [...ENGINES],
+      agentId: "sim@test",
+    };
+    const a = planRun(profile, options);
+    const b = planRun(profile, options);
+    expect(a.map(strip)).toEqual(b.map(strip));
+    const ids = (run: FleetEvent[][]) => new Set(run.flat().map((e) => e.session_id));
+    for (const id of ids(a)) expect(ids(b).has(id)).toBe(false);
+    for (const id of ids(a)) expect(id).toMatch(SAFE_LABEL_PATTERN);
+  });
+});
+
+describe("the profile", () => {
+  it("only uses error codes of the shared vocabulary", () => {
+    for (const engine of Object.values(profile.engines)) {
+      for (const scenario of Object.values(engine.scenarios)) {
+        for (const failure of scenario.failures) {
+          expect(ERROR_CODES as readonly string[]).toContain(failure.error_code);
+        }
+      }
+    }
+  });
+
+  it("Lightpanda's engine_version is not a Chrome version (R-M3-12)", () => {
+    const version = profile.engines.lightpanda.engine_version;
+    // Chrome's look like 124.0.6367.29 (a three digit major), Lightpanda's like 1.0.2
+    if (version !== null) expect(version).not.toMatch(/^\d{3,}\./);
+  });
+
+  it("latestVersion takes the newest session's version, not the most common", () => {
+    const s = (started_at: string, engine_version: string | null) =>
+      ({ started_at, engine_version }) as never;
+    expect(
+      latestVersion([
+        s("2026-10-01", "124.0.1.2"),
+        s("2026-10-02", "124.0.1.2"),
+        s("2026-10-24", "1.0.2"),
+      ]),
+    ).toBe("1.0.2");
+    expect(latestVersion([])).toBeNull();
+  });
+});
+
+describe("LiveStream (Ctrl+C, R-M3-09)", () => {
+  const stretched = (index: number) =>
+    generateSession(profile, {
+      engine: "chromium",
+      scenario: "heavy-page-crawl",
+      startMs: NOW,
+      seed: 1,
+      index,
+      agentId: "sim@test",
+      provider: "local-docker",
+      stretch: 200, // ends many minutes in the future
+    });
+
+  it("stops by ending in-flight sessions at now as interrupted, with nothing in the future", async () => {
+    const batches: FleetEvent[][] = [];
+    const stream = new LiveStream(async (batch) => {
+      batches.push(batch);
+    });
+    stream.add(stretched(1));
+    stream.add(stretched(2));
+    await stream.flushDue(NOW + 100);
+    expect(stream.inFlight).toBe(2);
+    await stream.stop(NOW + 5000);
+    const sent = batches.flat();
+    expect(Math.max(...sent.map((e) => e.ts))).toBeLessThanOrEqual(NOW + 5000);
+    const ended = sent.filter((e) => e.type === "session.ended");
+    expect(ended).toHaveLength(2);
+    for (const e of ended) {
+      expect(e).toMatchObject({ status: "failed", reason: "interrupted", ts: NOW + 5000 });
+      expect(e.type === "session.ended" && e.duration_ms).toBe(5000);
+    }
+    expect(EventBatch.safeParse(batches[0]).success).toBe(true);
+    // every session that started also ended
+    const started = new Set(
+      sent.filter((e) => e.type === "session.started").map((e) => e.session_id),
+    );
+    expect(new Set(ended.map((e) => e.session_id))).toEqual(started);
+  });
+
+  it("a batch that fails with a 503 or a network error is retried, not dropped", async () => {
+    let calls = 0;
+    const got: FleetEvent[][] = [];
+    const stream = new LiveStream(async (batch) => {
+      calls += 1;
+      if (calls <= 2) throw new PostError("down", calls === 1 ? 503 : null);
+      got.push(batch);
+    });
+    stream.add(stretched(3));
+    await stream.flushDue(NOW + 100);
+    await stream.stop(NOW + 3000);
+    expect(stream.dropped).toBe(0);
+    expect(got.flat().some((e) => e.type === "session.ended")).toBe(true);
+  });
+
+  it("a 400 is dropped (retrying cannot help) and counted", async () => {
+    const stream = new LiveStream(async () => {
+      throw new PostError("bad", 400);
+    });
+    stream.add(stretched(4));
+    await stream.flushDue(NOW + 100);
+    expect(stream.dropped).toBeGreaterThan(0);
   });
 });

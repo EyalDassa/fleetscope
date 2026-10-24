@@ -1,8 +1,9 @@
+import { randomUUID } from "node:crypto";
 import {
   type ActionType,
   type EventEnvelope,
   type FleetEvent,
-  type IssueKind,
+  ISSUE_FOR_CODE,
   newEvent,
   type SessionStatus,
 } from "@fleetscope/schema";
@@ -11,24 +12,9 @@ import { createRng, type Rng, sampleDist, sampleInt, sessionSeed } from "./rng";
 
 /**
  * Builds the events of one simulated session from the profile. Pure: the same inputs (profile,
- * engine, scenario, seed, index, start time) give the same events, apart from the `event_id`s,
- * which `newEvent` takes from `crypto.randomUUID()`.
+ * engine, scenario, seed, index, start time) give the same events, apart from the `event_id`s and the `session_id`,
+ * which are random (`newEvent` and `randomUUID`), so a repeated seed never reuses an id.
  */
-
-/**
- * The `issue` that a failed action also raises. A copy of ISSUE_FOR_CODE in packages/collector, so
- * the simulated data has the shape of the real runner's (the simulator does not depend on the
- * collector, which pulls in Playwright). `unsupported_feature` raises none, like the real one.
- */
-export const ISSUE_FOR_CODE: Readonly<Record<string, IssueKind | undefined>> = {
-  timeout: "timeout",
-  nav_error: "nav_error",
-  http_403: "blocked",
-  http_5xx: "nav_error",
-  captcha: "captcha",
-  unsupported_api: "unsupported_api",
-  browser_closed: "crash",
-};
 
 /** Interval of the runner's container sampler. */
 export const SAMPLE_INTERVAL_MS = 2000;
@@ -95,7 +81,10 @@ export function generateSession(profile: Profile, plan: SessionPlan): FleetEvent
   if (!scenario) throw new Error(`no profile for ${plan.engine} / ${plan.scenario}`);
   const rng = createRng(sessionSeed(plan.seed, plan.index));
   const ctx: EventEnvelope = {
-    session_id: `sim-${rng.hex(8)}`,
+    // A fresh id every time: `sessions` replaces a row with the same id, so an id derived from the
+    // seed would overwrite the sessions of an earlier run with the same seed (R-M3-04). The seed
+    // still decides everything else.
+    session_id: `sim-${randomUUID()}`,
     source: "sim",
     agent_id: plan.agentId,
     engine: plan.engine,
@@ -164,7 +153,7 @@ export function generateSession(profile: Profile, plan: SessionPlan): FleetEvent
 
   // The failing action also raises an issue, as the real runner does.
   const last = actions[actions.length - 1];
-  const issueKind = failure ? ISSUE_FOR_CODE[failure.error_code] : undefined;
+  const issueKind = failure ? ISSUE_FOR_CODE[failure.error_code] : null;
   if (last && failure && issueKind) {
     out.push(
       newEvent(

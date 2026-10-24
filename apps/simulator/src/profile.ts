@@ -1,4 +1,4 @@
-import type { ActionType, Engine, SessionStatus } from "@fleetscope/schema";
+import type { ActionType, Engine, ErrorCode, SessionStatus } from "@fleetscope/schema";
 import { ENGINES } from "@fleetscope/schema";
 import type { Dist } from "./rng";
 
@@ -24,7 +24,7 @@ export interface ProfileFailure {
   status: SessionStatus;
   reason: string;
   /** The failing action's error code. The matching `issue` event is derived (ISSUE_FOR_CODE). */
-  error_code: string;
+  error_code: ErrorCode;
   /** Where in the session it fails, 0 (first action) to 1 (last). */
   at: number;
 }
@@ -54,8 +54,8 @@ export interface ProfileScenario {
 }
 
 export interface ProfileEngine {
-  /** `real`: measured from `real_sessions` real sessions. `prior`: derived from `derived_from` with the factors in `note`. */
-  basis: "real" | "prior";
+  /** `measured`: measured from `real_sessions` real sessions. `prior`: derived from `derived_from` with the factors in `note`. */
+  basis: "measured" | "prior";
   real_sessions: number;
   derived_from?: Engine;
   note: string;

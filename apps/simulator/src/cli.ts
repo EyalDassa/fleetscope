@@ -1,11 +1,12 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
-import { createClickHouseClient, loadDbConfig } from "@fleetscope/db";
+import { createClickHouseClient, loadDbConfig, readCalibrationData } from "@fleetscope/db";
 import { ENGINES, type Engine, type FleetEvent } from "@fleetscope/schema";
-import { buildProfile, readRawData } from "./calibrate";
+import { buildProfile } from "./calibrate";
 import { generateSession } from "./generate";
+import { LiveStream } from "./live";
 import { pairFor, parseDuration, planRun, simAgentId } from "./plan";
-import { batchEvents, batchSessions, postBatch } from "./post";
+import { batchSessions, postBatch } from "./post";
 import { assertProfile, type Profile } from "./profile";
 
 const PROFILE_PATH = new URL("./profile.json", import.meta.url);
@@ -17,8 +18,8 @@ const USAGE = `usage:
       (default 10m), as fast as the API takes them, in batches of at most 1000 events.
   pnpm sim live --rate <sessions per minute> [--seed N] [--engines a,b] [--stretch X]
       Runs until Ctrl+C: new sessions start at that rate and their events are sent as they happen.
-  pnpm sim calibrate
-      Rewrites src/profile.json from the real sessions in ClickHouse.
+  pnpm sim calibrate [--days 14]
+      Rewrites src/profile.json from the real sessions of the last --days days in ClickHouse.
 Environment: FLEETSCOPE_API_URL (default http://localhost:4000), CLICKHOUSE_* for calibrate.`;
 
 async function loadProfile(): Promise<Profile> {
@@ -122,26 +123,15 @@ async function live(argv: string[]): Promise<number> {
   });
 
   say(`sim live: ${perMinute} sessions/min -> ${apiUrl} (seed ${seed}). Ctrl+C to stop.`);
-  let pending: FleetEvent[] = [];
+  const stream = new LiveStream(
+    (batch) => postBatch(batch, { apiUrl }),
+    (text) =>
+      process.stderr.write(`${text}
+`),
+  );
   let owed = 0;
   let index = 0;
-  let sent = 0;
   let last = Date.now();
-  const flush = async (all: boolean) => {
-    const now = Date.now();
-    const due = all ? pending : pending.filter((e) => e.ts <= now);
-    if (due.length === 0) return;
-    pending = all ? [] : pending.filter((e) => e.ts > now);
-    due.sort((a, b) => a.ts - b.ts);
-    for (const batch of batchEvents(due)) {
-      try {
-        await postBatch(batch, { apiUrl });
-        sent += batch.length;
-      } catch (error) {
-        process.stderr.write(`sim live: ${String(error)}\n`);
-      }
-    }
-  };
   while (!stopping) {
     const now = Date.now();
     owed += ((now - last) / 60_000) * perMinute;
@@ -149,8 +139,8 @@ async function live(argv: string[]): Promise<number> {
     while (owed >= 1) {
       owed -= 1;
       const { engine, scenario } = pairFor(profile, engines, seed, index);
-      pending.push(
-        ...generateSession(profile, {
+      stream.add(
+        generateSession(profile, {
           engine,
           scenario,
           startMs: now,
@@ -163,23 +153,28 @@ async function live(argv: string[]): Promise<number> {
       );
       index += 1;
     }
-    await flush(false);
+    await stream.flushDue(now);
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
-  await flush(true);
-  say(`sim live: stopped after ${index} sessions, ${sent} events sent.`);
-  return 0;
+  const open = stream.inFlight;
+  await stream.stop(Date.now());
+  say(
+    `sim live: stopped after ${index} sessions (${open} ended early as interrupted), ${stream.sent} events sent, ${stream.dropped} dropped.`,
+  );
+  return stream.dropped > 0 ? 1 : 0;
 }
 
-async function calibrate(): Promise<number> {
+async function calibrate(argv: string[]): Promise<number> {
+  const { values } = parseArgs({ args: argv, options: { days: { type: "string" } } });
+  const days = Math.trunc(positive(values.days, "days", 14));
   const config = loadDbConfig();
   const client = createClickHouseClient(config);
   try {
-    const profile = buildProfile(await readRawData(client));
+    const profile = buildProfile(await readCalibrationData(client, { days }));
     await writeFile(PROFILE_PATH, `${JSON.stringify(profile, null, 2)}\n`);
     for (const engine of ENGINES) {
       const e = profile.engines[engine];
-      say(`${engine}: ${e.basis}${e.basis === "real" ? ` (${e.real_sessions} sessions)` : ""}`);
+      say(`${engine}: ${e.basis}${e.basis === "measured" ? ` (${e.real_sessions} sessions)` : ""}`);
     }
     say(`wrote ${PROFILE_PATH.pathname.replace(/^\/(\w:)/, "$1")}`);
     return 0;
@@ -193,7 +188,7 @@ export async function main(argv: string[]): Promise<number> {
   try {
     if (command === "run") return await run(rest);
     if (command === "live") return await live(rest);
-    if (command === "calibrate") return await calibrate();
+    if (command === "calibrate") return await calibrate(rest);
   } catch (error) {
     process.stderr.write(
       `sim ${command}: ${error instanceof Error ? error.message : String(error)}\n`,
