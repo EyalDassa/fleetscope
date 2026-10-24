@@ -10,16 +10,15 @@
     "includes": [
       "**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts,json,jsonc,css}",
       "!**/node_modules",
-      "!**/.next",
       "!**/.turbo",
       "!**/dist",
       "!**/coverage",
       "!**/playwright-report",
       "!**/test-results",
-      "!**/next-env.d.ts",
       "!pnpm-lock.yaml",
       "!.claude",
-      "!design"
+      "!design",
+      "!infra/grafana/dashboards"
     ]
   },
   "formatter": {
@@ -44,6 +43,18 @@
       }
     }
   },
+  "overrides": [
+    {
+      "includes": ["infra/grafana/**"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noTemplateCurlyInString": "off"
+          }
+        }
+      }
+    }
+  ],
   "assist": {
     "actions": {
       "source": {

@@ -3,13 +3,11 @@ node_modules/
 
 # build output and caches
 .turbo/
-.next/
 dist/
 out/
 build/
 coverage/
 *.tsbuildinfo
-next-env.d.ts
 
 # environment: every .env* file is ignored, only the template is committed
 .env*
@@ -23,7 +21,6 @@ playwright/.cache/
 
 # local data and logs
 *.log
-.vercel/
 infra/.data/
 # Runtime data the apps write next to their working directory, e.g. the API's dead-letter folder
 # apps/api/.data/deadletter (INGEST_DEADLETTER_DIR). The pattern matches at any depth.

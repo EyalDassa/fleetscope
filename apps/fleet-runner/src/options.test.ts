@@ -1,7 +1,7 @@
 import { hostname } from "node:os";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "./config";
-import { parseRunArgs, UsageError } from "./options";
+import { defaultAgentId, parseRunArgs, UsageError } from "./options";
 
 const seed = () => 12345;
 
@@ -13,7 +13,7 @@ describe("parseRunArgs", () => {
       concurrency: 4,
       scenario: "mix",
       seed: 12345,
-      agentId: `fleet-runner@${hostname()}`,
+      agentId: defaultAgentId(hostname()),
       sessionTimeoutMs: 120_000,
     });
   });
@@ -138,4 +138,38 @@ describe("config", () => {
   it("an empty DEMO_SITE_UPSTREAM counts as unset", () => {
     expect(loadConfig({ DEMO_SITE_UPSTREAM: "  " }).demoSiteUpstream).toBeUndefined();
   });
+});
+
+describe("the agent id (dashboards put it into SQL, so the schema allows A-Z a-z 0-9 . _ : @ / + - only)", () => {
+  const safe = /^[A-Za-z0-9._:@/+-]{1,128}$/;
+
+  it("is fleet-runner@<host>, with the characters the schema refuses replaced by _", () => {
+    expect(defaultAgentId("LAPTOP-G1JS2HFL")).toBe("fleet-runner@LAPTOP-G1JS2HFL");
+    expect(defaultAgentId("build_agent-07.example.com")).toBe(
+      "fleet-runner@build_agent-07.example.com",
+    );
+    expect(defaultAgentId("Eyal's PC")).toBe("fleet-runner@Eyal_s_PC");
+    expect(defaultAgentId("caf\u00e9")).toBe("fleet-runner@caf_");
+  });
+
+  it("always fits the schema, whatever the host is called, and is cut at 128 characters", () => {
+    for (const host of ["", "a'b", "\\", "x".repeat(500), "\u{1F680}", "a b\nc"]) {
+      expect(safe.test(defaultAgentId(host)), JSON.stringify(host)).toBe(true);
+    }
+    expect(defaultAgentId("x".repeat(500))).toHaveLength(128);
+  });
+
+  it("accepts a --agent that fits", () => {
+    expect(parseRunArgs(["--agent", "my-agent@host.example"], seed).agentId).toBe(
+      "my-agent@host.example",
+    );
+  });
+
+  it.each(["it's", "a b", "back\\slash", "caf\u00e9", "x".repeat(129), "a;b"])(
+    "rejects --agent %j with a message that says what is allowed",
+    (agent) => {
+      expect(() => parseRunArgs(["--agent", agent], seed)).toThrow(UsageError);
+      expect(() => parseRunArgs(["--agent", agent], seed)).toThrow(/1 to 128 characters from A-Z/);
+    },
+  );
 });

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { shortMessage } from "./errors";
 import { domainOf } from "./page";
 import { FakePage, makeCollector, sessionOptions } from "./test-utils";
-import { clip, wellFormed } from "./text";
+import { assertSafeLabel, clip, safeLabel, wellFormed } from "./text";
 
 /** `String.prototype.isWellFormed` exists in Node 22; the project's TS lib predates it. */
 const isWellFormed = (text: string): boolean =>
@@ -116,3 +116,45 @@ describe("events built from hostile text are always well-formed (R-M1-01)", () =
 function collectStrings(event: FleetEvent): string[] {
   return Object.values(event).filter((value): value is string => typeof value === "string");
 }
+
+describe("safeLabel", () => {
+  it("leaves a safe label alone", () => {
+    expect(safeLabel("fleet-runner@host.example:3100/a+b_c")).toBe(
+      "fleet-runner@host.example:3100/a+b_c",
+    );
+  });
+
+  it("replaces each other character with _, an emoji by one", () => {
+    expect(safeLabel("a b'c\\d\"e")).toBe("a_b_c_d_e");
+    expect(safeLabel(`x${FACE}y`)).toBe("x_y");
+    expect(safeLabel("café")).toBe("caf_");
+  });
+
+  it("cuts at the limit and never returns an empty label", () => {
+    expect(safeLabel("x".repeat(200), 128)).toHaveLength(128);
+    expect(safeLabel("")).toBe("_");
+  });
+
+  it("only returns what the schema accepts", () => {
+    for (const text of [
+      "",
+      " ",
+      "'; DROP TABLE x; --",
+      "\\",
+      "日本語",
+      "a\ud83d",
+      "\u0000",
+      "ok",
+    ]) {
+      expect(/^[A-Za-z0-9._:@/+-]{1,128}$/.test(safeLabel(text)), JSON.stringify(text)).toBe(true);
+    }
+  });
+});
+
+describe("assertSafeLabel", () => {
+  it("passes a safe label and throws for anything else, naming the field", () => {
+    expect(() => assertSafeLabel("agentId", "fleet-runner@box")).not.toThrow();
+    expect(() => assertSafeLabel("agentId", "a b")).toThrow(/agentId must be 1 to 128 characters/);
+    expect(() => assertSafeLabel("agentId", "x".repeat(129))).toThrow(TypeError);
+  });
+});

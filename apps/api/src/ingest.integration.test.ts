@@ -422,7 +422,7 @@ describe("events that used to make ClickHouse refuse the flush forever (R-M1-01,
           target: "button\ude00",
           duration_ms: 3,
           ok: false,
-          error_code: "bad\ud800code",
+          error_code: "bad_code",
         },
         Date.now(),
       ),
@@ -450,7 +450,7 @@ describe("events that used to make ClickHouse refuse the flush forever (R-M1-01,
     ]);
     expect(
       await read("SELECT target, error_code FROM actions WHERE session_id = {id:String}"),
-    ).toEqual([{ target: "button\uFFFD", error_code: "bad\uFFFDcode" }]);
+    ).toEqual([{ target: "button\uFFFD", error_code: "bad_code" }]);
     expect(await read("SELECT reason FROM sessions FINAL WHERE session_id = {id:String}")).toEqual([
       { reason: "page said \uFFFD" },
     ]);
@@ -461,6 +461,27 @@ describe("events that used to make ClickHouse refuse the flush forever (R-M1-01,
     const res = await post([action("bad-id-\ud83d", 0)]);
     expect(res.statusCode).toBe(400);
     expect(res.json().issues[0].path).toEqual([0, "session_id"]);
+  });
+
+  it("refuses, and stores nothing of, a batch whose labels could break the dashboards' SQL", async () => {
+    const id = sid("hostile-labels");
+    const { post } = start();
+    // the labels that dashboards turn into SQL are not repaired but refused (see SAFE_LABEL_PATTERN)
+    const hostile: Array<[string, Record<string, unknown>]> = [
+      ["agent_id", { agent_id: "x' OR '1'='1" }],
+      ["scenario", { scenario: "back\\slash" }],
+      ["region", { region: "eu west" }],
+      ["provider", { provider: "caf\u00e9" }],
+      ["engine_version", { engine_version: "bad\ud800version" }],
+    ];
+    for (const [field, change] of hostile) {
+      const res = await post([{ ...started(id), ...change }, action(id, 0), ended(id)]);
+      expect(res.statusCode, field).toBe(400);
+      expect(res.json().issues[0].path, field).toEqual([0, field]);
+      expect(JSON.stringify(res.json()), field).not.toContain(String(Object.values(change)[0]));
+    }
+    expect(await sessionStatus(id)).toBeUndefined();
+    expect(await count("actions", id)).toBe(0);
   });
 
   it("stores a batch that spans the whole retention window: 31 days of partitions in one flush", async () => {

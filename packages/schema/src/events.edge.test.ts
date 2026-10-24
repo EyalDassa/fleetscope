@@ -265,8 +265,10 @@ describe("observations (accepted by the schema; see report)", () => {
     expect(ok({ ...action, ok: false, error_code: null })).toBe(true);
   });
 
-  it("accepts a whitespace-only session_id", () => {
-    expect(ok({ ...issue, session_id: "   " })).toBe(true);
+  it("rejects a whitespace-only session_id (SAFE_LABEL_PATTERN, R-M2)", () => {
+    for (const session_id of ["   ", " ", "\t", "\n", ""]) {
+      expect(ok({ ...issue, session_id }), JSON.stringify(session_id)).toBe(false);
+    }
   });
 });
 

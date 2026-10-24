@@ -1,0 +1,2227 @@
+{
+  "uid": "fleetscope-session",
+  "title": "Fleetscope / Session",
+  "description": "One session: how it ended, its actions, issues, resource use and network. Open it from the Sessions table so the time range fits the session.",
+  "tags": [
+    "fleetscope"
+  ],
+  "style": "dark",
+  "timezone": "browser",
+  "editable": true,
+  "graphTooltip": 1,
+  "refresh": "",
+  "schemaVersion": 41,
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "links": [
+    {
+      "type": "dashboards",
+      "title": "Fleetscope",
+      "tags": [
+        "fleetscope"
+      ],
+      "asDropdown": false,
+      "includeVars": true,
+      "keepTime": true,
+      "icon": "external link",
+      "targetBlank": false,
+      "tooltip": "",
+      "url": ""
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "type": "textbox",
+        "name": "session",
+        "label": "Session",
+        "query": "",
+        "current": {
+          "text": "",
+          "value": ""
+        },
+        "options": [
+          {
+            "text": "",
+            "value": "",
+            "selected": true
+          }
+        ],
+        "hide": 0
+      },
+      {
+        "type": "constant",
+        "name": "api_url",
+        "label": "API URL",
+        "query": "http://localhost:4000",
+        "current": {
+          "text": "http://localhost:4000",
+          "value": "http://localhost:4000"
+        },
+        "options": [
+          {
+            "text": "http://localhost:4000",
+            "value": "http://localhost:4000",
+            "selected": true
+          }
+        ],
+        "hide": 2
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "fleetscope-clickhouse"
+        },
+        "enable": true,
+        "iconColor": "#FF7B7B",
+        "name": "Failed actions",
+        "target": {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "-- Marks the end of every failed action on the three charts.\nSELECT\n    ts + toIntervalMillisecond(duration_ms) AS time,\n    concat('#', toString(seq), ' ', action_type, ' ', target, ': ', ifNull(error_code, 'unknown')) AS text\nFROM actions\nWHERE session_id = decodeURLComponent('${session:percentencode}')\n  AND NOT ok\n  AND $__timeFilter(ts)\n",
+          "refId": "Anno",
+          "pluginVersion": "4.23.2"
+        }
+      },
+      {
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "fleetscope-clickhouse"
+        },
+        "enable": true,
+        "iconColor": "#FFD95A",
+        "name": "Issues",
+        "target": {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "-- Marks every issue on the three charts.\nSELECT\n    ts AS time,\n    concat(kind, ': ', message) AS text\nFROM issues\nWHERE session_id = decodeURLComponent('${session:percentencode}')\n  AND $__timeFilter(ts)\n",
+          "refId": "Anno",
+          "pluginVersion": "4.23.2"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Status",
+      "description": "Display status of the session: healthy, degraded (success with a failed action or an issue), failed (failed, timeout or crashed), blocked, running, or interrupted (Ctrl+C, not a failure). This panel's query also feeds What happened and Est. cost.",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "-- Status, the one-sentence summary and the estimated cost of the session, from one pass over session-facts.\n-- The panels \"What happened\" and \"Est. cost\" read their column from this result (Dashboard data source).\n-- display_status: healthy, degraded (success with a failed action or an issue), failed, blocked, running, interrupted.\n-- An unknown session id gives no row, so every panel shows its No value text.\nWITH facts AS\n(\n    WITH\n        picked AS\n        (\n            SELECT *\n            FROM sessions FINAL\n            WHERE session_id = decodeURLComponent('${session:percentencode}')\n        ),\n        issue_facts AS\n        (\n            SELECT session_id, count() AS issue_count, toString(argMin(kind, ts)) AS first_issue\n            FROM issues\n            WHERE session_id IN (SELECT session_id FROM picked)\n              AND ts >= (SELECT min(started_at) FROM picked)\n            GROUP BY session_id\n        ),\n        action_facts AS\n        (\n            SELECT\n                session_id,\n                count() AS actions,\n                countIf(NOT ok) AS failed_actions,\n                ifNull(argMinIf(error_code, seq, NOT ok), '') AS first_failed_code\n            FROM actions\n            WHERE session_id IN (SELECT session_id FROM picked)\n              AND ts >= (SELECT min(started_at) FROM picked)\n            GROUP BY session_id\n        )\n    SELECT\n        p.session_id AS session_id,\n        p.agent_id AS agent_id,\n        p.source AS source,\n        p.engine AS engine,\n        p.engine_version AS engine_version,\n        p.provider AS provider,\n        p.scenario AS scenario,\n        p.started_at AS started_at,\n        p.ended_at AS ended_at,\n        p.status AS status,\n        p.reason AS reason,\n        p.duration_ms AS duration_ms,\n        p.startup_ms + p.connect_ms AS time_to_browser_ms,\n        (p.status = 'failed' AND ifNull(p.reason, '') = 'interrupted') AS is_interrupted,\n        a.actions AS actions,\n        a.failed_actions AS failed_actions,\n        i.issue_count AS issue_count,\n        multiIf(\n            p.status = 'running', 'running',\n            is_interrupted, 'interrupted',\n            p.status = 'success' AND a.failed_actions = 0 AND i.issue_count = 0, 'healthy',\n            p.status = 'success', 'degraded',\n            p.status = 'blocked', 'blocked',\n            'failed') AS display_status,\n        if(p.status NOT IN ('running', 'success') AND NOT is_interrupted,\n            multiIf(i.first_issue != '', i.first_issue, a.first_failed_code != '', a.first_failed_code, p.status),\n            NULL) AS cause,\n        if(cause IS NULL, NULL,\n            multiIf(i.first_issue != '', 'issue', a.first_failed_code != '', 'action', 'status')) AS cause_from,\n        (toUInt64(p.startup_ms) + p.connect_ms\n            + ifNull(p.duration_ms, dateDiff('millisecond', p.started_at, now64(3)))) / 3.6e6 AS browser_hours,\n        if(price.provider = '', NULL, browser_hours * price.usd_per_browser_hour) AS est_cost_usd\n    FROM picked AS p\n    LEFT JOIN issue_facts AS i ON i.session_id = p.session_id\n    LEFT JOIN action_facts AS a ON a.session_id = p.session_id\n    LEFT JOIN pricing_current AS price ON price.engine = p.engine AND price.provider = p.provider\n),\n    first_failed AS\n    (\n        SELECT\n            count() AS n,\n            min(seq) AS first_seq,\n            argMin(action_type, seq) AS first_type,\n            argMin(target, seq) AS first_target,\n            argMin(ifNull(error_code, 'unknown'), seq) AS first_code,\n            argMin(toUnixTimestamp64Milli(ts) + duration_ms, seq) AS first_end_ms\n        FROM actions\n        WHERE session_id = decodeURLComponent('${session:percentencode}') AND NOT ok\n    ),\n    first_issue AS\n    (\n        SELECT count() AS n, argMin(toString(kind), ts) AS kind, argMin(toUnixTimestamp64Milli(ts), ts) AS at_ms\n        FROM issues\n        WHERE session_id = decodeURLComponent('${session:percentencode}')\n    )\nSELECT\n    display_status,\n    multiIf(\n        display_status = 'running', 'Running',\n        display_status = 'interrupted', 'Interrupted by the runner (not counted as a failure)',\n        display_status = 'healthy', 'Completed, no issues',\n        display_status = 'degraded' AND issue_count > 0,\n            concat('Completed with ', toString(issue_count), if(issue_count = 1, ' issue: ', ' issues, the first: '), first_issue.kind),\n        display_status = 'degraded',\n            concat('Completed after ', toString(failed_actions), ' failed action(s): ', first_failed.first_code),\n        display_status = 'blocked',\n            concat('Blocked at ', concat(toString(intDiv((if(first_failed.n > 0, first_failed.first_end_ms, if(first_issue.n > 0, first_issue.at_ms, toUnixTimestamp64Milli(started_at) + duration_ms)) - toUnixTimestamp64Milli(started_at)), 1000)), '.', leftPad(toString(intDiv((if(first_failed.n > 0, first_failed.first_end_ms, if(first_issue.n > 0, first_issue.at_ms, toUnixTimestamp64Milli(started_at) + duration_ms)) - toUnixTimestamp64Milli(started_at)) % 1000, 10)), 2, '0')), ' s: ', cause,\n                   if(first_failed.n > 0 AND first_failed.first_code != cause,\n                      concat('; ', concat('action #', toString(first_failed.first_seq), ' ', first_failed.first_type, ' ', first_failed.first_target), ' failed: ', first_failed.first_code), '')),\n        first_failed.n > 0,\n            concat('Failed at ', concat(toString(intDiv((first_failed.first_end_ms - toUnixTimestamp64Milli(started_at)), 1000)), '.', leftPad(toString(intDiv((first_failed.first_end_ms - toUnixTimestamp64Milli(started_at)) % 1000, 10)), 2, '0')), ' s: ', concat('action #', toString(first_failed.first_seq), ' ', first_failed.first_type, ' ', first_failed.first_target), ', ', first_failed.first_code,\n                   if(first_failed.first_code != cause, concat(' (cause: ', cause, ')'), '')),\n        concat('Failed: ', ifNull(reason, 'no reason recorded'))) AS what_happened,\n    ifNull(est_cost_usd, nan) AS estimated_cost_usd\nFROM facts\nCROSS JOIN first_failed\nCROSS JOIN first_issue\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "healthy": {
+                  "index": 0,
+                  "text": "✓ Healthy",
+                  "color": "#6EE7A8"
+                },
+                "degraded": {
+                  "index": 1,
+                  "text": "▲ Degraded",
+                  "color": "#FFD95A"
+                },
+                "failed": {
+                  "index": 2,
+                  "text": "✕ Failed",
+                  "color": "#FF7B7B"
+                },
+                "blocked": {
+                  "index": 3,
+                  "text": "⊘ Blocked",
+                  "color": "#D9CCFF"
+                },
+                "running": {
+                  "index": 4,
+                  "text": "○ Running",
+                  "color": "#9AA9BB"
+                },
+                "interrupted": {
+                  "index": 5,
+                  "text": "■ Interrupted",
+                  "color": "#7D8DA1"
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "Session not found"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/^display_status$/",
+          "values": false
+        },
+        "colorMode": "background_solid",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "What happened",
+      "description": "One sentence built from the session's status, its first failed action, its first issue and its cause (from the Status query). The Actions and Issues tables show the detail.",
+      "gridPos": {
+        "x": 4,
+        "y": 0,
+        "w": 12,
+        "h": 4
+      },
+      "datasource": {
+        "type": "datasource",
+        "uid": "-- Dashboard --"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "datasource",
+            "uid": "-- Dashboard --"
+          },
+          "panelId": 1,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "Session not found. It may be older than 30 days, or the id is wrong."
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/^what_happened$/",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "text": {
+          "valueSize": 20
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Engine",
+      "description": "The browser engine and its version. Not reported when the engine gives no version.",
+      "gridPos": {
+        "x": 16,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "-- Engine and its version (null = the engine does not report one).\nSELECT concat(engine, ' ', ifNull(engine_version, 'version not reported')) AS engine_version\nFROM sessions FINAL\nWHERE session_id = decodeURLComponent('${session:percentencode}')\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "—"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/^engine_version$/",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "text": {
+          "valueSize": 20
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Source",
+      "description": "REAL = a real browser session. SIM = simulated data from the simulator.",
+      "gridPos": {
+        "x": 20,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "-- real or sim.\nSELECT source FROM sessions FINAL WHERE session_id = decodeURLComponent('${session:percentencode}')\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "real": {
+                  "index": 0,
+                  "text": "REAL"
+                },
+                "sim": {
+                  "index": 1,
+                  "text": "SIM"
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "—"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/^source$/",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "text": {
+          "valueSize": 20
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Duration",
+      "description": "Time from the start of the session to its end. Running while the session has not ended.",
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 6,
+        "h": 3
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "-- Time from session start to session end. nan (printed \"running\") while the session has not ended.\nSELECT ifNull(toFloat64(duration_ms), nan) AS duration_ms\nFROM sessions FINAL\nWHERE session_id = decodeURLComponent('${session:percentencode}')\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "running",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "—",
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "last"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "text": {
+          "valueSize": 22
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Actions",
+      "description": "Browser actions of the session that succeeded and that failed.",
+      "gridPos": {
+        "x": 6,
+        "y": 4,
+        "w": 6,
+        "h": 3
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "-- Actions of the session: how many succeeded, how many failed. A known session without actions says 0 ok, 0 failed.\nSELECT concat(toString(a.ok_n), ' ok · ', toString(a.failed_n), ' failed') AS actions\nFROM (SELECT session_id FROM sessions FINAL WHERE session_id = decodeURLComponent('${session:percentencode}')) AS s\nLEFT JOIN\n(\n    SELECT session_id AS a_id, countIf(ok) AS ok_n, countIf(NOT ok) AS failed_n\n    FROM actions\n    WHERE session_id = decodeURLComponent('${session:percentencode}')\n    GROUP BY a_id\n) AS a ON a.a_id = s.session_id\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "—"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/^actions$/",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "text": {
+          "valueSize": 22
+        }
+      }
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Time to browser",
+      "description": "Startup plus connect: the time from no container to a browser the client can drive.",
+      "gridPos": {
+        "x": 12,
+        "y": 4,
+        "w": 6,
+        "h": 3
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "-- Time to a usable browser = startup_ms + connect_ms.\nSELECT toUInt64(startup_ms) + connect_ms AS time_to_browser_ms\nFROM sessions FINAL\nWHERE session_id = decodeURLComponent('${session:percentencode}')\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "—",
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "text": {
+          "valueSize": 22
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "stat",
+      "title": "Peak CPU",
+      "description": "Highest CPU sample of the container (Docker stats), as a percentage of one core. It can pass 100%.",
+      "gridPos": {
+        "x": 18,
+        "y": 4,
+        "w": 6,
+        "h": 3
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "-- Highest container CPU sample (% of one core).\n-- nan (printed \"Not available\") when the session has no such sample, no row when the session does not exist.\nSELECT ifNull(p.peak, nan) AS peak\nFROM (SELECT session_id FROM sessions FINAL WHERE session_id = decodeURLComponent('${session:percentencode}')) AS s\nLEFT JOIN\n(\n    SELECT session_id AS p_id, maxOrNull(cpu_pct) AS peak\n    FROM resource_samples\n    WHERE session_id = decodeURLComponent('${session:percentencode}')\n      AND origin = 'container'\n    GROUP BY p_id\n) AS p ON p.p_id = s.session_id\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "Not available",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "—",
+          "unit": "percent",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "last"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "text": {
+          "valueSize": 22
+        }
+      }
+    },
+    {
+      "id": 9,
+      "type": "stat",
+      "title": "Peak memory",
+      "description": "Highest memory sample of the container (Docker stats), in MiB.",
+      "gridPos": {
+        "x": 0,
+        "y": 7,
+        "w": 6,
+        "h": 3
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "-- Highest container memory sample (MiB).\n-- nan (printed \"Not available\") when the session has no such sample, no row when the session does not exist.\nSELECT ifNull(p.peak, nan) AS peak\nFROM (SELECT session_id FROM sessions FINAL WHERE session_id = decodeURLComponent('${session:percentencode}')) AS s\nLEFT JOIN\n(\n    SELECT session_id AS p_id, maxOrNull(mem_mb) AS peak\n    FROM resource_samples\n    WHERE session_id = decodeURLComponent('${session:percentencode}')\n      AND origin = 'container'\n    GROUP BY p_id\n) AS p ON p.p_id = s.session_id\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "Not available",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "—",
+          "unit": "mbytes",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "last"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "text": {
+          "valueSize": 22
+        }
+      }
+    },
+    {
+      "id": 10,
+      "type": "stat",
+      "title": "Peak JS heap",
+      "description": "Highest JS heap sample read through CDP. Not available when the engine does not report it (stored as null).",
+      "gridPos": {
+        "x": 6,
+        "y": 7,
+        "w": 6,
+        "h": 3
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "-- Highest JS heap sample (MiB, CDP).\n-- nan (printed \"Not available\") when the session has no such sample, no row when the session does not exist.\nSELECT ifNull(p.peak, nan) AS peak\nFROM (SELECT session_id FROM sessions FINAL WHERE session_id = decodeURLComponent('${session:percentencode}')) AS s\nLEFT JOIN\n(\n    SELECT session_id AS p_id, maxOrNull(js_heap_mb) AS peak\n    FROM resource_samples\n    WHERE session_id = decodeURLComponent('${session:percentencode}')\n      AND origin = 'cdp'\n    GROUP BY p_id\n) AS p ON p.p_id = s.session_id\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "Not available",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "—",
+          "unit": "mbytes",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "last"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "text": {
+          "valueSize": 22
+        }
+      }
+    },
+    {
+      "id": 11,
+      "type": "stat",
+      "title": "Requests",
+      "description": "Network requests recorded for the session. The collector samples requests, so this is not every request.",
+      "gridPos": {
+        "x": 12,
+        "y": 7,
+        "w": 6,
+        "h": 3
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "-- Network requests recorded for the session (the collector samples them, so this is not every request).\nSELECT r.n AS requests\nFROM (SELECT session_id FROM sessions FINAL WHERE session_id = decodeURLComponent('${session:percentencode}')) AS s\nLEFT JOIN\n(\n    SELECT session_id AS r_id, count() AS n\n    FROM network_requests\n    WHERE session_id = decodeURLComponent('${session:percentencode}')\n    GROUP BY r_id\n) AS r ON r.r_id = s.session_id\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "—",
+          "unit": "locale",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "text": {
+          "valueSize": 22
+        }
+      }
+    },
+    {
+      "id": 12,
+      "type": "stat",
+      "title": "Est. cost",
+      "description": "Browser-hours × $0.10 per browser-hour (Browserbase's published price, from the `pricing` table). An estimate, not a bill. A running session counts until now. Not available when the session has no price (from the Status query).",
+      "gridPos": {
+        "x": 18,
+        "y": 7,
+        "w": 6,
+        "h": 3
+      },
+      "datasource": {
+        "type": "datasource",
+        "uid": "-- Dashboard --"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "datasource",
+            "uid": "-- Dashboard --"
+          },
+          "panelId": 1,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "Not available",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "—",
+          "unit": "currencyUSD",
+          "decimals": 4
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "last"
+          ],
+          "fields": "/^estimated_cost_usd$/",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "text": {
+          "valueSize": 22
+        }
+      }
+    },
+    {
+      "id": 13,
+      "type": "table",
+      "title": "Actions",
+      "description": "The session's browser actions in order (at most 1000 rows). Start is the offset from the session start. Open the timeline in Perfetto for the full picture.",
+      "gridPos": {
+        "x": 0,
+        "y": 10,
+        "w": 16,
+        "h": 10
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "links": [
+        {
+          "title": "Open timeline in Perfetto ↗",
+          "url": "${api_url}/v1/sessions/${session:percentencode}/perfetto",
+          "targetBlank": true
+        }
+      ],
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "-- The session's actions in order (at most 1000). start_ms is the offset from the session start.\nSELECT\n    seq,\n    toUnixTimestamp64Milli(ts) - (SELECT toUnixTimestamp64Milli(started_at) FROM sessions FINAL WHERE session_id = decodeURLComponent('${session:percentencode}')) AS start_ms,\n    action_type,\n    target,\n    duration_ms,\n    if(ok, 'ok', 'failed') AS result,\n    error_code\nFROM actions\nWHERE session_id = decodeURLComponent('${session:percentencode}')\nORDER BY seq\nLIMIT 1000\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false,
+            "filterable": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "No actions in this session"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "seq"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "#"
+              },
+              {
+                "id": "custom.width",
+                "value": 55
+              },
+              {
+                "id": "unit",
+                "value": "locale"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "start_ms"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Start"
+              },
+              {
+                "id": "custom.width",
+                "value": 90
+              },
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "action_type"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Action"
+              },
+              {
+                "id": "custom.width",
+                "value": 95
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "target"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Target"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "duration_ms"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Duration"
+              },
+              {
+                "id": "custom.width",
+                "value": 160
+              },
+              {
+                "id": "unit",
+                "value": "ms"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "gauge",
+                  "mode": "basic",
+                  "valueDisplayMode": "text"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#5B7491"
+                }
+              },
+              {
+                "id": "min",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "result"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Result"
+              },
+              {
+                "id": "custom.width",
+                "value": 100
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "ok": {
+                        "index": 0,
+                        "text": "✓ ok"
+                      },
+                      "failed": {
+                        "index": 1,
+                        "text": "✕ failed",
+                        "color": "#FF7B7B"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "error_code"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Error code"
+              },
+              {
+                "id": "custom.width",
+                "value": 150
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "—",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "—",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "enablePagination": false,
+        "footer": {
+          "show": false,
+          "reducer": [
+            "count"
+          ],
+          "countRows": false,
+          "fields": ""
+        },
+        "sortBy": [
+          {
+            "displayName": "#",
+            "desc": false
+          }
+        ]
+      }
+    },
+    {
+      "id": 14,
+      "type": "text",
+      "title": "Timeline",
+      "description": "Opens the session timeline in Perfetto through the Fleetscope API. The trace is processed in your browser.",
+      "gridPos": {
+        "x": 16,
+        "y": 10,
+        "w": 8,
+        "h": 5
+      },
+      "options": {
+        "mode": "html",
+        "content": "<p><a href=\"${api_url}/v1/sessions/${session:percentencode}/perfetto\" target=\"_blank\" rel=\"noopener noreferrer\"><b>Open timeline in Perfetto ↗</b></a></p>\n<p>Actions, network and issues with CPU, memory and JS heap on one time axis. Opens ui.perfetto.dev; the trace stays in your browser.</p>",
+        "code": {
+          "language": "plaintext",
+          "showLineNumbers": false,
+          "showMiniMap": false
+        }
+      }
+    },
+    {
+      "id": 15,
+      "type": "table",
+      "title": "Issues",
+      "description": "Problems raised during the session (blocked, captcha, crash, timeout, nav_error, unsupported_api; at most 1000 rows). A successful session with an issue is degraded.",
+      "gridPos": {
+        "x": 16,
+        "y": 15,
+        "w": 8,
+        "h": 11
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "-- Issues raised during the session (at most 1000). offset_ms is the time since the session start.\nSELECT\n    toUnixTimestamp64Milli(ts) - (SELECT toUnixTimestamp64Milli(started_at) FROM sessions FINAL WHERE session_id = decodeURLComponent('${session:percentencode}')) AS offset_ms,\n    kind,\n    message\nFROM issues\nWHERE session_id = decodeURLComponent('${session:percentencode}')\nORDER BY ts\nLIMIT 1000\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false,
+            "filterable": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "No issues in this session"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "offset_ms"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Time"
+              },
+              {
+                "id": "custom.width",
+                "value": 80
+              },
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "kind"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Kind"
+              },
+              {
+                "id": "custom.width",
+                "value": 130
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "message"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Message"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "auto",
+                  "wrapText": true
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "enablePagination": false,
+        "footer": {
+          "show": false,
+          "reducer": [
+            "count"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      }
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "CPU",
+      "description": "CPU of the session's container, measured outside the browser by Docker stats, as a percentage of one core. The range follows the session when you open it from the Sessions table. Marks: failed actions and issues.",
+      "gridPos": {
+        "x": 0,
+        "y": 20,
+        "w": 16,
+        "h": 6
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "interval": "1m",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "timeseries",
+          "rawSql": "-- Container CPU samples (% of one core).\nSELECT\n    ts AS time,\n    engine,\n    cpu_pct\nFROM resource_samples\nWHERE session_id = decodeURLComponent('${session:percentencode}')\n  AND origin = 'container'\n  AND cpu_pct IS NOT NULL\n  AND $__timeFilter(ts)\nORDER BY ts\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#9AA9BB"
+          },
+          "displayName": "${__field.labels.engine}",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "lineInterpolation": "linear",
+            "fillOpacity": 15,
+            "gradientMode": "none",
+            "showPoints": "always",
+            "pointSize": 4,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisPlacement": "auto",
+            "axisBorderShow": false,
+            "axisSoftMin": 0,
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "unit": "percent",
+          "decimals": 0,
+          "min": 0,
+          "noValue": "No samples in this range. Open the session from the Sessions table so the range fits it.",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/chromium/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#56B4E9"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "solid"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/chrome-headless-shell/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#E69F00"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/lightpanda/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#CC79A7"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dot",
+                  "dash": [
+                    0,
+                    10
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc",
+          "hideZeros": false
+        }
+      }
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "Memory",
+      "description": "Memory of the session's container (Docker stats), in MiB. The range follows the session when you open it from the Sessions table. Marks: failed actions and issues.",
+      "gridPos": {
+        "x": 0,
+        "y": 26,
+        "w": 16,
+        "h": 6
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "interval": "1m",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "timeseries",
+          "rawSql": "-- Container memory samples (MiB).\nSELECT\n    ts AS time,\n    engine,\n    mem_mb\nFROM resource_samples\nWHERE session_id = decodeURLComponent('${session:percentencode}')\n  AND origin = 'container'\n  AND mem_mb IS NOT NULL\n  AND $__timeFilter(ts)\nORDER BY ts\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#9AA9BB"
+          },
+          "displayName": "${__field.labels.engine}",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "lineInterpolation": "linear",
+            "fillOpacity": 15,
+            "gradientMode": "none",
+            "showPoints": "always",
+            "pointSize": 4,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisPlacement": "auto",
+            "axisBorderShow": false,
+            "axisSoftMin": 0,
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "unit": "mbytes",
+          "decimals": 0,
+          "min": 0,
+          "noValue": "No samples in this range. Open the session from the Sessions table so the range fits it.",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/chromium/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#56B4E9"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "solid"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/chrome-headless-shell/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#E69F00"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/lightpanda/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#CC79A7"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dot",
+                  "dash": [
+                    0,
+                    10
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc",
+          "hideZeros": false
+        }
+      }
+    },
+    {
+      "id": 18,
+      "type": "timeseries",
+      "title": "JS heap",
+      "description": "JS heap read through CDP Performance.getMetrics, in MiB. A sample the engine failed to read leaves a gap in the line (never interpolated). Engines that do not support it store null and show no line.",
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 16,
+        "h": 6
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "interval": "1m",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "timeseries",
+          "rawSql": "-- CDP JS heap samples (MiB). A NULL sample stays in the result, so the line breaks there; a session\n-- without any real value (the engine does not report a heap) returns no rows.\nSELECT\n    ts AS time,\n    engine,\n    js_heap_mb\nFROM resource_samples\nWHERE session_id = decodeURLComponent('${session:percentencode}')\n  AND origin = 'cdp'\n  AND session_id IN (\n      SELECT session_id FROM resource_samples\n      WHERE session_id = decodeURLComponent('${session:percentencode}') AND origin = 'cdp' AND js_heap_mb IS NOT NULL)\n  AND $__timeFilter(ts)\nORDER BY ts\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#9AA9BB"
+          },
+          "displayName": "${__field.labels.engine}",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "lineInterpolation": "linear",
+            "fillOpacity": 15,
+            "gradientMode": "none",
+            "showPoints": "always",
+            "pointSize": 4,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisPlacement": "auto",
+            "axisBorderShow": false,
+            "axisSoftMin": 0,
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "unit": "mbytes",
+          "decimals": 0,
+          "min": 0,
+          "noValue": "No JS heap samples: the engine doesn't report it (stored as null), or the range doesn't cover the session.",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/chromium/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#56B4E9"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "solid"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/chrome-headless-shell/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#E69F00"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/lightpanda/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#CC79A7"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dot",
+                  "dash": [
+                    0,
+                    10
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc",
+          "hideZeros": false
+        }
+      }
+    },
+    {
+      "id": 19,
+      "type": "text",
+      "title": "Ask Grafana Assistant",
+      "description": "Suggested prompts for Grafana Assistant. Assistant is available on Grafana Cloud only.",
+      "gridPos": {
+        "x": 16,
+        "y": 26,
+        "w": 8,
+        "h": 10
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "Grafana Assistant is available on **Grafana Cloud only**. Open it and paste a prompt; the session id is filled in.\n\n- Why did session `${session}` fail? Start from the **What happened** panel and the first failed action.\n- Was the page waiting or working when it failed? Compare CPU with the **Actions** table.\n- Is this an engine limitation (`unsupported_api`, metrics that are **Not available**) or a problem with the site?\n- Find other sessions in the last 24 hours with the same failure cause, and say which engines they ran on.",
+        "code": {
+          "language": "plaintext",
+          "showLineNumbers": false,
+          "showMiniMap": false
+        }
+      }
+    },
+    {
+      "id": 20,
+      "type": "table",
+      "title": "Network",
+      "description": "Network requests recorded for the session (at most 1000 rows). The collector samples requests, so this is not every request. Time is the offset from the session start. No response means the request failed before an answer arrived; not reported means the engine gave no size.",
+      "gridPos": {
+        "x": 0,
+        "y": 38,
+        "w": 24,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "-- Network requests recorded for the session (sampled), in order. offset_ms is the time since the session start.\n-- status is null when the request got no response; bytes is null when the engine does not report it.\nSELECT\n    toUnixTimestamp64Milli(ts) - (SELECT toUnixTimestamp64Milli(started_at) FROM sessions FINAL WHERE session_id = decodeURLComponent('${session:percentencode}')) AS offset_ms,\n    domain,\n    resource_type,\n    status,\n    bytes,\n    duration_ms\nFROM network_requests\nWHERE session_id = decodeURLComponent('${session:percentencode}')\nORDER BY ts\nLIMIT 1000\n",
+          "refId": "A",
+          "pluginVersion": "4.23.2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false,
+            "filterable": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "No network requests recorded"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "offset_ms"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Time"
+              },
+              {
+                "id": "custom.width",
+                "value": 90
+              },
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "domain"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Domain"
+              },
+              {
+                "id": "custom.width",
+                "value": 220
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "resource_type"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Type"
+              },
+              {
+                "id": "custom.width",
+                "value": 120
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "status"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Status"
+              },
+              {
+                "id": "custom.width",
+                "value": 110
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "no response",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "no response",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "text",
+                      "value": null
+                    },
+                    {
+                      "color": "#FF7B7B",
+                      "value": 400
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "bytes"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Size"
+              },
+              {
+                "id": "custom.width",
+                "value": 120
+              },
+              {
+                "id": "unit",
+                "value": "bytes"
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null",
+                      "result": {
+                        "text": "not reported",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "nan",
+                      "result": {
+                        "text": "not reported",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "duration_ms"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Duration"
+              },
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "enablePagination": false,
+        "footer": {
+          "show": false,
+          "reducer": [
+            "count"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      }
+    }
+  ]
+}

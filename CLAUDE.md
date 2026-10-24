@@ -10,7 +10,7 @@ You (the main session) are the **tech lead** of a small team of subagents define
 - Folder ownership is strict: each agent edits and commits only the folders it owns, because parallel agents share one checkout.
 - Merge only when CI is green, QA says "ready to merge" and the reviewer approves.
 - Eyal is the product owner. Stop for his approval after the design sprint and at the end of each milestone.
-- `design/DESIGN.md` (once approved) is the source of truth for the UI.
+- `design/DESIGN.md` is the source of truth for the dashboards (since M2 a Grafana dashboard spec).
 
 ## How we work
 - Work one milestone at a time (M0 → M6). Start each in plan mode, write the plan into the PR description, then implement.
@@ -23,21 +23,22 @@ You (the main session) are the **tech lead** of a small team of subagents define
 ## Stack and conventions
 - pnpm workspaces + Turborepo; TypeScript `strict`; Node 22+.
 - Validation: zod schemas in `packages/schema` are the only definition of event shapes. Don't redefine types elsewhere.
-- Database: ClickHouse via `@clickhouse/client`. Plain SQL migrations in `infra/clickhouse/`. All queries live in `packages/db` and are shared by `api` and `mcp`.
+- Database: ClickHouse via `@clickhouse/client`. Plain SQL migrations in `infra/clickhouse/`. All application queries live in `packages/db` and are shared by `api` and `mcp`. **One exception:** Grafana dashboard SQL lives in the dashboard JSON (`infra/grafana/dashboards/`), runs as a read-only ClickHouse user, follows the query rules in `packages/db/README.md`, and is executed in CI (ADR 0003).
 - Insert into ClickHouse only in batches (through the ingest buffer). Never insert one row per request.
 - API: Fastify, versioned under `/v1`, OpenAPI generated from the zod schemas.
-- Web: Next.js App Router, Tailwind, shadcn/ui, Recharts. Filters and time range live in URL search params.
+- Dashboards: Grafana (Grafana Cloud free tier; local Grafana OSS in docker-compose on `localhost:3001`) with the official ClickHouse data source (UID `fleetscope-clickhouse`). Dashboards are JSON in `infra/grafana/dashboards/`, keep their UIDs, and are uploaded with `pnpm grafana:push`. Filters are Grafana variables and the time picker, so they live in the URL. Session timelines open in Perfetto via `GET /v1/sessions/:id/perfetto`.
 - Logging: pino (JSON). No `console.log` in committed code.
-- Tests: vitest for units, integration tests against a real ClickHouse (docker-compose locally, service container in CI), Playwright for the dashboard.
+- Tests: vitest for units, integration tests against a real ClickHouse (docker-compose locally, service container in CI), a CI check that executes every dashboard query, and the fleet smoke test with real browser containers.
 - Secrets only in `.env` (gitignored) and CI secrets. Provide `.env.example`. gitleaks runs in CI.
 
 ## Data honesty
-- Every event carries `source: "real" | "sim"`. The UI shows a filter for it and never presents simulated data as real.
+- Every event carries `source: "real" | "sim"`. Every dashboard has a filter for it and never presents simulated data as real.
 - Engine limitations (e.g. a CDP domain Lightpanda doesn't support) are recorded as `null` and shown as "not available". Never fake them.
 
-## Useful commands (create them in M0)
-- `pnpm dev`: run web + api with hot reload
-- `pnpm infra:up` / `pnpm infra:down`: docker-compose (ClickHouse + browser containers)
-- `pnpm db:migrate`, `pnpm db:seed`
-- `pnpm fleet run --engines chrome,lightpanda --sessions 20 --concurrency 4`
-- `pnpm sim --sessions 500 --duration 10m`
+## Useful commands
+- `pnpm dev`: run api + demo-site with hot reload
+- `pnpm infra:up` / `pnpm infra:down`: docker-compose (ClickHouse + local Grafana on `localhost:3001`)
+- `pnpm db:migrate`, `pnpm db:seed`, `pnpm db:grafana-user` (read-only user for Grafana)
+- `pnpm browsers:build`, then `pnpm fleet run --engines chromium --sessions 20 --concurrency 4`
+- `pnpm grafana:push`: upload the dashboards to Grafana Cloud (`GRAFANA_URL`, `GRAFANA_TOKEN`)
+- `pnpm sim --sessions 500 --duration 10m` (M3)

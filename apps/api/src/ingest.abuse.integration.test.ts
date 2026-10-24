@@ -962,7 +962,20 @@ describe("free text of any shape (QA-M1-01 re-test: no other poison left behind 
     return wellFormedOnly ? fixed(out) : out;
   }
 
-  it("stores every accepted event exactly as repaired, with nothing dead-lettered and nothing left in the buffer", async () => {
+  /**
+   * Since R-M2 (SAFE_LABEL_PATTERN) the fields that dashboards put into SQL are labels: A-Z a-z 0-9
+   * . _ : @ / + - and 1 to 128 characters. Only the free-text fields (target, reason, message, domain,
+   * resource_type) take arbitrary text, so only those are fuzzed.
+   */
+  const SAFE = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._:@/+-";
+  function safeText(max: number): string {
+    const length = 1 + Math.floor(random() * max);
+    let out = "";
+    for (let i = 0; i < length; i++) out += SAFE[Math.floor(random() * SAFE.length)];
+    return out;
+  }
+
+  it("stores every accepted event exactly as repaired (free text), with nothing dead-lettered and nothing left in the buffer", async () => {
     const run = sid("fuzz");
     const deadDir = await mkdtemp(join(tmpdir(), "qa-fuzz-deadletter-"));
     closers.push(() => rm(deadDir, { recursive: true, force: true }));
@@ -981,17 +994,17 @@ describe("free text of any shape (QA-M1-01 re-test: no other poison left behind 
     for (let batchNo = 0; batchNo < 12; batchNo++) {
       const events: FleetEvent[] = [];
       for (let i = 0; i < 25; i++) {
-        const id = `${run}-${text(40, true)}`.slice(0, 128);
+        const id = `${run}-${safeText(40)}`.slice(0, 128);
         const ctxWeird = {
           session_id: id,
           source: "real" as const,
-          agent_id: text(60, true),
+          agent_id: safeText(60),
           engine: "chromium" as const,
-          provider: text(60, true),
+          provider: safeText(60),
         };
-        const scenario = text(100);
-        const region = text(100);
-        const engineVersion = text(100);
+        const scenario = safeText(100);
+        const region = safeText(100);
+        const engineVersion = safeText(100);
         const reason = text(500);
         const ev = newEvent("session.started", ctxWeird, {
           engine_version: engineVersion,
@@ -1002,7 +1015,7 @@ describe("free text of any shape (QA-M1-01 re-test: no other poison left behind 
         });
         events.push(ev);
         const target = text(300);
-        const errorCode = text(100);
+        const errorCode = safeText(100);
         const act = newEvent("action", ctxWeird, {
           seq: 0,
           action_type: "click",
@@ -1110,6 +1123,136 @@ describe("free text of any shape (QA-M1-01 re-test: no other poison left behind 
       }).toEqual(expectedSession.get(row.session_id));
     }
   }, 60_000);
+});
+
+describe("labels that dashboards put into SQL (SAFE_LABEL_PATTERN), over HTTP", () => {
+  const BAD = [
+    "",
+    " ",
+    "a b",
+    "a'b",
+    'a"b',
+    "a\\b",
+    "a;b",
+    "a%b",
+    "a\nb",
+    "a\u0000b",
+    "a\u007fb",
+    "\u65e5\u672c\u8a9e",
+    "\u{1F600}",
+    "e\u0301",
+    "a".repeat(129),
+    "x{y:String}",
+  ];
+  const GOOD = [
+    "a",
+    "A-b_c.d:e@f/g+h",
+    "156.0.8078.4",
+    "fleet-runner@host.local",
+    "a".repeat(128),
+    "..",
+    "e5d1c0de-aaaa-4bbb-8ccc-000000000005",
+  ];
+
+  /** A batch that has one label field set to `value`; `field` names which. */
+  function batchWith(field: string, value: string, id: string): FleetEvent[] {
+    const base = ctx(id);
+    switch (field) {
+      case "session_id":
+        return [started(value)];
+      case "agent_id":
+        return [newEvent("session.started", { ...base, agent_id: value }, startedPayload())];
+      case "provider":
+        return [newEvent("session.started", { ...base, provider: value }, startedPayload())];
+      case "scenario":
+        return [newEvent("session.started", base, { ...startedPayload(), scenario: value })];
+      case "region":
+        return [newEvent("session.started", base, { ...startedPayload(), region: value })];
+      case "engine_version":
+        return [newEvent("session.started", base, { ...startedPayload(), engine_version: value })];
+      case "error_code":
+        return [
+          newEvent("action", base, {
+            seq: 0,
+            action_type: "click",
+            target: "x",
+            duration_ms: 1,
+            ok: false,
+            error_code: value,
+          }),
+        ];
+      default:
+        throw new Error(field);
+    }
+  }
+  const startedPayload = () => ({
+    engine_version: "1.0",
+    scenario: "s",
+    region: "local",
+    startup_ms: 1,
+    connect_ms: 1,
+  });
+  const FIELDS = [
+    "session_id",
+    "agent_id",
+    "provider",
+    "scenario",
+    "region",
+    "engine_version",
+    "error_code",
+  ];
+
+  it("answers 400 for every label field with a value outside the pattern, and stores nothing", async () => {
+    const run = sid("labels-bad");
+    const { post } = await listen();
+    for (const field of FIELDS) {
+      for (const value of BAD) {
+        const res = await post(batchWith(field, value, run));
+        expect(res.status, `${field} = ${JSON.stringify(value).slice(0, 30)}`).toBe(400);
+      }
+    }
+    // a bad label rejects the whole batch: the good event next to it is not stored either
+    const good = sid("labels-neighbour");
+    const mixed = await post([started(good), ...batchWith("scenario", "a b", sid("labels-x"))]);
+    expect(mixed.status).toBe(400);
+    await sleep(1500);
+    expect(await countPrefix("sessions", "labels-")).toBe(0);
+    expect(await count("sessions", good)).toBe(0);
+  });
+
+  it("accepts the edge of the pattern: 128 characters, every allowed symbol, and dots", async () => {
+    const { post } = await listen();
+    for (const field of FIELDS.filter((f) => f !== "session_id")) {
+      for (const value of GOOD) {
+        const res = await post(batchWith(field, value, sid("labels-good")));
+        expect(res.status, `${field} = ${value.slice(0, 20)}`).toBe(202);
+      }
+    }
+    // a session id may contain dots, but not be just . or ..: no URL can name those (QA-M2-16)
+    for (const value of GOOD.filter((v) => v !== "..")) {
+      expect((await post([started(value)])).status, value.slice(0, 20)).toBe(202);
+    }
+    for (const value of ["...", ".a", "a.", "a..b"]) {
+      expect((await post([started(value)])).status, value).toBe(202);
+    }
+  });
+
+  it("refuses . and .. as a session id (400, the whole batch) and still takes them in the other label fields", async () => {
+    const { post } = await listen();
+    const neighbour = sid("dots-neighbour");
+    for (const value of [".", ".."]) {
+      expect((await post([started(value)])).status, value).toBe(400);
+      expect((await post([started(neighbour), started(value)])).status, value).toBe(400);
+    }
+    await sleep(1500);
+    expect(await count("sessions", neighbour)).toBe(0);
+    for (const field of FIELDS.filter((f) => f !== "session_id")) {
+      for (const value of [".", ".."]) {
+        const res = await post(batchWith(field, value, sid("dots-ok")));
+        expect(res.status, `${field} = ${value}`).toBe(202);
+      }
+    }
+  });
 });
 
 describe("session.ended before its session.started, over HTTP", () => {

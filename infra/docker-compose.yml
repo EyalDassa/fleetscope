@@ -1,5 +1,7 @@
-# Local development infrastructure. Start with `pnpm infra:up` (needs a .env, see .env.example).
-# Browser containers (chromium, headless-shell, lightpanda) are added in M1/M3.
+# Local development infrastructure. Start with `pnpm infra:up`. A .env is optional: every variable
+# below has a development default (see .env.example for the list).
+# Services: ClickHouse (the database) and Grafana (the dashboards, http://127.0.0.1:3001).
+# Browser containers (chromium, headless-shell, lightpanda) are started by the fleet runner, not here.
 name: fleetscope
 
 services:
@@ -32,5 +34,62 @@ services:
       retries: 20
       start_period: 10s
 
+  grafana:
+    # Grafana OSS. The image is `grafana/grafana`: the older `grafana/grafana-oss` repository stopped
+    # at 13.0.2 (June 2026) and no longer gets releases. Pinned to an exact patch version, like
+    # ClickHouse above. 13.2.4 is the current stable release; the ClickHouse plugin below needs
+    # Grafana 11.6 or newer.
+    image: grafana/grafana:13.2.4
+    restart: unless-stopped
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    ports:
+      # Loopback only. 3001, not Grafana's usual 3000, because 3000 is often taken on a dev machine.
+      - "127.0.0.1:${GRAFANA_PORT:-3001}:3000"
+    environment:
+      # Official ClickHouse data source from Grafana Labs, pinned. _SYNC makes Grafana install it
+      # before it starts (the plain GF_PLUGINS_PREINSTALL installs in the background), so the
+      # provisioned data source below never meets a plugin that is not there yet.
+      GF_PLUGINS_PREINSTALL_SYNC: grafana-clickhouse-datasource@4.23.2
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-fleetscope_dev_admin}
+      # Anyone who can reach 127.0.0.1:3001 can look at the dashboards without logging in,
+      # but only as a Viewer. Editing needs the admin login above.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      # No phone-home: no usage statistics, no update checks, no news feed.
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_ANALYTICS_FEEDBACK_LINKS_ENABLED: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      # Dark is the only theme the dashboards are designed for (design/DESIGN.md section 2): their
+      # colours are fixed hex values. 13.2.4 already defaults to dark; this keeps it explicit.
+      GF_USERS_DEFAULT_THEME: dark
+      # Grafana's SQLite database. WAL mode (write-ahead log) skips a disk sync after every one of the
+      # ~800 first-start schema migrations: 7 minutes without it on a slow Docker disk. Dev only.
+      GF_DATABASE_WAL: "true"
+      # Read by the provisioning files in infra/grafana/provisioning (Grafana expands $NAME there).
+      # Grafana only gets the read-only user. It never sees the admin ClickHouse user.
+      CLICKHOUSE_DATABASE: ${CLICKHOUSE_DATABASE:-fleetscope}
+      CLICKHOUSE_GRAFANA_USER: ${CLICKHOUSE_GRAFANA_USER:-grafana_ro}
+      CLICKHOUSE_GRAFANA_PASSWORD: ${CLICKHOUSE_GRAFANA_PASSWORD:-grafana_ro_dev_password}
+    volumes:
+      # Grafana's own database and the installed plugin.
+      - grafana_data:/var/lib/grafana
+      # Paths are relative to the repository root (pnpm infra:up passes --project-directory .).
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    healthcheck:
+      # 127.0.0.1, not localhost: busybox wget tries ::1 first and Grafana listens on IPv4 only.
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/api/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      # The first start downloads the plugin from grafana.com before Grafana comes up.
+      start_period: 60s
+
 volumes:
   clickhouse_data:
+  grafana_data:

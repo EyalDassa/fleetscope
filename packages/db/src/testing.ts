@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { ClickHouseLogLevel, createClient } from "@clickhouse/client";
 import { type ClickHouseClient, createClickHouseClient } from "./client";
 import { type DbConfig, loadDbConfig } from "./config";
 import { runMigrations } from "./migrate";
@@ -57,4 +58,20 @@ export async function dropDatabase(config: DbConfig): Promise<void> {
   } finally {
     await admin.close();
   }
+}
+
+/**
+ * A connection as the read-only Grafana user would make it: the plugin sets only
+ * `max_execution_time` per query. NOT `createClickHouseClient`, which sends `async_insert = 0` with
+ * every request, a setting that a `readonly = 1` user may not change. Logging is off because tests
+ * make queries fail on purpose.
+ */
+export function createReaderClient(config: DbConfig, username: string, password: string) {
+  return createClient({
+    url: config.url,
+    username,
+    password,
+    database: config.database,
+    log: { level: ClickHouseLogLevel.OFF },
+  });
 }

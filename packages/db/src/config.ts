@@ -1,7 +1,9 @@
 import { z } from "zod";
 
 /** Database names end up in DDL, so keep them to plain identifiers. */
-const identifier = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "must be a plain identifier");
+export const identifierSchema = z
+  .string()
+  .regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "must be a plain identifier");
 
 export const LOG_LEVELS = ["fatal", "error", "warn", "info", "debug", "trace", "silent"] as const;
 export const logLevelSchema = z.enum(LOG_LEVELS).default("info");
@@ -14,7 +16,7 @@ export const clickhouseEnvSchema = z.object({
   }),
   CLICKHOUSE_USER: z.string().min(1),
   CLICKHOUSE_PASSWORD: z.string(),
-  CLICKHOUSE_DATABASE: identifier,
+  CLICKHOUSE_DATABASE: identifierSchema,
 });
 
 export const dbEnvSchema = clickhouseEnvSchema.extend({

@@ -1,0 +1,30 @@
+# Provisions the one data source every Fleetscope dashboard uses.
+# The UID is part of the contract with the dashboard JSON (infra/grafana/dashboards): do not change it.
+#
+# Grafana expands $VARS in provisioning files from the container's environment (set in
+# infra/docker-compose.yml). Use the bare $NAME form, not ${NAME}: Grafana expands ${NAME}
+# a second time, so a password containing "$" would be cut short.
+#
+# Docs checked: https://grafana.com/docs/plugins/grafana-clickhouse-datasource/latest/configure/
+apiVersion: 1
+
+datasources:
+  - name: Fleetscope ClickHouse
+    uid: fleetscope-clickhouse
+    type: grafana-clickhouse-datasource
+    access: proxy
+    isDefault: true
+    # Provisioned = defined here. Edit this file, not the data source in the UI.
+    editable: false
+    jsonData:
+      # "clickhouse" is the compose service name; 8123 is ClickHouse's HTTP interface.
+      host: clickhouse
+      port: 8123
+      protocol: http
+      secure: false
+      username: $CLICKHOUSE_GRAFANA_USER
+      # The connection's database: dashboards can write `FROM sessions` without a prefix.
+      defaultDatabase: $CLICKHOUSE_DATABASE
+    secureJsonData:
+      # A read-only user. Create it once with `pnpm db:grafana-user` (see infra/grafana/README.md).
+      password: $CLICKHOUSE_GRAFANA_PASSWORD

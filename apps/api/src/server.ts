@@ -1,6 +1,8 @@
 import {
   ConfigError,
   createClickHouseClient,
+  getSessionTimeline,
+  getTimelineSession,
   insertEvents,
   ping,
   toDbConfig,
@@ -25,6 +27,8 @@ const client = createClickHouseClient(toDbConfig(env));
 const app = buildApp({
   ping: () => ping(client, 1000),
   insert: (events, dedupTokens) => insertEvents(client, events, { dedupTokens }),
+  getSessionTimeline: (sessionId) => getSessionTimeline(client, sessionId),
+  getSession: (sessionId) => getTimelineSession(client, sessionId),
   ingest: { capacity: env.INGEST_BUFFER_CAPACITY },
   deadLetter: fileDeadLetter(env.INGEST_DEADLETTER_DIR),
   logLevel: env.LOG_LEVEL,

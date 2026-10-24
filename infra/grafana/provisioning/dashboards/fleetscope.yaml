@@ -1,0 +1,27 @@
+# Loads every dashboard JSON from infra/grafana/dashboards (mounted read-only at
+# /var/lib/grafana/dashboards) into the "Fleetscope" folder.
+# Docs checked: https://grafana.com/docs/grafana/latest/administration/provisioning/#dashboards
+apiVersion: 1
+
+providers:
+  - name: fleetscope
+    orgId: 1
+    type: file
+    folder: Fleetscope
+    # Fixed UID: dashboards and `pnpm grafana:push` both refer to this folder.
+    folderUid: fleetscope
+    disableDeletion: false
+    # Look at the folder every 15 seconds, so a file change shows up without a restart.
+    # It must be ABOVE 10: with 10 or less Grafana does not poll, it asks the operating system to
+    # tell it about changes (fsnotify, see pkg/services/provisioning/dashboards/file_reader.go), and
+    # a file edited on the Windows or macOS side of a Docker Desktop bind mount sends no such event.
+    # With 10 the local Grafana kept serving the dashboards it loaded at start (QA-M2-01, verified:
+    # the same edit was ignored at 10 and picked up within one poll at 15).
+    # `pnpm grafana:reload` loads the files at once.
+    updateIntervalSeconds: 15
+    # Lets you edit a dashboard in the UI and export the JSON back into the repo.
+    # A UI save lives only in Grafana's own database; the repo file stays the source of truth
+    # and overwrites the UI copy the next time the file changes.
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards

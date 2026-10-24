@@ -2,6 +2,7 @@ import type { Engine, EventEnvelope, Source } from "@fleetscope/schema";
 import { type Logger, pino } from "pino";
 import { EventQueue, type QueueStats } from "./queue";
 import { CollectedSession, type StartSessionOptions } from "./session";
+import { assertSafeLabel } from "./text";
 import { createHttpTransport, type Transport } from "./transport";
 
 export interface CollectorOptions {
@@ -44,6 +45,9 @@ export interface Collector {
  * it records into that queue, and the queue ships batches to the API in the background.
  */
 export function createCollector(options: CollectorOptions): Collector {
+  // The API refuses an event with another kind of value, for the whole batch (see SAFE_LABEL_PATTERN).
+  assertSafeLabel("agentId", options.agentId);
+  assertSafeLabel("provider", options.provider);
   const logger =
     options.logger ?? pino({ name: "collector", level: process.env.LOG_LEVEL ?? "info" });
   const transport = options.transport ?? createHttpTransport({ apiUrl: options.apiUrl, logger });
