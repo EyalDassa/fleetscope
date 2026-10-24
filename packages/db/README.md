@@ -51,6 +51,18 @@ API already batches.
 
 Rows older than the 30 day TTL are dropped by ClickHouse asynchronously: a background merge removes the expired part shortly after the insert, so a query right after the insert may still see them.
 
+## Reading one session
+
+`getSessionTimeline(client, sessionId)` returns a session (the latest version, through `FINAL`) with its
+actions, resource samples, network requests and issues, or `null` for an unknown id. Times are epoch
+milliseconds; every parameter is bound, never spliced into the SQL. Each table is capped at 20,000
+rows (`truncated` lists the ones that were cut). `getTimelineSession` reads only the session row.
+The API turns the result into a Chrome trace for Perfetto (`GET /v1/sessions/:id/trace`, layout in
+`design/DESIGN.md` section 5).
+
+Two things to know about the times: an **action** is stamped when it started, but a **network
+request** is stamped when it finished (it started `duration_ms` earlier).
+
 ## Logging
 
 The ClickHouse client's own log lines are routed into pino (JSON) and limited to errors. Callers
@@ -553,10 +565,16 @@ Grafana connects as its own ClickHouse user, so a panel can never change data, e
 a `DROP TABLE` into it.
 
 ```
-CLICKHOUSE_GRAFANA_USER=grafana
+CLICKHOUSE_GRAFANA_USER=grafana_ro
 CLICKHOUSE_GRAFANA_PASSWORD=...            # at least 8 characters
 pnpm --filter @fleetscope/db grafana-user  # root alias: pnpm db:grafana-user
 ```
+
+**Defaults only for a local ClickHouse.** When `CLICKHOUSE_URL` is `localhost`, `127.x.x.x` or `::1`, a
+missing user or password falls back to `grafana_ro` / `grafana_ro_dev_password`, the same defaults as
+`infra/docker-compose.yml`. For any other server (ClickHouse Cloud, a hostname, a LAN address) both
+must be set explicitly, and the development password is refused even if it is set on purpose, so
+the default that is public in this repository can never become a real password.
 
 The script connects with the admin user (`CLICKHOUSE_USER`, which may manage users) and runs
 `CREATE USER IF NOT EXISTS`, `ALTER USER` (password and settings) and `GRANT SELECT ON <database>.*`.
