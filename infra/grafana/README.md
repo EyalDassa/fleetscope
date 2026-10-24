@@ -211,6 +211,20 @@ manual step (Administration > Default preferences > Interface theme = Dark).
    Perfetto links. If the variable is unset, the push also warns and the dashboards keep their
    committed `http://localhost:4000`. Run `pnpm grafana:push --dry-run`, then `pnpm grafana:push`.
 
+## Secret scanners and the development passwords
+
+`grafana_ro_dev_password`, `fleetscope_dev_admin` and the example passwords in `src/*.test.ts` are
+development placeholders that are public on purpose: they only work against the local docker-compose.
+gitleaks (CI) reports one of them, accepted in `.gitleaksignore` with the reason. GitGuardian, an
+external GitHub app, flags them as "Generic Password" on pull requests (QA-M2-14).
+
+A `.gitguardian.yaml` in the repository does **not** help. That file is the configuration of the
+`ggshield` command line tool, and GitGuardian's documentation says ggshield's ignores are not shared
+with its dashboard or its GitHub integration (docs.gitguardian.com, "ggshield secret ignore"); nothing
+in the GitHub integration's pages mentions reading it. The exclusion lives in the GitGuardian
+workspace instead: Settings > Secrets detection > Filepath exclusions, linked to this repository only,
+for `.env.example` and `infra/grafana/*`. gitleaks keeps scanning those paths.
+
 ## Tests
 
 `pnpm test` runs this package's unit tests (no Docker, no network; ClickHouse and Grafana are faked).
