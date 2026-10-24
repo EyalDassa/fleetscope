@@ -12,9 +12,9 @@ Test files and fixtures (`**/*.test.ts`, `e2e/`, `packages/db/fixtures`) and `qa
 
 ## First pass
 1. Test against the agreed behavior (the task's "done when", PLAN.md, DESIGN.md), not against what the code happens to do.
-2. Write the missing tests: integration tests against real ClickHouse for `packages/db` and `apps/api`; Playwright end-to-end tests for dashboard screens using seeded data.
+2. Write the missing tests: integration tests against real ClickHouse for `packages/db` and `apps/api`; dashboard checks (every Grafana query against edge-case data: empty, one session, sim only, nulls, interrupted sessions, many sessions), and check the numbers a dashboard shows against a hand-computed answer.
 3. Try to break it: empty data, one session, 10k sessions, an engine returning `null` metrics, invalid payloads, duplicate `event_id`, clock skew, slow API.
-4. Write `qa/<milestone>-report.md`: tests added, and each bug with an ID, steps to reproduce, expected vs actual, severity (blocker / major / minor), owner (backend / frontend / platform) and likely file.
+4. Write `qa/<milestone>-report.md`: tests added, and each bug with an ID, steps to reproduce, expected vs actual, severity (blocker / major / minor), owner (backend / dashboard / platform) and likely file.
 
 ## Re-test pass (feedback rounds 1 and 2)
 Re-run the tests for every bug marked fixed. Update each bug in the report: **verified**, **reopened** (why) or **disputed** (the engineer disagreed; summarize both sides).
