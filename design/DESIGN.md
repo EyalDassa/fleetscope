@@ -81,7 +81,7 @@ Other colours (dark / light): gauge cells in tables use the approved neutral `--
 - **Error rate** = 100 − success rate, per `ended_at` bucket, computed from `sessions` rather than `fleet_minute` (which counts actions). That way interrupted sessions are excluded and the chart agrees with the verdict.
 - **Fleet verdict** = the success rate over the range, through the thresholds. It is `no_data` when no session ended. The approved capacity rule is dropped, because there is no capacity data.
 - **Failure cause** (sessions that didn't succeed, interrupted excluded): the first `issues.kind`, else the first failed action's `error_code`, else `status`. A From column says which one (`issue` / `action` / `status`).
-- **Estimated cost** = browser-hours (session duration; a running session counts until now) × price.
+- **Estimated cost** = browser-hours (startup + connect + session duration, because the browser is billed from the moment its container exists; a running session counts until now) × price.
 - **Interrupted sessions** have their own count and status. They never enter the success rate, error rate, Recent failures or Top failure causes.
 - **Honest SQL:** ratios as `if(den = 0, NULL, num / den)`; `-OrNull` aggregates (`maxOrNull`, `avgOrNull`, `quantileOrNull`) wherever a set can be empty; never `ifNull(metric, 0)` or `coalesce(metric, 0)`.
 

@@ -22,6 +22,7 @@
     "db:migrate": "pnpm --filter @fleetscope/db migrate",
     "db:seed": "pnpm --filter @fleetscope/db seed",
     "db:grafana-user": "pnpm --filter @fleetscope/db grafana-user",
+    "db:backfill-rollups": "pnpm --filter @fleetscope/db backfill-rollups",
     "grafana:push": "pnpm --filter @fleetscope/grafana-tools push",
     "grafana:check": "pnpm --filter @fleetscope/grafana-tools check",
     "fleet": "pnpm --filter @fleetscope/fleet-runner fleet",

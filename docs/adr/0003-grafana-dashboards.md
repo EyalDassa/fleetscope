@@ -27,7 +27,8 @@ Hosting:
 ## Decision
 
 - **Grafana is the only UI.** `apps/web` and the Vercel project are removed.
-- **Grafana queries ClickHouse directly**, as a **read-only user** (`readonly`, `SELECT` only), through the data source with UID `fleetscope-clickhouse`.
+- **Grafana queries ClickHouse directly**, as a **read-only user**, through the data source with UID `fleetscope-clickhouse`. The user has `SELECT` only and `readonly = 1`, with the two settings the plugin needs (`max_execution_time`, `additional_table_filters`) marked `CHANGEABLE_IN_READONLY`. This follows the plugin docs; `readonly = 2` would let any query change settings. Tests show writes are refused even if write grants were added by mistake.
+- **Shared SQL building blocks:** the per-session rules (`session-facts`: display status, interrupted, cause, browser-hours, estimated cost) are SQL snippets in `packages/db/README.md`, each executed by an integration test. Dashboards copy them. Browser-hours = `startup_ms + connect_ms + duration_ms`, because a browser is billed from the moment its container exists, and leaving startup out would hide the engine differences M3 compares.
 - **Dashboards are code:** JSON in `infra/grafana/dashboards/`. The local Grafana OSS container (docker-compose, `localhost:3001`) provisions them, and `pnpm grafana:push` uploads them to Grafana Cloud by UID.
 - **Rules for dashboard SQL** (an exception to "all queries live in `packages/db`"):
   - it follows the rules written in `packages/db/README.md`: `sessions FINAL`, interrupted sessions excluded from success and failure numbers, the `fleet_minute` rollup for time series;
