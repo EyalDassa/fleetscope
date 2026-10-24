@@ -20,12 +20,20 @@ M3 adds chrome-headless-shell and Lightpanda next to Chromium so the Browsers da
 4. **Gaps are recorded, never faked.**
    - Lightpanda's missing `Performance.getMetrics` gives `js_heap_mb = null` ("Not available").
    - A feature an engine refuses (CDP method not found, screenshot, viewport) fails the action with `unsupported_feature`.
-   - A Web API missing in the page is an `unsupported_api` issue, and TypeErrors count only when they name a known API.
-   - **A failed `/js-heavy` probe fails the session** (`heavy-page-crawl`), with the failing probes in the issue message (e.g. Lightpanda 1.0.2: `webWorker: timeout after 3000ms`). Otherwise the compatibility matrix would show a success that isn't one.
-5. **Time to a usable browser = `startup_ms + connect_ms`.** Chromium launches inside `connect_ms` and the CDP engines inside `startup_ms`, so only the sum compares.
-6. **Simulator with calibrated profiles and labelled priors.**
+   - A Web API missing in the page is an `unsupported_api` issue. That needs evidence of absence: a ReferenceError, or a TypeError naming a known API.
+   - **A failed `/js-heavy` probe fails the session** (`heavy-page-crawl`), with the failing probes in the issue message. Otherwise the compatibility matrix would show a success that isn't one.
+     - The probe's error decides the code. An absent API is `unsupported_api`. A probe that never answers is `timeout`, because a timeout cannot prove the API is missing. Anything else is `js_error`.
+     - Example, Lightpanda 1.0.2: `Worker` exists but the worker never answers, so the session ends `timeout` with "webWorker: timeout after 3000ms". The matrix shows that cell as failing, with the reason.
+5. **Chromium's memory is not quite like for like (known, M4).**
+   - Our Chromium image runs Playwright's Node `run-server`, which launches Chromium. Its ~110 MB (measured idle on Docker Desktop, about the same with `/heavy` loaded) is inside the Chromium container's cgroup, and the CDP engines don't have it.
+   - The Browsers dashboard says so.
+   - Running Chromium with plain CDP, like the other two, removes it. That is planned for M4.
+6. **Time to a usable browser = `startup_ms + connect_ms`.** Chromium launches inside `connect_ms` and the CDP engines inside `startup_ms`, so only the sum compares.
+7. **Simulator with calibrated profiles and labelled priors.**
    - `apps/simulator` generates `source: "sim"` sessions from a profile computed from real sessions (`pnpm sim calibrate`).
-   - An engine with fewer than 10 real sessions uses documented priors (`basis: "prior"`) until enough real runs exist.
+   - An engine with fewer than 10 real sessions uses documented priors (`basis: "prior"`) until enough real runs exist. After the M3 real run (10 sessions per engine), all three engines are `basis: "measured"`.
+   - Simulated session ids are random (`sim-<uuid>`); the seed fixes everything else.
+   - The error-code vocabulary (`ERROR_CODES`, `ISSUE_FOR_CODE`) lives in `packages/schema`, shared by the collector and the simulator.
 
 ## Consequences
 
