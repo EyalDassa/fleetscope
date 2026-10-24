@@ -74,7 +74,7 @@ describe("pnpm fleet: usage errors exit with 2 and print the usage", () => {
     [["run", "--sessions", "100001"], "--sessions must be a whole number"],
     [["run", "--concurrency", "0"], "--concurrency must be a whole number from 1 to 64"],
     [["run", "--engines", "chrome"], 'did you mean "chromium"?'],
-    [["run", "--engines", "lightpanda"], "not supported by the runner yet"],
+    [["run", "--engines", "firefox"], "unknown engine"],
     [["run", "--engines", ","], "needs at least one engine"],
     [["run", "--scenario", "nope"], "unknown scenario"],
     [["run", "--seed", "1.5"], "--seed must be a non-negative whole number"],

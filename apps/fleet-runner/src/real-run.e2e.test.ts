@@ -490,7 +490,7 @@ describe.skipIf(!ENABLED)("the collector with a real Chromium", () => {
     prepare?: (page: import("playwright-core").Page) => Promise<void>,
   ): Promise<FleetEvent[]> {
     container ??= await fleet.startBrowser({ sessionId: "qa-e2e-collector" });
-    const browser = await chromium.connect(container.wsEndpoint);
+    const browser = await chromium.connect(container.endpoint);
     const events: FleetEvent[] = [];
     const collector = createCollector({
       apiUrl: "http://127.0.0.1:1",

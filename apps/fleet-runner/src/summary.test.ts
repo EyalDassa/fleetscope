@@ -13,6 +13,7 @@ function result(overrides: Partial<SessionResult>): SessionResult {
     reason: null,
     durationMs: 12_345,
     startupMs: 1800,
+    connectMs: 600,
     actions: 11,
     failedActions: 1,
     peakMemMb: 312.4,
@@ -39,7 +40,7 @@ describe("formatSummary", () => {
     );
     const lines = text.split("\n");
     expect(lines[0]).toMatch(
-      /^#\s+session\s+scenario\s+status\s+duration\s+startup\s+ok\/actions\s+peak mem$/,
+      /^#\s+session\s+engine\s+scenario\s+status\s+duration\s+startup\s+to browser\s+ok\/actions\s+peak mem$/,
     );
     expect(lines[2]).toContain("01234567");
     expect(lines[2]).toContain("success");
@@ -144,5 +145,32 @@ describe("createRng", () => {
     expect(sessionSeed(7, 0)).not.toBe(sessionSeed(7, 1));
     expect(sessionSeed(7, 3)).toBe(sessionSeed(7, 3));
     expect(sessionSeed(7, 3)).not.toBe(sessionSeed(8, 3));
+  });
+});
+
+describe("formatSummary per engine", () => {
+  it("shows time to browser (startup + connect) and a total line per engine", () => {
+    const text = formatSummary(
+      [
+        result({ index: 0, engine: "chromium", startupMs: 1000, connectMs: 500 }),
+        result({ index: 1, engine: "lightpanda", startupMs: 200, connectMs: 50, peakMemMb: 40 }),
+        result({
+          index: 2,
+          engine: "lightpanda",
+          startupMs: 300,
+          connectMs: 50,
+          status: "failed",
+          reason: "x",
+          peakMemMb: null,
+        }),
+      ],
+      delivery,
+      5000,
+    );
+    expect(text).toMatch(/1\.5s/); // chromium: 1000 + 500
+    expect(text).toContain("By engine:");
+    expect(text).toMatch(/chromium\s+1 sessions\s+1 success/);
+    expect(text).toMatch(/lightpanda\s+2 sessions\s+1 success/);
+    expect(text).toMatch(/lightpanda.*to browser avg 0\.3s.*peak mem max 40 MB/);
   });
 });
