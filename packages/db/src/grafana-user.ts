@@ -46,13 +46,64 @@ export interface GrafanaUserOptions {
 }
 
 /**
+ * The user and password that docker-compose, `.env.example` and CI use for a local ClickHouse. They
+ * are a development convenience (the same defaults as infra/docker-compose.yml), so they are only
+ * ever used when `CLICKHOUSE_URL` points at this machine.
+ */
+export const LOCAL_GRAFANA_USER = "grafana_ro";
+export const LOCAL_GRAFANA_PASSWORD = "grafana_ro_dev_password";
+
+/** True for `localhost`, `127.x.x.x` and `::1`: a ClickHouse that runs on this machine. */
+export function isLocalClickHouseUrl(url: string | undefined): boolean {
+  if (!url) return false;
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  return (
+    host === "localhost" ||
+    host.endsWith(".localhost") ||
+    host === "[::1]" ||
+    /^127(\.\d{1,3}){3}$/.test(host)
+  );
+}
+
+/**
  * Reads the Grafana user from the environment and checks it against the admin user: using the
  * admin's own name would turn the admin into a read-only user and lock the migrations out.
+ *
+ * For a LOCAL ClickHouse (see `isLocalClickHouseUrl`) a missing user or password falls back to
+ * `LOCAL_GRAFANA_USER` / `LOCAL_GRAFANA_PASSWORD`, as docker-compose does. For any other server,
+ * ClickHouse Cloud included, both must be set explicitly, and the development password is refused,
+ * so a default that is public in this repository can never become a real password.
  */
 export function loadGrafanaUserOptions(
   env: Record<string, string | undefined> = process.env,
 ): GrafanaUserOptions {
-  const grafana = parseEnv(grafanaUserEnvSchema, env);
+  const local = isLocalClickHouseUrl(env.CLICKHOUSE_URL);
+  const withDefaults = local
+    ? {
+        ...env,
+        CLICKHOUSE_GRAFANA_USER: env.CLICKHOUSE_GRAFANA_USER || LOCAL_GRAFANA_USER,
+        CLICKHOUSE_GRAFANA_PASSWORD: env.CLICKHOUSE_GRAFANA_PASSWORD || LOCAL_GRAFANA_PASSWORD,
+      }
+    : env;
+  if (!local && (!env.CLICKHOUSE_GRAFANA_USER || !env.CLICKHOUSE_GRAFANA_PASSWORD)) {
+    throw new ConfigError(
+      "Invalid environment:\nCLICKHOUSE_GRAFANA_USER and CLICKHOUSE_GRAFANA_PASSWORD must be set " +
+        "explicitly: CLICKHOUSE_URL is not a local address, and the development defaults are only " +
+        "used for a ClickHouse on this machine",
+    );
+  }
+  if (!local && env.CLICKHOUSE_GRAFANA_PASSWORD === LOCAL_GRAFANA_PASSWORD) {
+    throw new ConfigError(
+      "CLICKHOUSE_GRAFANA_PASSWORD is the development password from .env.example; " +
+        "choose a real one for a ClickHouse that is not on this machine",
+    );
+  }
+  const grafana = parseEnv(grafanaUserEnvSchema, withDefaults);
   const database = env.CLICKHOUSE_DATABASE;
   if (!database) throw new ConfigError("Invalid environment:\nCLICKHOUSE_DATABASE is not set");
   if (grafana.CLICKHOUSE_GRAFANA_USER === env.CLICKHOUSE_USER) {

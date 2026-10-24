@@ -1,9 +1,17 @@
 import { describe, expect, it } from "vitest";
 import type { ClickHouseClient } from "./client";
 import { ConfigError } from "./config";
-import { ensureGrafanaUser, GrafanaUserError, loadGrafanaUserOptions } from "./grafana-user";
+import {
+  ensureGrafanaUser,
+  GrafanaUserError,
+  isLocalClickHouseUrl,
+  LOCAL_GRAFANA_PASSWORD,
+  LOCAL_GRAFANA_USER,
+  loadGrafanaUserOptions,
+} from "./grafana-user";
 
 const env = {
+  CLICKHOUSE_URL: "http://localhost:8123",
   CLICKHOUSE_USER: "fleetscope",
   CLICKHOUSE_DATABASE: "fleetscope",
   CLICKHOUSE_GRAFANA_USER: "grafana",
@@ -30,7 +38,9 @@ describe("loadGrafanaUserOptions", () => {
 
   it("refuses a missing user, a short password and an unsafe name", () => {
     const { CLICKHOUSE_GRAFANA_USER: _user, ...withoutUser } = env;
-    expect(() => loadGrafanaUserOptions(withoutUser)).toThrow(/CLICKHOUSE_GRAFANA_USER/);
+    expect(() =>
+      loadGrafanaUserOptions({ ...withoutUser, CLICKHOUSE_URL: "https://x.clickhouse.cloud:8443" }),
+    ).toThrow(/CLICKHOUSE_GRAFANA_USER/);
     expect(() => loadGrafanaUserOptions({ ...env, CLICKHOUSE_GRAFANA_PASSWORD: "short" })).toThrow(
       /at least 8/,
     );
@@ -49,6 +59,112 @@ describe("loadGrafanaUserOptions", () => {
     } catch (error) {
       expect((error as Error).message).not.toContain("hunter2hunter2");
     }
+  });
+});
+
+describe("the development defaults", () => {
+  const { CLICKHOUSE_GRAFANA_USER: _u, CLICKHOUSE_GRAFANA_PASSWORD: _p, ...bare } = env;
+
+  it("match docker-compose and .env.example", () => {
+    expect([LOCAL_GRAFANA_USER, LOCAL_GRAFANA_PASSWORD]).toEqual([
+      "grafana_ro",
+      "grafana_ro_dev_password",
+    ]);
+  });
+
+  it.each([
+    "http://localhost:8123",
+    "http://127.0.0.1:8123",
+    "http://127.1.2.3:8123",
+    "http://[::1]:8123",
+    "https://clickhouse.localhost:8443",
+  ])("are used when ClickHouse is local (%s)", (url) => {
+    expect(loadGrafanaUserOptions({ ...bare, CLICKHOUSE_URL: url })).toEqual({
+      user: "grafana_ro",
+      password: "grafana_ro_dev_password",
+      database: "fleetscope",
+    });
+  });
+
+  it("fill in only what is missing, and treat an empty value as missing", () => {
+    expect(
+      loadGrafanaUserOptions({
+        ...bare,
+        CLICKHOUSE_GRAFANA_USER: "reader",
+        CLICKHOUSE_GRAFANA_PASSWORD: "",
+      }),
+    ).toMatchObject({ user: "reader", password: "grafana_ro_dev_password" });
+    expect(
+      loadGrafanaUserOptions({ ...bare, CLICKHOUSE_GRAFANA_PASSWORD: "my-own-password" }),
+    ).toMatchObject({
+      user: "grafana_ro",
+      password: "my-own-password",
+    });
+  });
+
+  it.each([
+    "https://abc123.eu-west-1.aws.clickhouse.cloud:8443",
+    "http://clickhouse:8123",
+    "http://10.0.0.5:8123",
+    "http://localhost.evil.example:8123",
+    "http://127.0.0.1.evil.example:8123",
+    "not a url",
+    "",
+  ])("are NOT used for a remote ClickHouse (%s)", (url) => {
+    expect(() => loadGrafanaUserOptions({ ...bare, CLICKHOUSE_URL: url })).toThrow(
+      /must be set explicitly/,
+    );
+    expect(() =>
+      loadGrafanaUserOptions({
+        ...bare,
+        CLICKHOUSE_URL: url,
+        CLICKHOUSE_GRAFANA_USER: "grafana_ro",
+      }),
+    ).toThrow(/must be set explicitly/);
+    expect(() =>
+      loadGrafanaUserOptions({
+        ...bare,
+        CLICKHOUSE_URL: url,
+        CLICKHOUSE_GRAFANA_PASSWORD: "a-real-password-1",
+      }),
+    ).toThrow(/must be set explicitly/);
+  });
+
+  it("are not used when CLICKHOUSE_URL is not set at all", () => {
+    const { CLICKHOUSE_URL: _url, ...noUrl } = bare;
+    expect(() => loadGrafanaUserOptions(noUrl)).toThrow(/must be set explicitly/);
+  });
+
+  it("refuse the development password for a remote ClickHouse, even when it is set on purpose", () => {
+    expect(() =>
+      loadGrafanaUserOptions({
+        ...bare,
+        CLICKHOUSE_URL: "https://abc123.clickhouse.cloud:8443",
+        CLICKHOUSE_GRAFANA_USER: "grafana_ro",
+        CLICKHOUSE_GRAFANA_PASSWORD: "grafana_ro_dev_password",
+      }),
+    ).toThrow(/development password/);
+  });
+
+  it("accept explicit values for a remote ClickHouse", () => {
+    expect(
+      loadGrafanaUserOptions({
+        ...bare,
+        CLICKHOUSE_URL: "https://abc123.clickhouse.cloud:8443",
+        CLICKHOUSE_GRAFANA_USER: "grafana_ro",
+        CLICKHOUSE_GRAFANA_PASSWORD: "a-real-password-1",
+      }),
+    ).toEqual({ user: "grafana_ro", password: "a-real-password-1", database: "fleetscope" });
+  });
+
+  it("isLocalClickHouseUrl is false for nothing at all", () => {
+    expect(isLocalClickHouseUrl(undefined)).toBe(false);
+  });
+
+  it("still refuse the admin user's own name, defaults or not", () => {
+    expect(() => loadGrafanaUserOptions({ ...bare, CLICKHOUSE_USER: "grafana_ro" })).toThrow(
+      /must not be the admin user/,
+    );
   });
 });
 
