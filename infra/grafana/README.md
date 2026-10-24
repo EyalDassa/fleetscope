@@ -9,7 +9,7 @@ infra/grafana/
   provisioning/datasources/clickhouse.yaml   the data source (uid fleetscope-clickhouse)
   provisioning/dashboards/fleetscope.yaml    loads dashboards/ into the folder "Fleetscope" (uid fleetscope)
   dashboards/                                the dashboard JSON (fleetscope-overview, -sessions, -session)
-  src/                                       `pnpm grafana:push` and `pnpm grafana:check` (TypeScript)
+  src/                                       `pnpm grafana:push`, `grafana:check` and `grafana:reload` (TypeScript)
 ```
 
 ## Run it locally
@@ -51,7 +51,22 @@ then `docker volume rm fleetscope_grafana_data`.
    model, not the v2 schema). Set `"id": null`.
 3. `pnpm grafana:check`. Fix what it reports.
 4. A UI save lives only in Grafana's database. The file is the source of truth: when the file
-   changes, Grafana overwrites the UI copy (it re-reads the folder every 10 seconds).
+   changes, Grafana overwrites the UI copy.
+
+**After editing a file, Grafana picks it up within 15 seconds** (it polls the folder). To load it
+now, run `pnpm grafana:reload`: it calls the admin API (`POST /api/admin/provisioning/dashboards/reload`,
+Basic auth with `admin` and `GRAFANA_ADMIN_PASSWORD`), then compares every file with what Grafana
+serves and prints `in sync` or `DIFFERENT`. If it still says `DIFFERENT`, `pnpm grafana:reload --restart`
+restarts the container. Do this before a manual check or a screenshot, so you are not looking at
+old dashboards.
+
+*Why polling:* `updateIntervalSeconds` of 10 or less makes Grafana watch the folder with fsnotify
+instead of polling (`pkg/services/provisioning/dashboards/file_reader.go`). A file edited on the
+Windows or macOS side of a Docker Desktop bind mount sends no fsnotify event into the container, so
+at 10 the local Grafana kept serving the dashboards it had loaded at start (QA-M2-01). At 15 it
+polls: an added, edited and deleted file were each picked up within one poll, on the real mount.
+`GRAFANA_ADMIN_PASSWORD` only takes effect when Grafana starts on an empty `grafana_data` volume; after
+that, change the password in Grafana, or reset the volume (below).
 
 Dashboards must not use "Export for sharing externally" (it turns the data source into a
 `${DS_...}` input, which provisioning cannot fill). Use the plain JSON model.

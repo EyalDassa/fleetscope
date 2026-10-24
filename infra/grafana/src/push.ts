@@ -145,11 +145,21 @@ export function buildDataSource(
 
 // ---------------------------------------------------------------- Grafana HTTP client
 
+export interface BasicAuth {
+  user: string;
+  password: string;
+}
+
 export class GrafanaClient {
+  /**
+   * `token` is a service account token (Bearer). `basic` is the admin login, only for the few
+   * admin endpoints that refuse tokens, such as the provisioning reload.
+   */
   constructor(
     private readonly baseUrl: string,
     private readonly token: string | undefined,
     private readonly fetchImpl: Fetch = fetch,
+    private readonly basic?: BasicAuth,
   ) {}
 
   /** Returns undefined for 404, so "does it exist?" is one call. Other errors throw. */
@@ -166,6 +176,14 @@ export class GrafanaClient {
     return this.request(method, path, body);
   }
 
+  private authorization(): { Authorization?: string } {
+    if (this.basic) {
+      const login = Buffer.from(`${this.basic.user}:${this.basic.password}`).toString("base64");
+      return { Authorization: `Basic ${login}` };
+    }
+    return this.token ? { Authorization: `Bearer ${this.token}` } : {};
+  }
+
   private async request(method: string, path: string, body?: unknown): Promise<unknown> {
     let response: Response;
     try {
@@ -174,7 +192,7 @@ export class GrafanaClient {
         headers: {
           Accept: "application/json",
           ...(body === undefined ? {} : { "Content-Type": "application/json" }),
-          ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
+          ...this.authorization(),
         },
         body: body === undefined ? undefined : JSON.stringify(body),
         signal: AbortSignal.timeout(30_000),
@@ -256,7 +274,7 @@ export function withApiUrl(dashboard: JsonObject, apiUrl: string): JsonObject {
 }
 
 /** The dashboard as stored, minus what Grafana assigns itself, for comparing with the repo file. */
-function comparable(dashboard: JsonObject): string {
+export function comparable(dashboard: JsonObject): string {
   const { id: _id, version: _version, ...rest } = dashboard;
   return canonicalJson(rest);
 }

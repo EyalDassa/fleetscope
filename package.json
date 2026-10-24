@@ -25,6 +25,7 @@
     "db:backfill-rollups": "pnpm --filter @fleetscope/db backfill-rollups",
     "grafana:push": "pnpm --filter @fleetscope/grafana-tools push",
     "grafana:check": "pnpm --filter @fleetscope/grafana-tools check",
+    "grafana:reload": "pnpm --filter @fleetscope/grafana-tools reload",
     "fleet": "pnpm --filter @fleetscope/fleet-runner fleet",
     "browsers:build": "docker build -f infra/browsers/chromium/Dockerfile -t fleetscope/playwright-chromium:1.64.1 infra/browsers"
   },
