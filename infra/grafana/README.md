@@ -447,6 +447,17 @@ the default contact point (`grafana-default-email`). Change who gets them in Gra
 push does not touch contact points or policies. Check the address once after the first push; it is a manual step because
 it is account data, not code.
 
+**Locally, alerts go nowhere until you add a contact point.** A fresh Grafana OSS (the compose one) has no contact point:
+the default policy's receiver is empty, so a rule can fire and show in Alerting > Alert rules, but nothing is sent. (Grafana
+Cloud's stack comes with `grafana-default-email`; its address is account data, to be checked after the first Cloud push.) To
+try the alerts locally, create one in Alerting > Contact points and set it as the default policy's contact point; the push
+never creates contact points.
+
+**A backfill can trip the load-mismatch alert.** "Sent" is placed by an event's own time and "written" by when ClickHouse
+received it, so `db:seed`, `sim run --duration` longer than about an hour, or a fleet replaying a dead-letter file after a long
+outage moves rows between hours and `fs-capacity-load-mismatch` fires (measured: 10.4% for a 3 h simulator run) until the hour
+has passed. That is the comparison working, not a loss.
+
 **Cost note.** The capacity group queries ClickHouse every minute, around the clock. A ClickHouse Cloud service with
 idling switched on is kept awake by that, which costs credit when the fleet is stopped. Check the service's idle setting
 (Settings > Scaling); with idling on, lengthen the group `interval` in `capacity.json` or pause the group with a silence.

@@ -94,6 +94,53 @@ describe("checkDashboards with snippets", () => {
     expect(good.files[0]?.problems.filter((p) => /copy|block/.test(p.message))).toEqual([]);
   });
 
+  function runAnnotation(uid: string, sql: string) {
+    const dir = mkdtempSync(join(tmpdir(), "fs-snippets-"));
+    writeFileSync(
+      join(dir, `${uid}.json`),
+      JSON.stringify(
+        dashboardJson({
+          uid,
+          title: `T ${uid}`,
+          annotations: {
+            list: [
+              {
+                name: "Scaling changes",
+                datasource: { type: "grafana-clickhouse-datasource", uid: "fleetscope-clickhouse" },
+                enable: true,
+                target: { refId: "Anno", rawSql: sql, editorType: "sql", format: 0 },
+              },
+            ],
+          },
+        }),
+      ),
+    );
+    return checkDashboards({ dir, connection: undefined, snippets });
+  }
+
+  it("QA-CAP-01: an annotation query on the Capacity dashboard must be a copy too", async () => {
+    const edited = await runAnnotation(
+      "fleetscope-capacity",
+      "SELECT count() AS n FROM sessions FINAL",
+    );
+    expect(edited.files[0]?.problems.map((p) => p.message).join("\n")).toContain(
+      "not a copy of any",
+    );
+    const exact = await runAnnotation("fleetscope-capacity", "SELECT count() AS n FROM sessions");
+    expect(exact.files[0]?.problems.filter((p) => /copy|block/.test(p.message))).toEqual([]);
+    // a marked annotation is compared with its block
+    const marked = await runAnnotation(
+      "fleetscope-capacity",
+      "-- snippet: capacity-demo\nSELECT count() AS n FROM sessions FINAL",
+    );
+    expect(marked.files[0]?.problems.map((p) => p.message).join("\n")).toContain(
+      "is not the README block",
+    );
+    // elsewhere an unmarked annotation is free
+    const free = await runAnnotation("other", "SELECT 1 AS n");
+    expect(free.files[0]?.problems.filter((p) => /copy|block/.test(p.message))).toEqual([]);
+  });
+
   it("on another dashboard a marked query is compared, an unmarked one is not", async () => {
     const free = await run("other", "SELECT 1 AS n");
     expect(free.files[0]?.problems.filter((p) => /copy|block/.test(p.message))).toEqual([]);
