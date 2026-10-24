@@ -859,7 +859,10 @@ merges) and `system.asynchronous_metric_log` (one row per metric per second). Th
 
 #### Load sent vs written (`capacity-load`)
 
-Per minute. `rows_sent` counts the rows of the four append-only tables (`actions`, `resource_samples`,
+Per minute, **zero-filled over the selected range**: a minute with no events and no writes is a row
+of three zeros (`ORDER BY time WITH FILL`, `TO` is exclusive, so the minute that contains the end of
+the range is the last one). An idle minute is a true 0 here, unlike the utilization and limit
+snippets below, where a missing minute is NULL ("no data"). `rows_sent` counts the rows of the four append-only tables (`actions`, `resource_samples`,
 `network_requests`, `issues`) by their `ts`; `rows_written` sums the `rows` of every `NewPart` of those
 same four tables in this database; `sessions_started` counts sessions by `started_at`. Columns:
 `time, rows_sent, rows_written, sessions_started`.
@@ -947,7 +950,7 @@ FROM
     GROUP BY 1
 )
 GROUP BY time
-ORDER BY time
+ORDER BY time WITH FILL FROM toStartOfMinute($__fromTime) TO $__toTime STEP 60
 ```
 
 #### Memory and CPU against the limits (`capacity-utilization`)

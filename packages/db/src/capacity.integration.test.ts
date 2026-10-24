@@ -168,6 +168,39 @@ describe("the capacity snippets", () => {
       },
     );
 
+    it("capacity-load is zero-filled: every minute of an idle range is a row of three zeros", async (task) => {
+      if (!partLogExists) return task.skip("system.part_log does not exist on this ClickHouse");
+      // an hour in the past that nothing wrote to, ending on a minute boundary: 5 minutes, 5 rows
+      const from = Math.floor(Date.now() / MIN) * MIN - 3 * 60 * MIN;
+      const { rows } = await run<Record<string, string | number>>("capacity-load", {
+        from,
+        to: from + 5 * MIN,
+      });
+      // (JSON format sends 64-bit counts as strings and the filled zeros as numbers: compare as numbers)
+      expect(
+        rows.map((r) => ({
+          ...r,
+          rows_sent: Number(r.rows_sent),
+          rows_written: Number(r.rows_written),
+          sessions_started: Number(r.sessions_started),
+        })),
+      ).toEqual(
+        [0, 1, 2, 3, 4].map((i) => ({
+          time: iso(from + i * MIN),
+          rows_sent: 0,
+          rows_written: 0,
+          sessions_started: 0,
+        })),
+      );
+      // a start inside a minute is snapped to it, and the end is exclusive
+      const part = await run("capacity-load", { from: from + 30_000, to: from + 2 * MIN + 30_000 });
+      expect(part.rows.map((r) => (r as { time: string }).time)).toEqual([
+        iso(from),
+        iso(from + MIN),
+        iso(from + 2 * MIN),
+      ]);
+    });
+
     it("capacity-utilization shows this server: a short replica name, memory in use, and a limit that is NULL or positive", async () => {
       const { rows } = await run<{
         replica: string;
