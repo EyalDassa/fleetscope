@@ -2390,7 +2390,7 @@
                 "value": [
                   {
                     "title": "Open session",
-                    "url": "/d/fleetscope-session?var-session=${__data.fields.session_id}&from=${__data.fields.from_ms}&to=${__data.fields.to_ms}",
+                    "url": "/d/fleetscope-session?var-session=${__data.fields.session_id:percentencode}&from=${__data.fields.from_ms}&to=${__data.fields.to_ms}",
                     "targetBlank": false
                   }
                 ]
@@ -2416,7 +2416,7 @@
                 "value": [
                   {
                     "title": "Open session",
-                    "url": "/d/fleetscope-session?var-session=${__data.fields.session_id}&from=${__data.fields.from_ms}&to=${__data.fields.to_ms}",
+                    "url": "/d/fleetscope-session?var-session=${__data.fields.session_id:percentencode}&from=${__data.fields.from_ms}&to=${__data.fields.to_ms}",
                     "targetBlank": false
                   }
                 ]
@@ -2631,12 +2631,12 @@
                 "value": [
                   {
                     "title": "Latest session with this cause",
-                    "url": "/d/fleetscope-session?var-session=${__data.fields.session_id}&from=${__data.fields.from_ms}&to=${__data.fields.to_ms}",
+                    "url": "/d/fleetscope-session?var-session=${__data.fields.session_id:percentencode}&from=${__data.fields.from_ms}&to=${__data.fields.to_ms}",
                     "targetBlank": false
                   },
                   {
                     "title": "Failed and blocked sessions in range",
-                    "url": "/d/fleetscope-sessions?${__url_time_range}&${engine:queryparam}&${source:queryparam}&var-status=failed&var-status=blocked&var-cause=${__data.fields.cause}",
+                    "url": "/d/fleetscope-sessions?${__url_time_range}&${engine:queryparam}&${source:queryparam}&var-status=failed&var-status=blocked&var-cause=${__data.fields.cause:percentencode}",
                     "targetBlank": false
                   }
                 ]

@@ -165,8 +165,8 @@
           "type": "grafana-clickhouse-datasource",
           "uid": "fleetscope-clickhouse"
         },
-        "query": "SELECT DISTINCT agent_id FROM sessions FINAL WHERE $__timeFilter(started_at) ORDER BY agent_id",
-        "definition": "SELECT DISTINCT agent_id FROM sessions FINAL WHERE $__timeFilter(started_at) ORDER BY agent_id",
+        "query": "SELECT DISTINCT agent_id FROM sessions FINAL WHERE started_at <= $__toTime AND (ended_at IS NULL OR ended_at >= $__fromTime) ORDER BY agent_id",
+        "definition": "SELECT DISTINCT agent_id FROM sessions FINAL WHERE started_at <= $__toTime AND (ended_at IS NULL OR ended_at >= $__fromTime) ORDER BY agent_id",
         "multi": true,
         "includeAll": true,
         "current": {
@@ -190,8 +190,8 @@
           "type": "grafana-clickhouse-datasource",
           "uid": "fleetscope-clickhouse"
         },
-        "query": "SELECT DISTINCT scenario FROM sessions FINAL WHERE $__timeFilter(started_at) ORDER BY scenario",
-        "definition": "SELECT DISTINCT scenario FROM sessions FINAL WHERE $__timeFilter(started_at) ORDER BY scenario",
+        "query": "SELECT DISTINCT scenario FROM sessions FINAL WHERE started_at <= $__toTime AND (ended_at IS NULL OR ended_at >= $__fromTime) ORDER BY scenario",
+        "definition": "SELECT DISTINCT scenario FROM sessions FINAL WHERE started_at <= $__toTime AND (ended_at IS NULL OR ended_at >= $__fromTime) ORDER BY scenario",
         "multi": true,
         "includeAll": true,
         "current": {
@@ -369,7 +369,7 @@
                 "value": [
                   {
                     "title": "Open session",
-                    "url": "/d/fleetscope-session?var-session=${__data.fields.session_id}&from=${__data.fields.from_ms}&to=${__data.fields.to_ms}",
+                    "url": "/d/fleetscope-session?var-session=${__data.fields.session_id:percentencode}&from=${__data.fields.from_ms}&to=${__data.fields.to_ms}",
                     "targetBlank": false
                   }
                 ]
@@ -395,7 +395,7 @@
                 "value": [
                   {
                     "title": "Open session",
-                    "url": "/d/fleetscope-session?var-session=${__data.fields.session_id}&from=${__data.fields.from_ms}&to=${__data.fields.to_ms}",
+                    "url": "/d/fleetscope-session?var-session=${__data.fields.session_id:percentencode}&from=${__data.fields.from_ms}&to=${__data.fields.to_ms}",
                     "targetBlank": false
                   }
                 ]
