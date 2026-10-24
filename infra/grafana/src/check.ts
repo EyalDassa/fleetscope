@@ -92,11 +92,16 @@ function optionsOf(def: VariableDefinition): string[] {
   }
 }
 
-/** The state of one variable for one mode ("default": what the dashboard opens with, "filtered": one value). */
+/**
+ * The state of one variable for one mode ("default": what the dashboard opens with, "filtered": one
+ * value, so the filter branches such as `$__conditionalAll(cause = ${cause}, $cause)` run too).
+ * `sessionId` is the newest real session, for the Session dashboard's `session` text box.
+ */
 export function makeVariableState(
   def: VariableDefinition,
   options: string[],
   mode: VariableMode,
+  sessionId?: string,
 ): VariableState | undefined {
   const base = { name: def.name, allValue: def.allValue, options };
   if (def.type === "constant") {
@@ -109,11 +114,15 @@ export function makeVariableState(
     };
   }
   if (def.type === "textbox") {
+    // A text box starts empty, so by default its filter is off. In the filtered mode it gets a value
+    // (R-M2-13): the newest real session id for `session`, a placeholder for the rest, such as `cause`.
+    const preset = def.current[0] || def.queryText;
+    const filtered = def.name === "session" && sessionId ? sessionId : PLACEHOLDER_VALUE;
     return {
       ...base,
       multi: false,
       all: false,
-      selected: [def.current[0] ?? def.queryText],
+      selected: [mode === "filtered" && !preset ? filtered : preset],
       options: [],
     };
   }
@@ -244,6 +253,30 @@ async function checkDashboardQueries(
     if (state) defaultStates.set(def.name, state);
   }
 
+  // The Session dashboard's `session` text box is empty by default, so without this every query
+  // there would run on no data. Use the newest session in the database (R-M2-13).
+  let sessionId: string | undefined;
+  if (definitions.some((def) => def.type === "textbox" && def.name === "session")) {
+    let why = "the sessions table is empty (pnpm db:seed)";
+    try {
+      const latest = await runQuery(
+        connection,
+        "SELECT session_id FROM sessions FINAL ORDER BY started_at DESC LIMIT 1",
+        fetchImpl,
+      );
+      const first = latest.rows[0]?.[0];
+      sessionId = first === undefined ? undefined : String(first);
+    } catch (error) {
+      why = clickHouseMessage(error, connection);
+    }
+    if (sessionId === undefined) {
+      report.warnings.push({
+        where: 'variable "session"',
+        message: `no real session id was found (${why}), so the per-session queries run with a placeholder id`,
+      });
+    }
+  }
+
   // Pass 2: every panel and annotation query, with the variables in each mode.
   for (const item of queries) {
     if (item.kind === "variable") continue;
@@ -257,7 +290,7 @@ async function checkDashboardQueries(
     for (const mode of ["default", "filtered"] as const) {
       const states = new Map<string, VariableState>();
       for (const def of definitions) {
-        const state = makeVariableState(def, optionsByName.get(def.name) ?? [], mode);
+        const state = makeVariableState(def, optionsByName.get(def.name) ?? [], mode, sessionId);
         if (state) states.set(def.name, state);
       }
       let sql: string;
