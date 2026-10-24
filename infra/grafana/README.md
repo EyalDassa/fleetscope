@@ -99,7 +99,7 @@ For every `dashboards/*.json` it:
 1. checks the JSON parses, has a `uid` and `title`, and that UIDs and titles are unique;
 2. checks every panel, query variable and annotation uses data source UID `fleetscope-clickhouse`
    (or Grafana's built-in `-- Grafana --`, and text panels), and that panel ids are unique;
-2a. **panels that read another panel's query** (Grafana's `-- Dashboard --` data source, used by the
+3. **panels that read another panel's query** (Grafana's `-- Dashboard --` data source, used by the
    Overview's single-number panels and two Session panels, so one summary query feeds many panels):
    the `panelId` must exist in the same dashboard, must not be the panel itself, and must be a panel
    that holds ClickHouse SQL of its own (not another reader). That source query is run like any other.
@@ -108,11 +108,18 @@ For every `dashboards/*.json` it:
    counting `displayName` overrides (a panel can select `✓ Healthy` for the column `healthy`); a list
    such as `/^(a|b|c)$/` must find every name. A panel with transformations is skipped with a warning,
    because transformations can rename or drop fields;
-3. checks links like `/d/<uid>` point at a dashboard in the folder;
-4. applies the dashboard rules of `design/DESIGN.md` section 9: only palette colours, `noValue` on
+4. **every copy of `session-facts` is the README's.** The block ```` ```sql name=session-facts ```` in
+   `packages/db/README.md` defines a session's display status, cause and cost. Panels paste it as
+   `WITH facts AS ( ... )`; each pasted copy must equal the README block (comments, indentation and
+   the spacing around `( ) ,` are ignored). The one allowed difference: on the Session dashboard
+   `picked` selects one session, so its `WHERE` may be a `session_id = ...${session...}...` condition.
+   A mismatch names the panel and shows the first difference, README side and panel side. The check
+   stops if the README block cannot be found, so the rule cannot be skipped by accident;
+5. checks links like `/d/<uid>` point at a dashboard in the folder;
+6. applies the dashboard rules of `design/DESIGN.md` section 9: only palette colours, `noValue` on
    every stat and table, `spanNulls: false` plus the three engine overrides on every time series,
-   no `ifNull(x, 0)` / `coalesce(x, 0)` in SQL;
-5. **executes every SQL query** against ClickHouse, after expanding it the way Grafana does.
+   no `ifNull(x, 0)` / `coalesce(x, 0)` in SQL, and no `SETTINGS` clause the read-only user may not use;
+7. **executes every SQL query** against ClickHouse, after expanding it the way Grafana does.
 
 On failure it prints the dashboard, the panel title, the ClickHouse error and the SQL that was sent,
 and (in GitHub Actions) an annotation on the dashboard file. With an empty `dashboards/` folder it passes.

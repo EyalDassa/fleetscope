@@ -29,6 +29,7 @@ import {
 } from "./interpolate";
 import { formatInterval } from "./macros";
 import { unmatchedFieldReferences } from "./panel-fields";
+import { sessionFactsProblems } from "./session-facts";
 import { panelIntervalMs, parseIntervalMs, resolveTimeRange, type TimeRange } from "./time";
 
 export interface CheckOptions {
@@ -39,6 +40,11 @@ export interface CheckOptions {
   fetchImpl?: Fetch;
   /** Report links to dashboards that are not in the folder as warnings, not problems. */
   allowDanglingLinks?: boolean;
+  /**
+   * The `session-facts` block of packages/db/README.md. When given, every copy of it in a dashboard's
+   * SQL must equal it (R-M2-05). The CLI always passes it; a test may leave it out.
+   */
+  sessionFacts?: string;
 }
 
 export interface QueryRun {
@@ -343,6 +349,15 @@ export async function checkDashboards(options: CheckOptions): Promise<CheckRepor
     report.warnings.push(...extracted.warnings);
     for (const query of extracted.queries) {
       report.problems.push(...sqlRuleProblems(query.sql, query.where));
+      if (options.sessionFacts !== undefined) {
+        for (const found of sessionFactsProblems(query.sql, options.sessionFacts, dashboard.uid)) {
+          report.problems.push({
+            where: query.where,
+            message: found.message,
+            detail: found.detail,
+          });
+        }
+      }
     }
     if (options.connection) {
       await checkDashboardQueries(

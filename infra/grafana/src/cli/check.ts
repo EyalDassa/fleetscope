@@ -8,12 +8,14 @@
 // output says so. --static-only skips ClickHouse.
 // --allow-dangling-links turns "links to a dashboard that is not in the folder" into a warning, for
 // the time while the three dashboards are still being written. CI never passes it.
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { type CheckReport, checkDashboards, type FileReport } from "../check";
 import type { ClickHouseConnection } from "../clickhouse-http";
 import { connectionFromEnv } from "../connection";
 import type { Problem } from "../dashboards";
 import { complain, say } from "../out";
+import { readSessionFacts } from "../session-facts";
 
 interface Args {
   dir: string;
@@ -22,6 +24,8 @@ interface Args {
   verbose: boolean;
   allowDanglingLinks: boolean;
 }
+
+const README_PATH = fileURLToPath(new URL("../../../../packages/db/README.md", import.meta.url));
 
 const DEFAULT_DIR = fileURLToPath(new URL("../../dashboards", import.meta.url));
 
@@ -109,10 +113,26 @@ async function main(): Promise<number> {
     say(`running every query against ${described.description}`);
   }
 
+  // The one definition of a session's status, cause and cost. Not finding it must stop the check, or
+  // CI would silently skip the rule.
+  let readme: string;
+  try {
+    readme = readFileSync(README_PATH, "utf8");
+  } catch (error) {
+    throw new Error(`cannot read ${README_PATH}: ${(error as Error).message}`);
+  }
+  const sessionFacts = readSessionFacts(readme);
+  if (sessionFacts === undefined) {
+    throw new Error(
+      "packages/db/README.md has no ```sql name=session-facts block, so the dashboards' copies cannot be compared",
+    );
+  }
+
   const report = await checkDashboards({
     dir: args.dir,
     connection,
     allowDanglingLinks: args.allowDanglingLinks,
+    sessionFacts,
   });
   if (report.files.length === 0) {
     say(`no dashboards in ${args.dir}: nothing to check`);
