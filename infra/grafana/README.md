@@ -460,7 +460,8 @@ has passed. That is the comparison working, not a loss.
 
 **Cost note.** The capacity group queries ClickHouse every minute, around the clock. A ClickHouse Cloud service with
 idling switched on is kept awake by that, which costs credit when the fleet is stopped. Check the service's idle setting
-(Settings > Scaling); with idling on, lengthen the group `interval` in `capacity.json` or pause the group with a silence.
+(Settings > Scaling); with idling on, lengthen the group `interval` in `capacity.json`, or set `isPaused: true` on its rules and push. A silence only mutes the
+emails; the rules keep querying, so the service still cannot idle.
 
 **Verified** (2026-10-25) on a throwaway Grafana 13.2.4 with the ClickHouse and Infinity plugins, the local ClickHouse and the
 real billing API:
