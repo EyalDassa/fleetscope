@@ -12,7 +12,12 @@ import type { IssueKind } from "@fleetscope/schema";
  *  http_5xx           ... answered a server error (500 and up)
  *  captcha            the page contains [data-testid=captcha]
  *  js_error           the page script threw something other than a missing API
- *  unsupported_api    the page used an API the engine does not have ("X is not defined")
+ *  unsupported_api    the page used a Web API the engine does not have ("X is not defined", or a
+ *                     TypeError naming a known API such as IntersectionObserver or crypto.subtle).
+ *                     Also raises an `unsupported_api` issue.
+ *  unsupported_feature the engine refused a Playwright/CDP feature the action needs (screenshot,
+ *                     viewport emulation, a CDP method that is "not found"/-32601). The engine's
+ *                     limit, not the page's; the message says what was refused. No issue.
  *  browser_closed     the page, context or browser closed, disconnected or crashed during the action
  *  unknown            anything else (the message is in the thrown error)
  */
@@ -25,6 +30,7 @@ export const ERROR_CODES = [
   "captcha",
   "js_error",
   "unsupported_api",
+  "unsupported_feature",
   "browser_closed",
   "unknown",
 ] as const;
@@ -40,6 +46,7 @@ export const ISSUE_FOR_CODE: Readonly<Record<ErrorCode, IssueKind | null>> = {
   captcha: "captcha",
   js_error: null,
   unsupported_api: "unsupported_api",
+  unsupported_feature: null,
   browser_closed: "crash",
   unknown: null,
 };

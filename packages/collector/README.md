@@ -59,7 +59,8 @@ and repaired so a lone surrogate (half an emoji) can never reach ClickHouse, whi
 | `http_403` | a page the action loaded (a goto, or a click that navigated) answered 403 | `blocked` |
 | `http_5xx` | ... answered a server error | `nav_error` |
 | `captcha` | the page has `[data-testid=captcha]` | `captcha` |
-| `unsupported_api` | the page used an API the engine lacks (`ReferenceError`, "X is not defined") | `unsupported_api` |
+| `unsupported_api` | the page used a Web API the engine lacks: a `ReferenceError` / "X is not defined", or a `TypeError` that names a known API (see below) | `unsupported_api` |
+| `unsupported_feature` | the **engine refused a Playwright/CDP feature** the action needs: `Protocol error (Domain.method): ... wasn't found` (JSON-RPC -32601), "not implemented", "not supported". The engine's limit, not the page's; the message says what was refused | none |
 | `js_error` | `eval` threw something else | none |
 | `browser_closed` | the page, context or browser closed or crashed during the action | `crash`, unless the runner called `session.beginShutdown()` first (it closed the browser itself) |
 | `unknown` | anything else; the thrown error keeps the original as `cause` | none |
@@ -70,8 +71,14 @@ A 403 or a captcha throws `BlockedError`; the runner ends such a session `blocke
 an `error_code`. Together they answer the question. `issue` events are for problems with the site or
 the engine (blocked, captcha, crash, timeout, navigation, unsupported API), so a session can fail
 without an issue, for example when a selector is missing. Do not read only `issues` for failures.
-TypeError-shaped missing APIs (`crypto.subtle` undefined) are **not** `unsupported_api` yet; that
-waits for M3, when Lightpanda shows the real errors.
+
+**Missing Web API vs unsupported feature.** `unsupported_api` is about the *page*: its script used
+`IntersectionObserver`, `crypto.subtle`, ... and the engine does not have it. TypeError-shaped ones
+(`IntersectionObserver is not a constructor`, `Cannot read properties of undefined (reading
+'digest')`) count only when they name an API from the fixed list in `src/errors.ts`
+(`KNOWN_WEB_APIS`, plus the `crypto.subtle` method names), never by a broad "is not a function" rule.
+`unsupported_feature` is about the *action*: a screenshot, viewport emulation or another CDP call the
+engine does not implement. It is never filed as `unknown`.
 
 ## Delivery
 
