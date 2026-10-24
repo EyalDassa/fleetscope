@@ -11,6 +11,7 @@ import {
   INFINITY_PLUGIN_VERSION,
   withConstantVariable,
 } from "./billing";
+import { loadDashboardFiles } from "./dashboards";
 import { fakeGrafana } from "./fake-grafana";
 import type { JsonObject } from "./json";
 import { buildDataSource, GrafanaClient, type PushOptions, pushToGrafana } from "./push";
@@ -249,5 +250,63 @@ describe("pushToGrafana: billing and ch_org", () => {
     const t = run({ chOrg: undefined });
     const result = await t.result();
     expect(result.warnings.join(" ")).toContain("CLICKHOUSE_CLOUD_ORG_ID is not set");
+  });
+});
+
+describe("the committed Capacity dashboard and ch_org", () => {
+  const files = loadDashboardFiles(fileURLToPath(new URL("../dashboards", import.meta.url))).filter(
+    (f) => f.json?.uid === "fleetscope-capacity",
+  );
+  const variable = (json: JsonObject): JsonObject | undefined =>
+    (((json.templating as JsonObject).list as JsonObject[]) ?? []).find((v) => v.name === "ch_org");
+
+  function push(chOrg: string | undefined) {
+    const grafana = fakeGrafana();
+    const lines: string[] = [];
+    const options: PushOptions = {
+      client: new GrafanaClient("https://stack.grafana.net", TOKEN, grafana.fetchImpl),
+      dataSource: buildDataSource(
+        {
+          CLICKHOUSE_URL: "https://abc.eu-central-1.aws.clickhouse.cloud:8443",
+          CLICKHOUSE_GRAFANA_USER: "grafana_ro",
+          CLICKHOUSE_GRAFANA_PASSWORD: testPassword(),
+        },
+        false,
+      ),
+      dashboardFiles: files,
+      billing: buildBillingDataSource({}),
+      chOrg,
+      apiUrl: undefined,
+      grafanaIsLocal: false,
+      dryRun: false,
+      canRead: true,
+      skipHealthCheck: true,
+      log: (line) => lines.push(line),
+    };
+    return { grafana, lines, run: () => pushToGrafana(options) };
+  }
+
+  it("is in the repository with a placeholder ch_org", () => {
+    expect(files).toHaveLength(1);
+    expect(variable((files[0] as { json: JsonObject }).json)?.query).toBe("set-by-grafana-push");
+  });
+
+  it("the push overwrites the placeholder with CLICKHOUSE_CLOUD_ORG_ID (query, current and options)", async () => {
+    const t = push(ORG);
+    await t.run();
+    const stored = variable(t.grafana.state.dashboards.get("fleetscope-capacity") as JsonObject);
+    expect(stored).toMatchObject({
+      query: ORG,
+      current: { value: ORG, text: ORG },
+      options: [{ value: ORG }],
+    });
+  });
+
+  it("without the env the placeholder stays and the push says so", async () => {
+    const t = push(undefined);
+    await t.run();
+    const stored = variable(t.grafana.state.dashboards.get("fleetscope-capacity") as JsonObject);
+    expect(stored?.query).toBe("set-by-grafana-push");
+    expect(t.lines.join("\n")).toContain("CLICKHOUSE_CLOUD_ORG_ID is not set");
   });
 });
