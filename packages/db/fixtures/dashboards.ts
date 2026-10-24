@@ -53,6 +53,8 @@ export interface Filters {
   agent?: string[];
   scenario?: string[];
   cause?: string;
+  /** The Sessions dashboard's "Routed" variable: `all` (default) or `routed` (routed_from is set). */
+  routed?: "all" | "routed";
   session?: string;
 }
 
@@ -160,6 +162,7 @@ function variables(filters: Filters): Map<string, VariableState> {
     ["agent", state("agent", [], true, filters.agent)],
     ["scenario", state("scenario", [], true, filters.scenario)],
     ["cause", text("cause", filters.cause)],
+    ["routed", text("routed", filters.routed ?? "all")],
     ["session", text("session", filters.session)],
     ["api_url", text("api_url", "http://localhost:4000")],
   ]);
