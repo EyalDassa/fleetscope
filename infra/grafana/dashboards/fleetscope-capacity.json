@@ -1,12 +1,12 @@
 {
   "uid": "fleetscope-capacity",
   "title": "Fleetscope / Capacity",
-  "description": "Is ClickHouse keeping up with the fleet? Rows sent vs rows written, memory and CPU against the limits, scaling events and the ClickHouse Cloud trial credits.",
+  "description": "Is ClickHouse keeping up with the fleet? Rows sent vs rows written, memory and CPU against the limits, scaling events and the ClickHouse Cloud trial credits. Times are UTC (billing days are UTC).",
   "tags": [
     "fleetscope"
   ],
   "style": "dark",
-  "timezone": "browser",
+  "timezone": "utc",
   "editable": true,
   "graphTooltip": 1,
   "refresh": "1m",
@@ -97,7 +97,7 @@
       "id": 2,
       "type": "timeseries",
       "title": "Rows sent vs rows written per minute ↗",
-      "description": "Rows the fleet sent (green, counted in actions, resource_samples, network_requests and issues) and rows ClickHouse wrote for them (blue, NewPart rows of system.part_log), per minute, all sources (system tables know no source or engine filter). Sent is placed by the event time and written by the time ClickHouse received it, so per minute the lines follow each other but do not match exactly; over an hour they do. The lines follow each other; in a single minute they can differ at the edges. A gap means no rows in that minute. Click to open Sessions with this range.",
+      "description": "Rows the fleet sent (green, counted in actions, resource_samples, network_requests and issues) and rows ClickHouse wrote for them (blue, NewPart rows of system.part_log), per minute, all sources (system tables know no source or engine filter). Sent is placed by the event time and written by the time ClickHouse received it, so per minute the lines follow each other but do not match exactly; over an hour they do. The lines follow each other; in a single minute they can differ at the edges. A minute with no rows is 0. Click to open Sessions with this range.",
       "gridPos": {
         "x": 0,
         "y": 1,
@@ -118,7 +118,7 @@
           "editorType": "sql",
           "format": 0,
           "queryType": "timeseries",
-          "rawSql": "-- Rows the fleet sent vs rows ClickHouse wrote (system.part_log), and sessions started, per minute; all sources.\nSELECT\n    minute AS time,\n    sum(rows_sent) AS rows_sent,\n    sum(rows_written) AS rows_written,\n    sum(sessions_started) AS sessions_started\nFROM\n(\n    SELECT toStartOfMinute(ts) AS minute, count() AS rows_sent, toUInt64(0) AS rows_written, toUInt64(0) AS sessions_started\n    FROM actions\n    WHERE ts >= toStartOfMinute($__fromTime) AND ts <= $__toTime\n    GROUP BY minute\n    UNION ALL\n    SELECT toStartOfMinute(ts), count(), 0, 0\n    FROM resource_samples\n    WHERE ts >= toStartOfMinute($__fromTime) AND ts <= $__toTime\n    GROUP BY 1\n    UNION ALL\n    SELECT toStartOfMinute(ts), count(), 0, 0\n    FROM network_requests\n    WHERE ts >= toStartOfMinute($__fromTime) AND ts <= $__toTime\n    GROUP BY 1\n    UNION ALL\n    SELECT toStartOfMinute(ts), count(), 0, 0\n    FROM issues\n    WHERE ts >= toStartOfMinute($__fromTime) AND ts <= $__toTime\n    GROUP BY 1\n    UNION ALL\n    SELECT toStartOfMinute(started_at), 0, 0, count()\n    FROM sessions FINAL\n    WHERE started_at >= toStartOfMinute($__fromTime) AND started_at <= $__toTime\n    GROUP BY 1\n    UNION ALL\n    SELECT toDateTime(toStartOfMinute(event_time), 'UTC'), 0, sum(rows), 0\n    FROM system.part_log\n    WHERE event_type = 'NewPart'\n      AND database = currentDatabase()\n      AND error = 0\n      AND `table` IN ('actions', 'resource_samples', 'network_requests', 'issues')\n      AND event_time >= toStartOfMinute($__fromTime) AND event_time <= $__toTime\n    GROUP BY 1\n)\nGROUP BY time\nORDER BY time\n",
+          "rawSql": "-- Rows the fleet sent vs rows ClickHouse wrote (system.part_log), and sessions started, per minute; all sources.\nSELECT\n    minute AS time,\n    sum(rows_sent) AS rows_sent,\n    sum(rows_written) AS rows_written,\n    sum(sessions_started) AS sessions_started\nFROM\n(\n    SELECT toStartOfMinute(ts) AS minute, count() AS rows_sent, toUInt64(0) AS rows_written, toUInt64(0) AS sessions_started\n    FROM actions\n    WHERE ts >= toStartOfMinute($__fromTime) AND ts <= $__toTime\n    GROUP BY minute\n    UNION ALL\n    SELECT toStartOfMinute(ts), count(), 0, 0\n    FROM resource_samples\n    WHERE ts >= toStartOfMinute($__fromTime) AND ts <= $__toTime\n    GROUP BY 1\n    UNION ALL\n    SELECT toStartOfMinute(ts), count(), 0, 0\n    FROM network_requests\n    WHERE ts >= toStartOfMinute($__fromTime) AND ts <= $__toTime\n    GROUP BY 1\n    UNION ALL\n    SELECT toStartOfMinute(ts), count(), 0, 0\n    FROM issues\n    WHERE ts >= toStartOfMinute($__fromTime) AND ts <= $__toTime\n    GROUP BY 1\n    UNION ALL\n    SELECT toStartOfMinute(started_at), 0, 0, count()\n    FROM sessions FINAL\n    WHERE started_at >= toStartOfMinute($__fromTime) AND started_at <= $__toTime\n    GROUP BY 1\n    UNION ALL\n    SELECT toDateTime(toStartOfMinute(event_time), 'UTC'), 0, sum(rows), 0\n    FROM system.part_log\n    WHERE event_type = 'NewPart'\n      AND database = currentDatabase()\n      AND error = 0\n      AND `table` IN ('actions', 'resource_samples', 'network_requests', 'issues')\n      AND event_time >= toStartOfMinute($__fromTime) AND event_time <= $__toTime\n    GROUP BY 1\n)\nGROUP BY time\nORDER BY time WITH FILL FROM toStartOfMinute($__fromTime) TO $__toTime STEP 60\n",
           "refId": "A",
           "pluginVersion": "4.23.2"
         }
@@ -147,8 +147,7 @@
             "axisSoftMin": 0,
             "thresholdsStyle": {
               "mode": "off"
-            },
-            "insertNulls": 90000
+            }
           },
           "unit": "locale",
           "decimals": 0,
@@ -259,7 +258,7 @@
       "id": 3,
       "type": "timeseries",
       "title": "Sessions started per minute ↗",
-      "description": "Sessions that started in each minute, real and simulated together (count of sessions FINAL by started_at), all sources. A gap means no session started in that minute. Click to open Sessions with this range.",
+      "description": "Sessions that started in each minute, real and simulated together (count of sessions FINAL by started_at), all sources. A minute with no session is 0. Click to open Sessions with this range.",
       "gridPos": {
         "x": 9,
         "y": 1,
@@ -280,7 +279,7 @@
           "editorType": "sql",
           "format": 0,
           "queryType": "timeseries",
-          "rawSql": "-- Rows the fleet sent vs rows ClickHouse wrote (system.part_log), and sessions started, per minute; all sources.\nSELECT\n    minute AS time,\n    sum(rows_sent) AS rows_sent,\n    sum(rows_written) AS rows_written,\n    sum(sessions_started) AS sessions_started\nFROM\n(\n    SELECT toStartOfMinute(ts) AS minute, count() AS rows_sent, toUInt64(0) AS rows_written, toUInt64(0) AS sessions_started\n    FROM actions\n    WHERE ts >= toStartOfMinute($__fromTime) AND ts <= $__toTime\n    GROUP BY minute\n    UNION ALL\n    SELECT toStartOfMinute(ts), count(), 0, 0\n    FROM resource_samples\n    WHERE ts >= toStartOfMinute($__fromTime) AND ts <= $__toTime\n    GROUP BY 1\n    UNION ALL\n    SELECT toStartOfMinute(ts), count(), 0, 0\n    FROM network_requests\n    WHERE ts >= toStartOfMinute($__fromTime) AND ts <= $__toTime\n    GROUP BY 1\n    UNION ALL\n    SELECT toStartOfMinute(ts), count(), 0, 0\n    FROM issues\n    WHERE ts >= toStartOfMinute($__fromTime) AND ts <= $__toTime\n    GROUP BY 1\n    UNION ALL\n    SELECT toStartOfMinute(started_at), 0, 0, count()\n    FROM sessions FINAL\n    WHERE started_at >= toStartOfMinute($__fromTime) AND started_at <= $__toTime\n    GROUP BY 1\n    UNION ALL\n    SELECT toDateTime(toStartOfMinute(event_time), 'UTC'), 0, sum(rows), 0\n    FROM system.part_log\n    WHERE event_type = 'NewPart'\n      AND database = currentDatabase()\n      AND error = 0\n      AND `table` IN ('actions', 'resource_samples', 'network_requests', 'issues')\n      AND event_time >= toStartOfMinute($__fromTime) AND event_time <= $__toTime\n    GROUP BY 1\n)\nGROUP BY time\nORDER BY time\n",
+          "rawSql": "-- Rows the fleet sent vs rows ClickHouse wrote (system.part_log), and sessions started, per minute; all sources.\nSELECT\n    minute AS time,\n    sum(rows_sent) AS rows_sent,\n    sum(rows_written) AS rows_written,\n    sum(sessions_started) AS sessions_started\nFROM\n(\n    SELECT toStartOfMinute(ts) AS minute, count() AS rows_sent, toUInt64(0) AS rows_written, toUInt64(0) AS sessions_started\n    FROM actions\n    WHERE ts >= toStartOfMinute($__fromTime) AND ts <= $__toTime\n    GROUP BY minute\n    UNION ALL\n    SELECT toStartOfMinute(ts), count(), 0, 0\n    FROM resource_samples\n    WHERE ts >= toStartOfMinute($__fromTime) AND ts <= $__toTime\n    GROUP BY 1\n    UNION ALL\n    SELECT toStartOfMinute(ts), count(), 0, 0\n    FROM network_requests\n    WHERE ts >= toStartOfMinute($__fromTime) AND ts <= $__toTime\n    GROUP BY 1\n    UNION ALL\n    SELECT toStartOfMinute(ts), count(), 0, 0\n    FROM issues\n    WHERE ts >= toStartOfMinute($__fromTime) AND ts <= $__toTime\n    GROUP BY 1\n    UNION ALL\n    SELECT toStartOfMinute(started_at), 0, 0, count()\n    FROM sessions FINAL\n    WHERE started_at >= toStartOfMinute($__fromTime) AND started_at <= $__toTime\n    GROUP BY 1\n    UNION ALL\n    SELECT toDateTime(toStartOfMinute(event_time), 'UTC'), 0, sum(rows), 0\n    FROM system.part_log\n    WHERE event_type = 'NewPart'\n      AND database = currentDatabase()\n      AND error = 0\n      AND `table` IN ('actions', 'resource_samples', 'network_requests', 'issues')\n      AND event_time >= toStartOfMinute($__fromTime) AND event_time <= $__toTime\n    GROUP BY 1\n)\nGROUP BY time\nORDER BY time WITH FILL FROM toStartOfMinute($__fromTime) TO $__toTime STEP 60\n",
           "refId": "A",
           "pluginVersion": "4.23.2"
         }
@@ -309,8 +308,7 @@
             "axisSoftMin": 0,
             "thresholdsStyle": {
               "mode": "off"
-            },
-            "insertNulls": 90000
+            }
           },
           "unit": "locale",
           "decimals": 0,

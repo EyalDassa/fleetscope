@@ -98,7 +98,7 @@ Other colours (dark / light): gauge cells in tables use the approved neutral `--
 
 ### 4.1 Shared settings
 
-- **Navigation:** tag all three dashboards `fleetscope`. Add dashboard links by tag that keep the time range and the variables. Set `graphTooltip: 1` (shared crosshair) and timezone browser.
+- **Navigation:** tag all three dashboards `fleetscope`. Add dashboard links by tag that keep the time range and the variables. Set `graphTooltip: 1` (shared crosshair) and timezone browser (Capacity is UTC, see 4.5).
 - **Time series:** line width 2, `spanNulls: false`, fill 0 (15 on session charts), points `auto` (Grafana draws a point only where a line can't, so a single sparse bucket stays visible; always, size 4, on session charts), legend as a list at the bottom, tooltip with all series sorted descending, min interval 1m.
 - **Stats:** graph mode none (no sparklines), text mode value, KPI value size 22. Verdicts use auto size, so they are the largest text on the page. A string stat needs Value options > Fields set to its column, because "Numeric fields" hides strings.
 - **Descriptions:** every panel has a one-sentence description with its definition from section 3. People see it under (i), and Grafana Assistant can read it.
@@ -229,6 +229,7 @@ Is ClickHouse keeping up with the fleet, and how close is it to its limits? Rang
 - **Honest data.** The load numbers come from `system.part_log` (rows ClickHouse wrote) and the fleet's own tables (rows sent), and cover **all sources**: this dashboard has no `source` or `engine` filter, because ClickHouse does not know them (a documented exception to the rule in `packages/db/README.md`; the text panel says so). A stat with nothing to divide prints `—`. A limit the server does not report (a local container has none) is NULL: a gap in the charts, `Not available` in the stats and the state timeline, never 0. Idle minutes have no row, and the charts break the line there (`insertNulls`) instead of joining the neighbours.
 - **Billing needs the API key.** Without the `clickhouse-cloud-api` data source (local, CI) the four billing panels show no data, and their descriptions say so. They are the only panels on another data source. The three stats read the API with the backend (JSONata) parser, so credits left and the run-out date are computed in the query, not in a transformation.
 - **Thresholds on this dashboard** are targets, so besides success rate they are the only places that use status colours: Difference (1% / 5%), Memory % and CPU % (70% / 85%), run-out.
+- **Time zone and annotations.** This dashboard is UTC (`timezone: utc`), because ClickHouse Cloud bills by UTC day; its description says so. The dashed vertical lines of the Scaling changes annotation are Grafana's own marker style and can't be changed: the one exception to "every line is solid".
 - **Links.** The load panels link to Sessions with the same range; utilization and billing are not made of sessions and have no link. Dashboard links by tag, as on the others.
 
 ## 5. Perfetto timeline
