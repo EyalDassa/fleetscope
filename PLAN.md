@@ -241,7 +241,7 @@ Design versions with critiques and `changes.md`, the lead's round notes, `design
 ## 12. Demo script (about 5 minutes)
 1. Overview in Grafana: the fleet live, with real and simulated sessions labeled.
 2. Click the error spike → Sessions filtered → open a failed Lightpanda session → "Open timeline in Perfetto" shows the failing action next to CPU and memory → ask Grafana Assistant why it failed.
-3. Browsers: Lightpanda uses about 1/10 the memory but fails checkout-form; recommend a per-scenario engine choice.
+3. Browsers: Lightpanda uses about 1/20 the memory but never runs Web Workers, so it fails every heavy-page-crawl (checkout-form works); routing by scenario (ADR 0005) sends those pages to headless-shell and the dashboard shows the routed sessions.
 4. Insights: a zombie session wasting $X/day and a memory-leak suspect.
 5. Claude Code with the MCP server answers the same questions on its own.
 6. Engineering tour: repo, CI (including the check that runs every dashboard query), dashboards as code, ADRs on ClickHouse and Grafana.
