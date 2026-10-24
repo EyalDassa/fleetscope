@@ -1,7 +1,15 @@
 import type { SessionTimeline, TimelineSession } from "@fleetscope/db";
 import { ChromeTrace, type TraceEvent } from "@fleetscope/schema";
 import { describe, expect, it } from "vitest";
-import { buildTrace, displayStatus, layoutSlices, ROUNDING_TOLERANCE_MS } from "./build-trace";
+import {
+  buildTrace,
+  displayStatus,
+  inFlight,
+  layoutCapped,
+  layoutSlices,
+  MAX_NETWORK_LANES,
+  ROUNDING_TOLERANCE_MS,
+} from "./build-trace";
 
 const START = Date.UTC(2026, 9, 24, 10, 0, 0);
 
@@ -528,5 +536,307 @@ describe("layoutSlices", () => {
       { lane: 0, end: 105 },
       { lane: 1, end: 150 },
     ]);
+  });
+});
+
+describe("layoutCapped", () => {
+  const items = [
+    { start: 0, end: 100 },
+    { start: 10, end: 100 },
+    { start: 20, end: 100 },
+    { start: 100, end: 150 },
+  ];
+
+  it("gives lanes in the order of the priority, and leaves a slice out when no lane is free", () => {
+    // items 0 and 1 first, then 2 does not fit in two lanes, then 3 is free again
+    expect(layoutCapped(items, [0, 1, 2, 3], 2, 0).map((slot) => slot.lane)).toEqual([0, 1, -1, 0]);
+    // the same slices, but the one that did not fit comes first: now another one is left out
+    expect(layoutCapped(items, [2, 1, 0, 3], 2, 0).map((slot) => slot.lane)).toEqual([-1, 1, 0, 0]);
+  });
+
+  it("does not let a slice that was left out cut anyone's end", () => {
+    const layout = layoutCapped(items, [0, 1, 2, 3], 2, 0);
+    expect(layout.map((slot) => slot.end)).toEqual([100, 100, 100, 150]);
+  });
+
+  it("puts slices into the first lane that has room, also when they come in the wrong order", () => {
+    const layout = layoutCapped(
+      [
+        { start: 100, end: 200 },
+        { start: 0, end: 100 },
+        { start: 50, end: 150 },
+      ],
+      [0, 1, 2],
+      3,
+      0,
+    );
+    // 0 takes lane 0; 1 only touches it, so it joins lane 0 before it; 2 overlaps both
+    expect(layout.map((slot) => slot.lane)).toEqual([0, 0, 1]);
+  });
+
+  it("treats an overlap within the tolerance as rounding and cuts the earlier slice back", () => {
+    const layout = layoutCapped(
+      [
+        { start: 0, end: 101 },
+        { start: 100, end: 150 },
+      ],
+      [0, 1],
+      1,
+      2,
+    );
+    expect(layout).toEqual([
+      { lane: 0, end: 100 },
+      { lane: 0, end: 150 },
+    ]);
+  });
+});
+
+describe("inFlight", () => {
+  it("counts the open intervals at each change, and lets intervals that only touch not add up", () => {
+    expect(
+      inFlight([
+        { start: 0, end: 10 },
+        { start: 5, end: 15 },
+        { start: 10, end: 20 },
+      ]),
+    ).toEqual([
+      { at: 0, count: 1 },
+      { at: 5, count: 2 },
+      { at: 10, count: 2 }, // one ends and one starts at 10
+      { at: 15, count: 1 },
+      { at: 20, count: 0 },
+    ]);
+  });
+
+  it("ignores empty intervals", () => {
+    expect(inFlight([{ start: 3, end: 3 }])).toEqual([]);
+    expect(inFlight([])).toEqual([]);
+  });
+});
+
+describe("a heavy page: many requests in flight at once", () => {
+  // 30 requests that all run from +1000 ms to +5000 ms, like the demo site's /heavy page
+  const heavy = (count = 30) =>
+    timeline({
+      requests: Array.from({ length: count }, (_, i) => ({
+        ts_ms: START + 5000 + i, // finished one ms apart
+        domain: `img${i}.test`,
+        status: 200,
+        bytes: 100,
+        duration_ms: 4000,
+        resource_type: "image",
+      })),
+    });
+  const threadNames = (trace: ReturnType<typeof buildTrace>) =>
+    named(trace.traceEvents, "M")
+      .filter((e) => e.name === "thread_name")
+      .map((e) => String(e.args.name));
+
+  it(`uses at most ${MAX_NETWORK_LANES} network threads, however many requests overlap`, () => {
+    const trace = buildTrace(heavy());
+    expect(threadNames(trace).filter((n) => n.startsWith("network"))).toEqual([
+      "network",
+      "network 2",
+      "network 3",
+      "network 4",
+      "network 5",
+      "network 6",
+    ]);
+    expect(named(trace.traceEvents, "X").filter((e) => e.cat === "network")).toHaveLength(
+      MAX_NETWORK_LANES,
+    );
+  });
+
+  it("says so on the network track, and keeps the real concurrency as a counter", () => {
+    const trace = buildTrace(heavy());
+    const note = named(trace.traceEvents, "i").find((e) => e.name.startsWith("note: "));
+    expect(note).toMatchObject({
+      name: "note: 24 of 30 requests not drawn",
+      tid: 2,
+      ts: 0,
+      args: { requests: 30, drawn: 6, lanes: 6, max_in_flight: 30 },
+    });
+    expect(String(note?.args.message)).toContain('"network in flight"');
+
+    const track = named(trace.traceEvents, "C").filter((e) => e.name === "network");
+    expect(track.every((e) => Object.keys(e.args).join() === "in flight")).toBe(true); // "network in flight"
+    const values = track.map((e) => e.args["in flight"] as number);
+    expect(Math.max(...values)).toBe(30);
+    expect(values.at(-1)).toBe(0); // everything has finished at the end
+    expect(Math.min(...values)).toBeGreaterThanOrEqual(0);
+  });
+
+  it("draws the failed requests first, then the slowest, when they cannot all be drawn", () => {
+    // 10 requests in flight at once: 8 fine and fast (100 ms .. 800 ms), 1 slow, 1 failed and fast
+    const at = (i: number, over: Partial<SessionTimeline["requests"][number]>) => ({
+      ts_ms: START + 2000 + i,
+      domain: `r${i}.test`,
+      status: 200,
+      bytes: 1,
+      duration_ms: 100 * (i + 1),
+      resource_type: "image",
+      ...over,
+    });
+    const requests = [
+      ...Array.from({ length: 8 }, (_, i) => at(i, {})),
+      at(8, { duration_ms: 1900, domain: "slow.test" }),
+      at(9, { duration_ms: 50, domain: "broken.test", status: null }),
+    ];
+    const names = named(buildTrace(timeline({ requests })).traceEvents, "X")
+      .filter((e) => e.cat === "network")
+      .map((e) => e.name)
+      .sort();
+    // 6 lanes: the failed one, the slow one and the four next slowest (r7, r6, r5, r4), no fast ones
+    expect(names).toEqual(
+      [
+        "✕ image broken.test no response",
+        "image slow.test",
+        "image r7.test",
+        "image r6.test",
+        "image r5.test",
+        "image r4.test",
+      ].sort(),
+    );
+  });
+
+  it("records the counts in the metadata", () => {
+    expect(buildTrace(heavy()).metadata.network).toEqual({
+      requests: 30,
+      drawn: 6,
+      not_drawn: 24,
+      lanes: 6,
+      max_in_flight: 30,
+    });
+  });
+
+  it("adds neither the counter nor the note when every request fits", () => {
+    const trace = buildTrace(heavy(6));
+    expect(named(trace.traceEvents, "C").filter((e) => e.name === "network")).toEqual([]);
+    expect(named(trace.traceEvents, "i").some((e) => e.name.startsWith("note: "))).toBe(false);
+    expect(trace.metadata.network).toMatchObject({ requests: 6, drawn: 6, not_drawn: 0 });
+  });
+
+  it("draws a request again once a lane is free", () => {
+    const requests = [
+      ...heavy(8).requests, // 8 at once: 6 drawn, 2 not
+      // one more, long after the others finished
+      {
+        ts_ms: START + 9000,
+        domain: "late.test",
+        status: 200,
+        bytes: 1,
+        duration_ms: 100,
+        resource_type: "script",
+      },
+    ];
+    const trace = buildTrace(timeline({ requests }));
+    const names = named(trace.traceEvents, "X")
+      .filter((e) => e.cat === "network")
+      .map((e) => e.name);
+    expect(names).toContain("script late.test");
+    expect(trace.metadata.network).toMatchObject({ requests: 9, drawn: 7, not_drawn: 2 });
+  });
+
+  it("sorts the tracks actions, network, issues, session with a range for each, all different", () => {
+    const trace = buildTrace(
+      timeline({ ...heavy(), issues: [{ ts_ms: START + 10, kind: "captcha", message: "x" }] }),
+    );
+    const sortIndex = new Map(
+      named(trace.traceEvents, "M")
+        .filter((e) => e.name === "thread_sort_index")
+        .map((e) => [e.tid, e.args.sort_index as number]),
+    );
+    const nameOf = new Map(
+      named(trace.traceEvents, "M")
+        .filter((e) => e.name === "thread_name")
+        .map((e) => [e.tid, String(e.args.name)]),
+    );
+    const order = [...sortIndex.entries()]
+      .sort((a, b) => a[1] - b[1])
+      .map(([tid]) => nameOf.get(tid));
+    expect(order).toEqual([
+      "actions",
+      "network",
+      "network 2",
+      "network 3",
+      "network 4",
+      "network 5",
+      "network 6",
+      "issues",
+      "session",
+    ]);
+    expect(new Set(sortIndex.values()).size).toBe(sortIndex.size);
+  });
+});
+
+describe("events stamped before the session started", () => {
+  const early = () =>
+    buildTrace(
+      timeline({
+        actions: [],
+        requests: [
+          // started 400 ms before the session, finished 100 ms after it began
+          {
+            ts_ms: START + 100,
+            domain: "d.test",
+            status: 200,
+            bytes: 1,
+            duration_ms: 500,
+            resource_type: "document",
+          },
+          // finished before the session began: nothing of it is inside the session
+          {
+            ts_ms: START - 50,
+            domain: "e.test",
+            status: 200,
+            bytes: 1,
+            duration_ms: 100,
+            resource_type: "image",
+          },
+        ],
+        issues: [{ ts_ms: START - 200, kind: "captcha", message: "early" }],
+        samples: [
+          { ts_ms: START - 1000, origin: "container", cpu_pct: 5, mem_mb: 50, js_heap_mb: null },
+          { ts_ms: START + 1000, origin: "container", cpu_pct: 6, mem_mb: 51, js_heap_mb: null },
+        ],
+      }),
+    );
+
+  it("never writes a negative timestamp (Perfetto drops those silently)", () => {
+    const negatives = early().traceEvents.filter((e) => "ts" in e && e.ts < 0);
+    expect(negatives).toEqual([]);
+  });
+
+  it("moves a slice that started early to 0, keeps its end, and records how early it was", () => {
+    const slices = named(early().traceEvents, "X").filter((e) => e.cat === "network");
+    expect(slices.map((e) => [e.name, e.ts, e.dur])).toEqual([
+      ["document d.test", 0, 100_000], // ends at +100 ms as measured
+      ["image e.test", 0, 0], // entirely before the session: a point at 0
+    ]);
+    expect(slices[0]?.args).toMatchObject({ duration_ms: 500, ms_before_session_start: 400 });
+    expect(slices[1]?.args).toMatchObject({ ms_before_session_start: 150 });
+  });
+
+  it("moves an early issue and counter sample to 0 and says so", () => {
+    const trace = early();
+    const issue = named(trace.traceEvents, "i").find((e) => e.cat === "issue");
+    expect(issue).toMatchObject({
+      name: "captcha",
+      ts: 0,
+      args: { message: "early", ms_before_session_start: 200 },
+    });
+    const cpu = named(trace.traceEvents, "C").filter((e) => e.name === "CPU");
+    expect(cpu.map((e) => e.ts)).toEqual([0, 1_000_000]);
+  });
+
+  it("counts the moved events in the metadata, and says 0 when there were none", () => {
+    expect(early().metadata.before_session_start).toEqual({ events: 4, max_ms: 1000 });
+    expect(buildTrace(timeline()).metadata.before_session_start).toEqual({ events: 0, max_ms: 0 });
+  });
+
+  it("leaves events at or after the start exactly as they were", () => {
+    const trace = buildTrace(timeline());
+    for (const e of named(trace.traceEvents, "X"))
+      expect(e.args).not.toHaveProperty("ms_before_session_start");
   });
 });
