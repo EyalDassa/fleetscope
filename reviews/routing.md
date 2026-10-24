@@ -38,3 +38,26 @@ The risky assumptions only show on a real server: (a) `GET /api/user` with a ser
 ## Verdict: request changes
 
 Must fix: RV-RT-01 and RV-RT-02 (both platform, both in the Grafana access model). The routing, schema, db, collector, summary and dashboard parts are approved; with QA-RT-01..03 closed they need no further changes from me.
+
+## Round 2
+
+Reviewed: `b10af52` (platform), `3a78e98` (backend), and `adda8a7`, `ceb2f24`, `53c2c8c` (QA-RT-01..03), plus `infra/grafana/ACCESS-VERIFICATION.md` and the lead's Grafana Cloud `--dry-run` result.
+Checks run here: `pnpm typecheck` green; schema 347/347, grafana-tools 267/267, api 272/272. On the first api run, 5 timing tests (`/healthz` with a slow ClickHouse, the 202 timing) failed while `typecheck` was still loading the machine, and they passed when run again. That looks like flakiness under load, not this branch (unsure).
+
+| ID | Status | Note |
+|---|---|---|
+| RV-RT-01 | **resolved (accepted pushback on the method)** | Re-saving the same body creates no new version on Grafana 13.2.4, so my one-save fix would not have worked. The two saves (`(adopting)` copy, then the real body) and the check against version history are justified by section 6 of ACCESS-VERIFICATION.md: refused, then pulled, then adopted, then an ordinary change pushed without `--force` (version 7). Team-folder dashboards are not adopted, and there are tests for adopted-once and for history over meta. If the second save fails, the dashboard keeps the `(adopting)` title until the next push, which repairs it: the title differs and the push saved it last. The pull reminder text is fixed. |
+| RV-RT-02 | **resolved** | Tested on a throwaway Grafana 13.2.4: two pushes (the second is all `unchanged` except the data source, which is always resent), the permission rows, the Admin built-in POST, an Editor denied (403) in the official folder and allowed in the team folder, and the identity rules. On Cloud, the lead's dry-run is what we would expect: Editor Edit -> View, Admin added, team folder created, 4 updates, nothing refused or adopted. That shows the token's identity is recognised on Cloud. |
+| N1 | resolved | `--force <uid>` can be repeated, and an unknown uid stops the push before any write (tested). |
+| N2 | **accepted pushback** | The Cloud evidence shows `updatedBy` holds the service account's *name*, so comparing logins only would refuse every dashboard. The new rule compares a person by login, and a service account by login or name. Residual: a person whose login equals the service account's name (`fleetscope-push`) is still exempt. Grafana records the two the same way, so nothing on our side can tell them apart, and only an Admin can create such a user. A test pins this. |
+| N3 | resolved | README says push owns the role rows of both folders. |
+| N4 | resolved | A compile-time check plus a test: every engine must be in `LIGHTNESS_ORDER`. |
+| N5 | resolved | `.refine` on `SessionStartedEvent`. zod 4 keeps the type a `ZodObject`, so `FleetEvent`'s `discriminatedUnion` and `.shape` still work (typecheck green). QA's integration case is changed correctly: equal values are now a 400 case. |
+| N6 | resolved | The Perfetto process name says `(routed from X)`. `TimelineSession` carries `routed_from`, with an integration test. |
+| QA-RT-01..03 | resolved (QA owns the final check) | `<1%` for a non-zero count, a line in DESIGN.md, the link scope in the description, and dashed threshold lines rejected. |
+
+Not blocking, for the lead: the first **real** Cloud push will change permissions on the shared stack (Editors lose edit on "Fleetscope"). Run it after the merge, then run a second push and check that everything except the data source is `unchanged`.
+
+### Verdict: approve
+
+Nothing is still open or disputed.
