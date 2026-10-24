@@ -103,6 +103,8 @@ const id = z
   .min(1)
   .max(128)
   .refine(isWellFormed, { error: "must not contain an unpaired UTF-16 surrogate" });
+/** A session id as it appears in events and in URLs (`/v1/sessions/:id/trace`). */
+export const SessionId = id;
 const label = z.string().min(1).max(128).transform(wellFormed);
 const text = z.string().max(2000).transform(wellFormed);
 /*
@@ -231,6 +233,8 @@ export type ResourceSampleEvent = z.infer<typeof ResourceSampleEvent>;
 export const NetworkRequestEvent = z.object({
   ...envelope,
   type: z.literal("network.request"),
+  // `ts` is when the request FINISHED (the collector reports it once the response is complete), so
+  // it started `duration_ms` earlier. An action's `ts`, in contrast, is when the action started.
   domain: label,
   /** HTTP status; `null` when the request failed before a response arrived. */
   status: z.int().min(100).max(599).nullable(),
