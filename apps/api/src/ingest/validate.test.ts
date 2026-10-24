@@ -206,6 +206,15 @@ describe("checkBatch: the labels that dashboards put into SQL", () => {
     },
   );
 
+  it.each([".", ".."])("answers 400 for the session id %j, which no URL can name", (id) => {
+    const result = checkBatch([started({ session_id: id })], NOW);
+    expect(result).toMatchObject({ ok: false, status: 400 });
+    if (result.ok) return;
+    expect(result.body.issues).toEqual([
+      { path: [0, "session_id"], message: "must not be . or .." },
+    ]);
+  });
+
   it("answers 400 for an error_code that is not a safe label", () => {
     const bad = newEvent(
       "action",

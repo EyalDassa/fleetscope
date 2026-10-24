@@ -1,3 +1,4 @@
+import http from "node:http";
 import type { SessionTimeline, TimelineSession } from "@fleetscope/db";
 import { ChromeTrace } from "@fleetscope/schema";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -122,6 +123,41 @@ describe("GET /v1/sessions/:id/trace", () => {
     expect([400, 404]).toContain(res.statusCode);
     expect(getSessionTimeline).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["the trace", "trace"],
+    ["the Perfetto page", "perfetto"],
+  ])(
+    "answers 400, without querying, when the ids . and .. reach %s (no browser sends them, a raw client can)",
+    async (_name, route) => {
+      const getSessionTimeline = vi.fn(async () => null);
+      const getSession = vi.fn(async () => null);
+      const instance = app({ getSessionTimeline, getSession });
+      // app.inject() parses the URL and resolves ./ and ../ (and %2E) before routing, as a browser does,
+      // so these go over a real socket with the path exactly as written.
+      await instance.listen({ port: 0, host: "127.0.0.1" });
+      const port = (instance.server.address() as { port: number }).port;
+      const status = (path: string) =>
+        new Promise<number>((resolve, reject) => {
+          http
+            .get({ host: "127.0.0.1", port, path }, (res) => {
+              res.resume();
+              resolve(res.statusCode ?? 0);
+            })
+            .on("error", reject);
+        });
+      for (const path of [
+        `/v1/sessions/../${route}`,
+        `/v1/sessions/./${route}`,
+        `/v1/sessions/%2E%2E/${route}`,
+        `/v1/sessions/%2E/${route}`,
+      ]) {
+        expect(await status(path), path).toBe(400);
+      }
+      expect(getSessionTimeline).not.toHaveBeenCalled();
+      expect(getSession).not.toHaveBeenCalled();
+    },
+  );
 
   it("returns 500 without details when the query fails", async () => {
     const res = await app({

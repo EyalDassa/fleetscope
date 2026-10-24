@@ -154,6 +154,37 @@ describe("engine_version stays nullable", () => {
   });
 });
 
+describe('"." and ".." (QA-M2-16)', () => {
+  it("are not session ids: no URL can name them, so such a session could never be opened", () => {
+    for (const dots of [".", ".."]) {
+      expect(SessionId.safeParse(dots).success, dots).toBe(false);
+      const result = FIELDS.session_id?.(dots);
+      expect(result?.success, dots).toBe(false);
+      if (result?.success !== false) continue;
+      expect(result.error.issues.map((i) => [i.path.join("."), i.message])).toEqual([
+        ["session_id", "must not be . or .."],
+      ]);
+    }
+  });
+
+  it("are only refused exactly: other ids with dots are fine", () => {
+    for (const id of ["...", ".hidden", "a.b", "a..b", "v1.2.3", "..a", "a.."]) {
+      expect(SessionId.safeParse(id).success, id).toBe(true);
+    }
+  });
+
+  it("stay allowed in the other labels (a host or a version can be made of dots)", () => {
+    for (const field of ["agent_id", "provider", "scenario", "region", "engine_version"]) {
+      for (const dots of [".", ".."]) {
+        expect(
+          (FIELDS[field] as (v: string) => ReturnType<typeof started>)(dots).success,
+          field,
+        ).toBe(true);
+      }
+    }
+  });
+});
+
 describe("SessionId (the one rule for ids in events and URLs)", () => {
   it("accepts a UUID and rejects a hostile id", () => {
     expect(SessionId.safeParse(ctx.session_id).success).toBe(true);

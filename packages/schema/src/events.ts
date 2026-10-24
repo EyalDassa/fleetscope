@@ -117,9 +117,15 @@ const safeLabel = z.string().regex(SAFE_LABEL_PATTERN, {
   error: "must be 1 to 128 characters from A-Z a-z 0-9 . _ : @ / + -",
 });
 
-/** A session id as it appears in events and in URLs (`/v1/sessions/:id/trace`). */
-export const SessionId = safeLabel;
-const id = safeLabel;
+/**
+ * A session id as it appears in events and in URLs (`/v1/sessions/:id/trace`): a safe label, except
+ * `.` and `..`. Both match the pattern, but no URL can name them: a browser resolves
+ * `/v1/sessions/../perfetto` (and the `%2E%2E` spelling) to `/v1/perfetto` before it sends the
+ * request, so such a session could never be opened (QA-M2-16). Other labels may be dots.
+ */
+export const SessionId = safeLabel.refine((value) => value !== "." && value !== "..", {
+  error: "must not be . or ..",
+});
 /** Free text with a limit of 128 characters (domains, resource types): displayed, never put into SQL. */
 const label = z.string().min(1).max(128).transform(wellFormed);
 const text = z.string().max(2000).transform(wellFormed);
@@ -149,9 +155,9 @@ const envelope = {
   /** Unique per event; the API drops duplicates so client retries are safe. */
   event_id: z.uuid(),
   ts: timestamp,
-  session_id: id,
+  session_id: SessionId,
   source: Source,
-  agent_id: id,
+  agent_id: safeLabel,
   engine: Engine,
   /** Where the browser runs, e.g. "local-docker". A safe label, but any one, so new providers need no release. */
   provider: safeLabel,
