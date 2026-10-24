@@ -161,41 +161,38 @@ describe("distribution sanity", () => {
     expect(shell).toBeGreaterThan(chromium * 0.5);
   });
 
-  it("Lightpanda fails checkout-form most of the time, Chromium rarely", () => {
-    const failRate = (engine: "chromium" | "lightpanda") => {
-      const runs = Array.from({ length: 300 }, (_, index) =>
-        generateSession(profile, {
-          engine,
-          scenario: "checkout-form",
-          startMs: NOW,
-          seed: 2,
-          index,
-          agentId: "sim@test",
-          provider: "local-docker",
-        }),
-      );
-      return (
-        runs.filter((events) => {
-          const ended = events.at(-1);
-          return ended?.type === "session.ended" && ended.status !== "success";
-        }).length / runs.length
-      );
-    };
-    expect(failRate("lightpanda")).toBeGreaterThan(0.6);
-    expect(failRate("chromium")).toBeLessThan(0.3);
+  // The profile is regenerated from real runs, so these tests do not assume which engine is better:
+  // they check that the generator reproduces what the profile says.
+  it("the failure rate of a scenario follows the profile (the sum of its failure probabilities)", () => {
+    for (const engine of ["chromium", "lightpanda"] as const) {
+      const expected = profile.engines[engine].scenarios["heavy-page-crawl"]?.failures.reduce(
+        (sum, f) => sum + f.p,
+        0,
+      ) as number;
+      const runs = sessionsOf(engine, 400);
+      const failed = runs.filter((events) => {
+        const ended = events.at(-1);
+        return ended?.type === "session.ended" && ended.status !== "success";
+      }).length;
+      expect(Math.abs(failed / runs.length - expected)).toBeLessThan(0.08);
+    }
   });
 
-  it("Lightpanda gets a usable browser faster than Chromium", () => {
-    const ttb = (engine: "chromium" | "lightpanda") =>
-      medianOf(
-        sessionsOf(engine).map((events) => {
+  it("time to browser follows the profile (median of startup + connect)", () => {
+    for (const engine of ["chromium", "lightpanda"] as const) {
+      const e = profile.engines[engine];
+      const median = medianOf(
+        sessionsOf(engine, 300).map((events) => {
           const started = events[0];
           return started?.type === "session.started"
             ? started.startup_ms + started.connect_ms
             : Number.NaN;
         }),
       );
-    expect(ttb("lightpanda")).toBeLessThan(ttb("chromium"));
+      const expected = e.startup_ms.p50 + e.connect_ms.p50;
+      expect(median).toBeGreaterThan(expected * 0.7);
+      expect(median).toBeLessThan(expected * 1.4);
+    }
   });
 });
 
