@@ -218,6 +218,8 @@ export interface PushResult {
   theme: Action | "not-allowed";
   /** Dashboards in the Grafana folder that are not in the repository. They are left alone. */
   extraDashboards: string[];
+  /** Things worth knowing that did not stop the push (also logged). */
+  warnings: string[];
   /** The data source health check, or undefined in a dry run. */
   health: { ok: boolean; message: string } | undefined;
 }
@@ -228,7 +230,7 @@ export interface PushOptions {
   dashboardFiles: DashboardFile[];
   /** FLEETSCOPE_API_URL: written into the dashboards' `api_url` variable. */
   apiUrl: string | undefined;
-  /** True when Grafana is on this machine, so a localhost API URL is fine. */
+  /** True when Grafana is on this machine, so a localhost API URL needs no warning. */
   grafanaIsLocal: boolean;
   dryRun: boolean;
   /** Without a token a dry run cannot read Grafana, and only prints what it would send. */
@@ -280,25 +282,38 @@ export async function pushToGrafana(options: PushOptions): Promise<PushResult> {
     );
   }
 
-  // Build and check every dashboard body before the first write, so a problem found now leaves
-  // Grafana untouched instead of half updated.
+  // Build every dashboard body before the first write, so a problem found now leaves Grafana
+  // untouched instead of half updated.
   const apiUrl = options.apiUrl;
+  const filesWithApiUrl: string[] = [];
   const prepared = structure.dashboards.map((dashboard) => {
     let body = { ...dashboard.json, id: null } as JsonObject;
     if (apiUrl !== undefined) {
       const withUrl = withApiUrl(body, apiUrl);
       if (withUrl !== body) {
-        // The dashboard has an api_url variable, so the URL ends up in links people click.
-        if (!options.grafanaIsLocal && isLoopbackHost(safeHostname(apiUrl))) {
-          throw new PushError(
-            `FLEETSCOPE_API_URL is ${apiUrl}, which is your own machine. The Perfetto links in ${dashboard.file} would break on a remote Grafana. Set it to the public URL of the deployed API`,
-          );
-        }
+        filesWithApiUrl.push(dashboard.file);
         body = withUrl;
       }
     }
     return { dashboard, body };
   });
+
+  // api_url only builds the "Open timeline in Perfetto" link, which the viewer's BROWSER opens (not
+  // Grafana's server). So a localhost API is right while the API runs on the laptop that also
+  // opens Grafana; it is just worth saying out loud. A localhost ClickHouse is different: the
+  // data source is queried by Grafana's server, so that one is refused in buildDataSource.
+  const warnings: string[] = [];
+  if (
+    apiUrl !== undefined &&
+    filesWithApiUrl.length > 0 &&
+    !options.grafanaIsLocal &&
+    isLoopbackHost(safeHostname(apiUrl))
+  ) {
+    warnings.push(
+      `FLEETSCOPE_API_URL is ${apiUrl}: the Perfetto links (${filesWithApiUrl.join(", ")}) will only work on the machine running the API`,
+    );
+  }
+  for (const warning of warnings) log(`warning     ${warning}`);
 
   // 1. Folder
   let folder: Action = "created";
@@ -412,6 +427,7 @@ export async function pushToGrafana(options: PushOptions): Promise<PushResult> {
     dashboards: results,
     theme,
     extraDashboards,
+    warnings,
     health,
   };
 }

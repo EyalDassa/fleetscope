@@ -262,13 +262,39 @@ describe("pushToGrafana", () => {
     expect(list[1]).toEqual({ name: "session", type: "textbox", query: "" });
   });
 
-  it("refuses a localhost API URL for a remote Grafana, but allows it for a local one", async () => {
-    const remote = setup({ apiUrl: "http://localhost:4000" });
-    await expect(pushToGrafana(remote.options)).rejects.toThrow(/your own machine/);
-    expect(remote.state.calls.filter((c) => !c.startsWith("GET"))).toEqual([]);
+  // api_url builds the browser-side Perfetto link, so a localhost API is valid while the API runs
+  // on the laptop that opens Grafana Cloud. It is a warning, not a refusal.
+  it("warns, but still pushes, when a remote Grafana gets a localhost API URL", async () => {
+    const { state, options, lines } = setup({ apiUrl: "http://localhost:4000" });
+    const result = await pushToGrafana(options);
 
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toMatch(
+      /http:\/\/localhost:4000.*fleetscope-session\.json.*only work on the machine running the API/,
+    );
+    expect(lines.filter((line) => line.startsWith("warning"))).toHaveLength(1);
+    const stored = state.dashboards.get("fleetscope-session") as JsonObject;
+    const list = (stored.templating as JsonObject).list as JsonObject[];
+    expect(list[0]).toMatchObject({ name: "api_url", query: "http://localhost:4000" });
+  });
+
+  it("does not warn about a localhost API URL for a local Grafana, or without an api_url variable", async () => {
     const local = setup({ apiUrl: "http://localhost:4000", grafanaIsLocal: true });
-    await expect(pushToGrafana(local.options)).resolves.toBeDefined();
+    expect((await pushToGrafana(local.options)).warnings).toEqual([]);
+
+    const noVariable = setup({
+      apiUrl: "http://localhost:4000",
+      dashboardFiles: [dashboardFile("fleetscope-overview.json", overviewDashboard)],
+    });
+    expect((await pushToGrafana(noVariable.options)).warnings).toEqual([]);
+
+    const publicUrl = setup({ apiUrl: "https://api.fleetscope.example" });
+    expect((await pushToGrafana(publicUrl.options)).warnings).toEqual([]);
+  });
+
+  it("shows the warning in a dry run too", async () => {
+    const { options } = setup({ apiUrl: "http://127.0.0.1:4000", dryRun: true });
+    expect((await pushToGrafana(options)).warnings).toHaveLength(1);
   });
 
   it("does not stop when the token may not change the theme, and says what to do", async () => {

@@ -146,10 +146,12 @@ pnpm grafana:push               # does it, then checks the data source health
 | `CLICKHOUSE_URL` or `GRAFANA_CLICKHOUSE_URL` | where Grafana reaches ClickHouse. `https://...:8443` sets `secure: true`. `GRAFANA_CLICKHOUSE_URL` wins when your machine and Grafana see ClickHouse at different addresses |
 | `CLICKHOUSE_GRAFANA_USER`, `CLICKHOUSE_GRAFANA_PASSWORD` | the read-only user, stored as the data source's secure password. There is no fallback to the admin user |
 | `CLICKHOUSE_DATABASE` | the data source's default database (`fleetscope`) |
-| `FLEETSCOPE_API_URL` | written into the session dashboard's `api_url` variable, which builds the Perfetto links |
+| `FLEETSCOPE_API_URL` | written into the session dashboard's `api_url` variable, which builds the "Open timeline in Perfetto" link. The viewer's **browser** opens that link, not Grafana, so `http://localhost:4000` is right while the API runs on the laptop you open Grafana Cloud on |
 
 Safety rules, each tested: the token never goes over plain HTTP (except to localhost); a push to a
-remote Grafana is refused when ClickHouse or the API URL is `localhost`; the token and password are
+remote Grafana is **refused** when the ClickHouse URL is `localhost`, because Grafana's server calls
+ClickHouse and cannot reach your machine; a localhost `FLEETSCOPE_API_URL` only gets a **warning**
+(the Perfetto links then work only on the machine running the API); the token and password are
 never printed; everything is validated before the first write; the dashboard files must pass the
 structure check. If the token may not change the org preferences, the push continues and prints the
 manual step (Administration > Default preferences > Interface theme = Dark).
@@ -166,9 +168,10 @@ manual step (Administration > Default preferences > Interface theme = Dark).
    fetch them again from time to time; Grafana's page: "List of Grafana Cloud IP addresses to add
    to your allowlist"). Run `pnpm db:grafana-user` against that ClickHouse too (set `CLICKHOUSE_URL`,
    the admin user and the Grafana user variables).
-4. Put `GRAFANA_URL`, `GRAFANA_TOKEN`, `GRAFANA_CLICKHOUSE_URL`, `CLICKHOUSE_GRAFANA_*` and the public
-   `FLEETSCOPE_API_URL` in your `.env` (or CI secrets), run `pnpm grafana:push --dry-run`, then
-   `pnpm grafana:push`.
+4. Put `GRAFANA_URL`, `GRAFANA_TOKEN`, `GRAFANA_CLICKHOUSE_URL` and `CLICKHOUSE_GRAFANA_*` in your
+   `.env` (or CI secrets). Leave `FLEETSCOPE_API_URL=http://localhost:4000` for the demo where the API
+   runs on your laptop (the push warns, which is fine); set the API's public URL if others need the
+   Perfetto links. Run `pnpm grafana:push --dry-run`, then `pnpm grafana:push`.
 
 ## Tests
 
