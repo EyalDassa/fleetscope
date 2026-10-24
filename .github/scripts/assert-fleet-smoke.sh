@@ -13,8 +13,10 @@
 #     network_requests;
 #   - engines NOT listed in SMOKE_NULLABLE_ENGINES (default "lightpanda") also need a cdp sample with a
 #     JS heap value and a network request with a size. Lightpanda has no Performance.getMetrics and no
-#     Network.*ExtraInfo, so its rows must exist but their heap / byte columns may be NULL (that is the
-#     honest value, see CLAUDE.md "Data honesty"); for those engines the values are not required;
+#     Network.*ExtraInfo, so their heap / byte columns may be NULL (that is the honest value, see
+#     CLAUDE.md "Data honesty") and a session that ends at the bot wall may have no network_requests
+#     row at all. The cdp sample row itself is still required;
+
 #   - there are NO duplicate rows: for actions, resource_samples and network_requests, count() must
 #     equal uniqExact(event_id). Counts are shown with count(), so a duplicate is never hidden by
 #     uniqExact (dedupe is the central M1 decision);
@@ -127,7 +129,12 @@ check_data() {
   problems=()
   local out
   need_values=1
-  case " $nullable_engines " in *" $engine "*) need_values=0 ;; esac
+  eff_min_network="$min_network"
+  case " $nullable_engines " in
+    # Lightpanda reports no network events for a page that ends at the bot wall (a 403 on the first
+    # page, which the seeded smoke run does hit), so it may have no network_requests row at all.
+    *" $engine "*) need_values=0; eff_min_network=0 ;;
+  esac
 
   if ! out=$(query 2>&1); then
     problems+=("ClickHouse query failed: ${out}")
@@ -151,7 +158,7 @@ check_data() {
     problems+=("$line")
   done < <(printf '%s\n' "$out" | tail -n +2 | awk -F'\t' \
     -v min_actions="$min_actions" -v min_samples="$min_samples" \
-    -v min_cdp="$min_cdp" -v min_network="$min_network" -v need_values="$need_values" '
+    -v min_cdp="$min_cdp" -v min_network="$eff_min_network" -v need_values="$need_values" '
       NF == 0 { next }
       {
         if ($2 !~ /^(success|failed|blocked|timeout|crashed)$/)
@@ -203,7 +210,7 @@ for engine in $engines; do
   else
     extra="JS heap and byte sizes present"
     [ "$need_values" -eq 1 ] || extra="JS heap / byte sizes may be NULL for this engine"
-    echo "OK [${engine}]: ${expected_sessions} sessions; actions (>= ${min_actions} if success, else >= 1), container samples >= ${min_samples}, cdp samples >= ${min_cdp}, network requests >= ${min_network}, no duplicate rows, ${extra}"
+    echo "OK [${engine}]: ${expected_sessions} sessions; actions (>= ${min_actions} if success, else >= 1), container samples >= ${min_samples}, cdp samples >= ${min_cdp}, network requests >= ${eff_min_network}, no duplicate rows, ${extra}"
   fi
 done
 
