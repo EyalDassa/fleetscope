@@ -2,6 +2,7 @@ import { BlockedError, CollectedError, type CollectedPage } from "@fleetscope/co
 import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createRng, type Rng } from "../rng";
+import { failedProbes } from "./heavy-page-crawl";
 import { SCENARIO_NAMES, SCENARIOS, type ScenarioName, scenarioFor } from "./index";
 import type { ScenarioContext } from "./types";
 
@@ -33,6 +34,8 @@ const KNOWN_TEST_IDS = new Set([
 interface FakeOptions {
   /** Selectors whose click/extract fails, as a missing element would. */
   missing?: Set<string>;
+  /** What /js-heavy's `js-result` contains. */
+  jsResult?: string;
   /** URL paths whose goto is refused. */
   blockedPaths?: Set<string>;
 }
@@ -64,8 +67,15 @@ class RecordingPage {
     }
     if (selector.includes("login-submit")) this.currentUrl = `${BASE}/dashboard`;
   };
-  extract = async (selector: string, options?: { as?: string }): Promise<string | number> => {
+  extract = async (
+    selector: string,
+    options?: { as?: string; check?: (text: string) => string | null },
+  ): Promise<string | number> => {
     this.calls.push(`extract ${selector}`);
+    if (options?.check) {
+      const problem = options.check(this.options.jsResult ?? '{"webWorker":{"ok":true}}');
+      if (problem) throw new CollectedError("unsupported_api", problem);
+    }
     if (this.options.missing?.has(selector)) {
       throw new CollectedError("selector_not_found", `no element for ${selector}`);
     }
@@ -267,5 +277,40 @@ describe("heavy-page-crawl", () => {
   it("waits for the js probes to finish, with room for their 3 s timeouts", async () => {
     const calls = await run("heavy-page-crawl", 1);
     expect(calls).toContain('wait [data-testid="js-result"][data-status="done"]');
+  });
+
+  it("a failed /js-heavy probe fails the scenario with unsupported_api, naming the probes", async () => {
+    const page = new RecordingPage({
+      jsResult:
+        '{"intersectionObserver":{"ok":true,"detail":"x"},"webWorker":{"ok":false,"error":"timeout after 3000ms"}}',
+    });
+    const error = await SCENARIOS["heavy-page-crawl"](page as unknown as CollectedPage, {
+      baseUrl: BASE,
+      rng: createRng(1),
+      logger,
+    }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(CollectedError);
+    expect((error as CollectedError).code).toBe("unsupported_api");
+    expect((error as CollectedError).message).toBe("webWorker: timeout after 3000ms");
+  });
+
+  it("passing probes change nothing", async () => {
+    const calls = await run("heavy-page-crawl", 1);
+    expect(calls).toContain('extract [data-testid="js-result"]');
+    expect(calls.at(-1)).toBe("screenshot");
+  });
+});
+
+describe("failedProbes", () => {
+  it("lists every failed probe and ignores passing ones", () => {
+    expect(failedProbes('{"a":{"ok":true},"b":{"ok":false,"error":"boom"},"c":{"ok":false}}')).toBe(
+      "b: boom; c: failed",
+    );
+    expect(failedProbes('{"a":{"ok":true}}')).toBeNull();
+  });
+  it("text that is not the probe JSON is not evidence", () => {
+    expect(failedProbes("")).toBeNull();
+    expect(failedProbes("not json")).toBeNull();
+    expect(failedProbes("null")).toBeNull();
   });
 });

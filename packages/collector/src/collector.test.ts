@@ -220,6 +220,26 @@ describe("actions", () => {
     });
   });
 
+  it("extract with a check that names missing APIs fails with unsupported_api and raises that issue", async () => {
+    const { page, events } = await setup();
+    const error = await rejection(
+      page.extract("h1", { check: (text) => (text === "hello" ? "webWorker: timeout" : null) }),
+    );
+    expect(error.code).toBe("unsupported_api");
+    expect(error.message).toBe("webWorker: timeout");
+    const all = await events();
+    expect(ofType(all, "action")[0]).toMatchObject({ ok: false, error_code: "unsupported_api" });
+    expect(ofType(all, "issue")[0]).toMatchObject({
+      kind: "unsupported_api",
+      message: "webWorker: timeout",
+    });
+  });
+
+  it("extract with a check that finds nothing wrong returns the text", async () => {
+    const { page } = await setup();
+    expect(await page.extract("h1", { check: () => null })).toBe("hello");
+  });
+
   it("extract count of a missing element is zero, not an error", async () => {
     const { fake, page, events } = await setup();
     fake.counts[".row"] = 0;

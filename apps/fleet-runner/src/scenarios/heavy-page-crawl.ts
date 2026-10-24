@@ -4,6 +4,31 @@ import type { Scenario } from "./types";
 const NODE_COUNTS = [2000, 5000, 10_000, 20_000] as const;
 const IMAGE_COUNTS = [20, 50, 100, 200] as const;
 
+interface Probe {
+  ok?: boolean;
+  error?: string;
+  detail?: string;
+}
+
+/**
+ * Reads /js-heavy's result (`{"webWorker":{"ok":false,"error":"timeout after 3000ms"},...}`) and
+ * names the failed probes: `webWorker: timeout after 3000ms; cryptoSubtleDigest: ...`. `null` when
+ * every probe passed. Text that is not that JSON is not evidence about the engine: `null`.
+ */
+export function failedProbes(text: string): string | null {
+  let probes: Record<string, Probe>;
+  try {
+    probes = JSON.parse(text) as Record<string, Probe>;
+  } catch {
+    return null;
+  }
+  if (typeof probes !== "object" || probes === null) return null;
+  const failed = Object.entries(probes)
+    .filter(([, probe]) => probe?.ok === false)
+    .map(([name, probe]) => `${name}: ${probe.error ?? "failed"}`);
+  return failed.length === 0 ? null : failed.join("; ");
+}
+
 /**
  * Crawl pages that are expensive for a browser: a few large /heavy pages (many DOM nodes and image
  * requests), a slow page, and the JS-heavy page that uses Web APIs some engines lack. The sizes
@@ -28,6 +53,9 @@ export const heavyPageCrawl: Scenario = async (page, ctx) => {
   // The page's script runs five probes (up to 3 s each) and then sets data-status="done".
   await page.goto(demoUrl(ctx, "/js-heavy"));
   await page.wait(`${tid("js-result")}[data-status="done"]`, { timeoutMs: 20_000 });
+  // A failed probe means the engine lacks that API: this extract fails with unsupported_api (and
+  // an issue naming the probes), so the session ends `failed`. Only this page counts.
+  await page.extract(tid("js-result"), { check: failedProbes });
 
   await page.screenshot();
 };

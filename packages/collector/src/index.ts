@@ -12,6 +12,7 @@ export {
   CAPTCHA_SELECTOR,
   CollectedPage,
   type GotoOptions,
+  type TextCheck,
 } from "./page";
 export type { QueueStats } from "./queue";
 export {
