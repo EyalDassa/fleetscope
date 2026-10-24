@@ -71,6 +71,18 @@ describe("session lifecycle", () => {
     await collector.close();
   });
 
+  it("puts routed_from on session.started only for a routed session", async () => {
+    const { collector, sink } = makeCollector();
+    collector.startSession({ ...sessionOptions, sessionId: "plain" });
+    collector.startSession({ ...sessionOptions, sessionId: "routed", routedFrom: "lightpanda" });
+    await collector.flush();
+    const started = (id: string) => sink.events.find((e) => e.session_id === id);
+    expect(started("plain")).not.toHaveProperty("routed_from");
+    expect(started("routed")).toMatchObject({ routed_from: "lightpanda" });
+    expect(EventBatch.safeParse(sink.events).success).toBe(true);
+    await collector.close();
+  });
+
   it("generates a session id when none is given", async () => {
     const { collector } = makeCollector();
     const a = collector.startSession(sessionOptions);
