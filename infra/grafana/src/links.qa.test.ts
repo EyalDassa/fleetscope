@@ -77,15 +77,26 @@ describe("dashboard links", () => {
     for (const { from, url } of links) expect(url, from).toMatch(SESSION_LINK);
   });
 
-  // QA-M2-17: SAFE_LABEL_PATTERN allows `+`, and in a query string `+` is a space. The Session link
-  // puts the raw id into `var-session=`, so the page opens for "plain plus" and says "Session not found"
-  // (seen in Grafana 13.2.4 with the ids `plain+plus` and `fleet/run:1@host+a-b_c.d`). Writing the id
-  // as ${__data.fields.session_id:percentencode} works (verified in the same Grafana: `%2B`).
-  it.fails("the Session link writes the id percent-encoded, because an id may contain a plus", () => {
+  // QA-M2-17 (fixed in round 2): SAFE_LABEL_PATTERN allows `+`, and in a query string `+` is a space. The
+  // Session link put the raw id into `var-session=`, so the page opened for "plain plus" and said
+  // "Session not found" (Grafana 13.2.4, ids `plain+plus` and `fleet/run:1@host+a-b_c.d`). The id is
+  // written as ${__data.fields.session_id:percentencode} now; the cause, the other free text that a
+  // link puts into a variable, too.
+  it("the Session link writes the id percent-encoded, because an id may contain a plus", () => {
     const links = toDashboard.filter((l) => l.url.startsWith("/d/fleetscope-session?"));
     expect(links.length).toBeGreaterThanOrEqual(2);
     for (const { from, url } of links) {
       expect(url, from).toContain("var-session=${__data.fields.session_id:percentencode}");
+    }
+  });
+
+  it("no link puts a free-text field into a variable without percent-encoding it", () => {
+    const raw = found.filter((l) => /\$\{__data\.fields\.(session_id|cause)\}/.test(l.url));
+    expect(raw).toEqual([]);
+    const causeLinks = found.filter((l) => l.url.includes("var-cause="));
+    expect(causeLinks.length).toBeGreaterThanOrEqual(1);
+    for (const { from, url } of causeLinks) {
+      expect(url, from).toContain("var-cause=${__data.fields.cause:percentencode}");
     }
   });
 

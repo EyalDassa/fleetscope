@@ -1,4 +1,5 @@
 import type { SessionTimeline, TimelineSession } from "@fleetscope/db";
+import { SessionId } from "@fleetscope/schema";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildApp } from "../app";
 
@@ -111,13 +112,28 @@ describe("ids at the edge of the pattern, as Grafana writes them into the link",
     ).toBe(200);
   });
 
-  // QA-M2-16: "." and ".." are valid labels, but no URL can name them: a browser resolves
-  // /v1/sessions/../perfetto (and the %2E%2E spelling) to /v1/perfetto before it sends the request.
-  it.fails("is not a session id that no link can reach ('.' and '..')", async () => {
+  // QA-M2-16 (fixed in round 2): "." and ".." matched the label pattern, but no URL can name them: a
+  // browser resolves /v1/sessions/../perfetto (and the %2E%2E spelling) to /v1/perfetto before it
+  // sends the request. The schema refuses them as a session id, and the routes answer 400.
+  it("is not a session id that no link can reach ('.' and '..')", async () => {
+    const instance = app([]);
+    for (const id of [".", "..", "%2E", "%2E%2E", "%2e%2e"]) {
+      for (const route of ["trace", "perfetto"]) {
+        const res = await instance.inject({ method: "GET", url: `/v1/sessions/${id}/${route}` });
+        // the URL is normalised before routing (even %2E), so the server sees /v1/sessions/trace: 404.
+        // The 400 for these ids is the schema at ingest (next assertions), and what keeps them out.
+        expect([400, 404], `${id} ${route}`).toContain(res.statusCode);
+      }
+    }
+    expect(SessionId.safeParse(".").success).toBe(false);
+    expect(SessionId.safeParse("..").success).toBe(false);
+    // dots inside a longer id are fine
+    for (const id of ["...", ".a", "a.", "a..b"]) {
+      expect(SessionId.safeParse(id).success, id).toBe(true);
+    }
     for (const id of [".", ".."]) {
       const url = new URL(`http://localhost:4000/v1/sessions/${encodeURIComponent(id)}/perfetto`);
       const reachable = url.pathname === `/v1/sessions/${id}/perfetto`;
-      const { SessionId } = await import("@fleetscope/schema");
       // either the link works, or the schema refuses the id at ingest
       expect(reachable || !SessionId.safeParse(id).success, id).toBe(true);
     }

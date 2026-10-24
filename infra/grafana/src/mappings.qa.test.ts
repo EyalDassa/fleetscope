@@ -60,12 +60,20 @@ describe("stats with a null or NaN mapping", () => {
     expect(stats.length).toBeGreaterThanOrEqual(9);
   });
 
-  // QA-M2-18: on Session detail Duration ("running"), Peak CPU, Peak memory, Peak JS heap and Est. cost
-  // ("Not available") map only NaN, their No value text is "—" (an unknown session), and the reducer
-  // is lastNotNull. A session that exists but has no sample, no end or no price therefore shows "—",
-  // not "Not available" or "running". Fix: reducer `last` (verified in Grafana 13.2.4), or return NULL
-  // instead of nan and map null (works with lastNotNull, like the Overview's Estimated cost).
-  it.fails("a stat that maps NaN to a text can reach the mapping (reducer last, or a null mapping too)", () => {
+  it("the five Session detail stats that map NaN are the ones fixed: they reduce with last", () => {
+    const session = stats.filter((s) => s.dashboard.includes("-session.json") && s.nanText);
+    expect(session.map((s) => s.title).sort()).toEqual(
+      ["Duration", "Est. cost", "Peak CPU", "Peak JS heap", "Peak memory"].sort(),
+    );
+    for (const stat of session) expect(stat.calcs, stat.title).toEqual(["last"]);
+  });
+
+  // QA-M2-18 (fixed in round 2): Session detail's Duration ("running"), Peak CPU, Peak memory, Peak JS
+  // heap and Est. cost ("Not available") map only NaN, and their No value text is "—" (an unknown
+  // session). With the reducer lastNotNull the NaN was skipped, so a session that exists but has no
+  // sample, no end or no price showed "—". The reducer is `last` now. The five panels were also
+  // re-rendered in a real Grafana 13.2.4 (see qa/m2-report.md).
+  it("a stat that maps NaN to a text can reach the mapping (reducer last, or a null mapping too)", () => {
     for (const stat of stats) {
       if (stat.nanText === undefined || stat.nanText === stat.noValue) continue;
       const reachable =

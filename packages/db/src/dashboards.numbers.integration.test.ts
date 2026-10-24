@@ -573,10 +573,10 @@ describe("Sessions dashboard", () => {
 });
 
 describe("Sessions dashboard: the filter boxes and the list", () => {
-  // QA-M2-15 (nit, open): the Sessions list holds every session that RAN in the range (R-M2-03), but the
-  // agent and scenario boxes offer only the values of sessions that STARTED in it. A session that
-  // started before the range cannot be picked by its own scenario or agent.
-  it.fails("the agent and scenario boxes offer the values of every session the list shows", async () => {
+  // QA-M2-15 (fixed in round 2): the Sessions list holds every session that RAN in the range (R-M2-03),
+  // and the agent and scenario boxes offered only the values of sessions that STARTED in it, so a
+  // session that started before the range could not be picked by its own scenario or agent.
+  it("the agent and scenario boxes offer the values of every session the list shows", async () => {
     const edge: Range = { from: m(1), to: m(3) }; // only R14 (started at -3 min, ended at +2 min) ran here
     const listed = await dash.run("sessions", 'panel "Sessions ↗", query A', edge, REAL);
     expect(listed.map((r) => r.session_id)).toEqual(["R14"]);

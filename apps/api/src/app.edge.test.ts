@@ -67,59 +67,108 @@ async function slowClickHouse(delayMs: number): Promise<string> {
   return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 }
 
-function appWithRealPing(url: string, timeoutMs = 1000) {
+/**
+ * The timings below start when /healthz begins to WAIT for ClickHouse (the ping call), not when the
+ * request is injected. The first request of an app also pays for booting Fastify and the plugins, and
+ * under a loaded machine (turbo runs every package's tests at once, so does CI) that cost alone was
+ * measured at 3.9 to 4.7 s, which says nothing about whether a hung ClickHouse hangs /healthz.
+ * The app is also warmed up (`ready()`) before the clock starts.
+ */
+function timed(app: ReturnType<typeof buildApp>, clock: { pingStartedAt?: number }) {
+  return {
+    app,
+    /** Milliseconds from the first ping call to now: how long /healthz waited for ClickHouse. */
+    waited: () => Date.now() - (clock.pingStartedAt ?? Date.now()),
+  };
+}
+
+async function appWithRealPing(url: string, timeoutMs = 1000) {
   const config = { ...loadDbConfig(baseEnv), url };
   const client = createClickHouseClient(config);
   cleanups.push(() => client.close());
-  const app = buildApp({ logLevel: false, ping: () => ping(client, timeoutMs) });
+  const clock: { pingStartedAt?: number } = {};
+  const app = buildApp({
+    logLevel: false,
+    ping: () => {
+      clock.pingStartedAt ??= Date.now();
+      return ping(client, timeoutMs);
+    },
+  });
   track(app);
-  return app;
+  await app.ready();
+  return timed(app, clock);
 }
+
+/** The same with a ping that you provide (a hung one, a late one). */
+async function appWithPing(
+  pingFn: () => Promise<boolean>,
+  extra: { healthTimeoutMs?: number } = {},
+) {
+  const clock: { pingStartedAt?: number } = {};
+  const app = track(
+    buildApp({
+      logLevel: false,
+      ...extra,
+      ping: () => {
+        clock.pingStartedAt ??= Date.now();
+        return pingFn();
+      },
+    }),
+  );
+  await app.ready();
+  return timed(app, clock);
+}
+
+/**
+ * Generous on purpose: the health timeout is 1 s, so ~1.0 s is what a hung ClickHouse costs. The point of
+ * the tests is "it ends, with a 503, in the order of the timeout" and not "it ends in 1.1 s": a bound
+ * of 3x the timeout still fails for a /healthz that waits for the socket (which never answers).
+ */
+const HUNG_BOUND_MS = 3000;
 
 describe("GET /healthz with a hung or slow ClickHouse", () => {
   it("answers 503 within ~1 s when ClickHouse accepts the connection but never replies", async () => {
     const { url } = await blackhole();
-    const started = Date.now();
-    const res = await appWithRealPing(url).inject({ method: "GET", url: "/healthz" });
-    const took = Date.now() - started;
+    const { app, waited } = await appWithRealPing(url);
+    const res = await app.inject({ method: "GET", url: "/healthz" });
     expect(res.statusCode).toBe(503);
     expect(res.json()).toEqual({ status: "degraded", clickhouse: "down" });
-    expect(took).toBeLessThan(2000);
+    expect(waited()).toBeLessThan(HUNG_BOUND_MS);
   });
 
   it("answers 503 when ClickHouse replies, but slower than the health timeout", async () => {
     const url = await slowClickHouse(3000);
-    const started = Date.now();
-    const res = await appWithRealPing(url, 300).inject({ method: "GET", url: "/healthz" });
+    const { app, waited } = await appWithRealPing(url, 300);
+    const res = await app.inject({ method: "GET", url: "/healthz" });
     expect(res.statusCode).toBe(503);
-    expect(Date.now() - started).toBeLessThan(1500);
+    // the server answers after 3 s: 503 well before that means the 300 ms timeout was used
+    expect(waited()).toBeLessThan(2500);
   });
 
   it("answers 200 when ClickHouse is slow but inside the timeout", async () => {
     const url = await slowClickHouse(150);
-    const res = await appWithRealPing(url, 1000).inject({ method: "GET", url: "/healthz" });
+    const { app } = await appWithRealPing(url, 1000);
+    const res = await app.inject({ method: "GET", url: "/healthz" });
     expect(res.statusCode).toBe(200);
   });
 
   it("does not pile up: 50 parallel probes against a hung ClickHouse all finish in ~1 s", async () => {
     const { url } = await blackhole();
-    const app = appWithRealPing(url);
-    const started = Date.now();
+    const { app, waited } = await appWithRealPing(url);
     const responses = await Promise.all(
       Array.from({ length: 50 }, () => app.inject({ method: "GET", url: "/healthz" })),
     );
     expect(responses.every((r) => r.statusCode === 503)).toBe(true);
-    expect(Date.now() - started).toBeLessThan(3000);
+    // 50 probes in parallel cost one timeout, not fifty
+    expect(waited()).toBeLessThan(HUNG_BOUND_MS);
   });
 
   it("enforces its own timeout even if the injected ping ignores its timeout (default 1 s)", async () => {
-    const app = track(buildApp({ logLevel: false, ping: () => new Promise<boolean>(() => {}) }));
-    const started = Date.now();
+    const { app, waited } = await appWithPing(() => new Promise<boolean>(() => {}));
     const res = await app.inject({ method: "GET", url: "/healthz" });
-    const took = Date.now() - started;
     expect(res.statusCode).toBe(503);
-    expect(took).toBeGreaterThanOrEqual(900);
-    expect(took).toBeLessThan(2000);
+    expect(waited()).toBeGreaterThanOrEqual(900); // it really waited for its own 1 s timeout
+    expect(waited()).toBeLessThan(HUNG_BOUND_MS);
   });
 
   it("recovers by itself: 503 first, 200 on the next probe once ClickHouse answers", async () => {

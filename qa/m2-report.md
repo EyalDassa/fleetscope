@@ -1,10 +1,49 @@
 # QA report: M2 Grafana dashboards
 
-Branch `m2-grafana-dashboards`: first QA pass (kept below) and the re-test of fix round 1 (first section). Environment: Windows 11, Git Bash, Node 22.17, Docker Desktop, ClickHouse 26.8.34.13 (the pinned image), Grafana 13.2.4 with ClickHouse plugin 4.23.2, Chrome (system install) driven by `playwright-core` 1.64.1, Perfetto `trace_processor` from the pip package `perfetto` in a scratch venv.
+Branch `m2-grafana-dashboards`: first QA pass, the re-test of fix round 1 and the final re-test of round 2 (newest section first). Environment: Windows 11, Git Bash, Node 22.17, Docker Desktop, ClickHouse 26.8.34.13 (the pinned image), Grafana 13.2.4 with ClickHouse plugin 4.23.2, Chrome (system install) driven by `playwright-core` 1.64.1, Perfetto `trace_processor` from the pip package `perfetto` in a scratch venv.
 
 Tested against the PR description, ADR 0003, `design/DESIGN.md` (the Grafana spec), `packages/db/README.md` ("Grafana data rules") and `infra/grafana/README.md`, not against what the code happens to do. `reviews/` was not read or touched.
 
-## Re-test pass (fix round 1): verdict NOT READY, one open major (QA-M2-18)
+## Round 2 re-test (final): verdict READY TO MERGE (no open blocker or major bug)
+
+The four findings of round 1 are fixed and **verified**, QA-M2-18 (the major) on screen in a real Grafana. No `it.fails` is left for M2. What is still open is small and is yours to decide (list at the end).
+
+| ID | Sev | Status | How I checked it |
+|---|---|---|---|
+| **QA-M2-18** | major | **verified** | Fresh Grafana 13.2.4, the committed dashboards pushed with `grafana:push` onto the known fleet, read in Chrome. The five Session detail stats: a **running** session (R8) prints Duration `running`, Peak CPU / memory / JS heap `Not available`, Est. cost `$0.1534` (counted until now); a session **with no samples** (R13) `Not available` x3; an **unpriced** session (S3) Est. cost `Not available`; a session with a **null JS heap** (R12) Peak CPU `15%`, Peak memory `90 MiB`, Peak JS heap `Not available`; an **unknown id** `Session not found` with `—` in every other stat (so the No value text still works). The reducer is `last` on exactly those five panels (new test), and the `it.fails` is a plain test |
+| **QA-M2-17** | minor | **verified** | Same Grafana, unpatched dashboards: the Sessions row for `plain+plus` links to `var-session=plain%2Bplus` and the page opens "Completed, no issues"; `fleet/run:1@host+a-b_c.d` links to `fleet%2Frun%3A1%40host%2Ba-b_c.d`. Test: no link puts `session_id` or `cause` into a variable unencoded (`${__data.fields.cause:percentencode}` is in the Top failure causes link too) |
+| **QA-M2-15** | nit | **verified** | The agent and scenario boxes use the overlap condition. In a range where only R14 ran (started 3 minutes before it), the table lists R14 and the boxes offer its scenario and agent. `it.fails` flipped |
+| **QA-M2-16** | nit | **verified** | `SessionId` rejects exactly `.` and `..` (and still takes `...`, `.a`, `a.`, `a..b`). Over HTTP, `session_id = .` or `..` gets **400**, alone and with a good event next to it (nothing stored), while the other label fields still take `.` and `..` (202). The session routes answer **404**, not 400, for `/v1/sessions/../trace` and the `%2E` spellings: the URL is normalised before routing, so the route never sees the id. The ingest 400 is what keeps such a session out. `it.fails` flipped |
+
+### The two tests you asked for
+
+- **`ingest.abuse.integration.test.ts` > "accepts the edge of the pattern ... and dots".** The `GOOD` list still posts `..` in every label field except `session_id`; the `session_id` loop skips it and accepts `...`, `.a`, `a.`, `a..b`. A new test asserts 400 for `.` and `..` as `session_id` (whole batch refused, neighbour not stored) and 202 for them in the other label fields. 38 tests pass.
+- **`app.edge.test.ts` > "answers 503 within ~1 s ..." (flaky, 3.9 to 4.7 s in parallel runs).** The test measured the time of the whole `inject()`, which on a first request also boots Fastify and its plugins. Under a loaded machine (turbo runs every package at once; CI does too) that boot alone cost seconds, and says nothing about whether a hung ClickHouse hangs `/healthz`. Now:
+  - the app is warmed up with `ready()` before the clock starts;
+  - the clock starts when `/healthz` begins to WAIT (the first call of the ping), and the bound is **3 s of waiting** (`HUNG_BOUND_MS`), 3x the 1 s health timeout;
+  - the same for the slow-ClickHouse test (503 before the server's 3 s answer, bound 2.5 s), the 50 parallel probes (one timeout, not fifty), and the never-resolving ping (it must really wait about 1 s: `>= 900 ms`, and end before 3 s).
+  - The meaning is kept: a `/healthz` that waited for the socket (which never answers) or used a 10 s timeout fails every one of them, and so does a missing 503. A full `pnpm test` still shows the first test at about 1.9 s of wall time (boot plus 1 s of waiting), which no longer counts.
+  - Stability: the file passed 16 of 16 runs, 8 at a time on one machine, and two full `pnpm test` runs.
+
+### Checks at the end of round 2
+
+- `pnpm lint && pnpm typecheck && pnpm test`: green (run twice). Per package: schema 342, demo-site 106, collector 139 (+2 expected fail, M1 QA-M1-03), fleet-runner 199 (19 skipped), db 99, grafana-tools 210, api 271.
+- `pnpm test:integration`: green. api 75, db 240.
+- `pnpm grafana:check`: green, 3 dashboards, 54 query runs, as `grafana_ro`. It warns "every query returned 0 rows" because your dev database has nothing from the last hour right now; that is not a failure.
+- `it.fails` left: none for M2. The two older ones are M1's QA-M1-03 (`collector.http.test.ts`, and an opt-in e2e), which are not part of this milestone.
+- `gh pr checks 5` (for the last pushed head `75a1ed3`, so it does not include any fix round yet): Lint/typecheck/unit, Integration, Fleet smoke and gitleaks pass; **GitGuardian and Vercel fail**.
+- Cleanup: the throwaway Grafana, the render database and its user are removed. Only the dev Grafana and ClickHouse are running, and the API on :4000.
+
+### Still open, for you to decide
+
+1. **GitGuardian** (QA-M2-14, won't fix in repo): five dev-password placeholders; Eyal marks them as false positives in the GitGuardian dashboard.
+2. **Vercel**: Eyal still has to disconnect the project.
+3. **Push:** `origin/m2-grafana-dashboards` is at `75a1ed3`. Everything after it is unpushed: all the engineers' fix rounds, my `6da2d04` and this round's commit. CI has only run the first pass, so the flaky-test fixes (QA-M1-07 scale test, `/healthz`) have not met a shared runner yet.
+4. **Cosmetic, not tracked as a bug:** Perfetto shows a thread's name and its id, so the first network lane reads "network 2" and the second "network 2 201". On the demo's heavy page 72% of the requests are not drawn (6 lanes); the note on the track and the "network in flight" counter say so.
+
+---
+
+## Re-test pass (fix round 1): was NOT READY, one open major (QA-M2-18, fixed in round 2)
 
 Every finding of the first pass that was marked fixed is **verified**, on the real thing wherever the bug was visible there: a fresh Grafana 13.2.4 pushed with `grafana:push` and pointed at the known fleet, read in Chrome (rendered text and the SQL that Grafana's frontend sent), the real Perfetto UI, `trace_processor`, and the live API. The fix round also **introduced one regression that no SQL check can see** (QA-M2-18, major). Its fix is one setting in five panels (verified in the same Grafana), so this is "not ready" only until that lands. Four new findings, all minor or nit.
 
@@ -34,7 +73,7 @@ Final state of the checks: `pnpm lint && pnpm typecheck && pnpm test` green; `pn
 | R-M2-06 | | **verified** | `grafana_ro` reads `join_use_nulls = 0`, `aggregate_functions_null_for_empty = 0`, an unmatched LEFT JOIN row is `0` / `''`, `sum()` of nothing is 0, and neither setting can be changed from a panel (`SETTINGS` clause or per-request) |
 | Ingest labels (`f648a4a`) | | **verified** | Every label field (`session_id`, `agent_id`, `provider`, `scenario`, `region`, `engine_version`, `error_code`) answers **400** for 16 values outside the pattern (space, quotes, `;`, `%`, newline, NUL, DEL, non-ASCII, an emoji, 129 characters, `{x:String}`), the whole batch is refused and nothing is stored; 128 characters and every allowed symbol are accepted. The trace and perfetto routes answer 400 for an id outside the pattern, never call the database, and never echo it; an id with `/ : @ +` works when percent-encoded. Tests updated: `events.edge.test.ts` (a whitespace-only id is rejected), `ingest.abuse.integration.test.ts` (the fuzz only varies free text; labels get 400) |
 
-### New findings of this pass
+### New findings of this pass (all four are fixed and verified in round 2, see above)
 
 #### QA-M2-18 (major, dashboard, a regression of the fix round): Session detail prints "—" where it must print "Not available" or "running"
 

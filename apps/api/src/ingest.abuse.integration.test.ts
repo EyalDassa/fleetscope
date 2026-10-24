@@ -1228,8 +1228,29 @@ describe("labels that dashboards put into SQL (SAFE_LABEL_PATTERN), over HTTP", 
         expect(res.status, `${field} = ${value.slice(0, 20)}`).toBe(202);
       }
     }
-    for (const value of GOOD) {
+    // a session id may contain dots, but not be just . or ..: no URL can name those (QA-M2-16)
+    for (const value of GOOD.filter((v) => v !== "..")) {
       expect((await post([started(value)])).status, value.slice(0, 20)).toBe(202);
+    }
+    for (const value of ["...", ".a", "a.", "a..b"]) {
+      expect((await post([started(value)])).status, value).toBe(202);
+    }
+  });
+
+  it("refuses . and .. as a session id (400, the whole batch) and still takes them in the other label fields", async () => {
+    const { post } = await listen();
+    const neighbour = sid("dots-neighbour");
+    for (const value of [".", ".."]) {
+      expect((await post([started(value)])).status, value).toBe(400);
+      expect((await post([started(neighbour), started(value)])).status, value).toBe(400);
+    }
+    await sleep(1500);
+    expect(await count("sessions", neighbour)).toBe(0);
+    for (const field of FIELDS.filter((f) => f !== "session_id")) {
+      for (const value of [".", ".."]) {
+        const res = await post(batchWith(field, value, sid("dots-ok")));
+        expect(res.status, `${field} = ${value}`).toBe(202);
+      }
     }
   });
 });
