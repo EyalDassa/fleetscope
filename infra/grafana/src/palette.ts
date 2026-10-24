@@ -1,16 +1,15 @@
 // The colours dashboards may use: the Dark column of design/DESIGN.md section 2.
 // If that table changes, change this file too (design-rules.test.ts compares the two).
+// Engines differ by colour only: every time series line is solid (DESIGN.md section 2).
 export interface Engine {
   name: string;
   color: string;
-  /** `custom.lineStyle.fill` of the engine's series. */
-  lineFill: "solid" | "dash" | "dot";
 }
 
 export const ENGINES: readonly Engine[] = [
-  { name: "chromium", color: "#56B4E9", lineFill: "solid" },
-  { name: "chrome-headless-shell", color: "#E69F00", lineFill: "dash" },
-  { name: "lightpanda", color: "#CC79A7", lineFill: "dot" },
+  { name: "chromium", color: "#56B4E9" },
+  { name: "chrome-headless-shell", color: "#E69F00" },
+  { name: "lightpanda", color: "#CC79A7" },
 ];
 
 /** The field default colour of time series: nothing falls back to Grafana's classic palette. */
