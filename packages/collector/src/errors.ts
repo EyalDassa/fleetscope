@@ -43,7 +43,7 @@ const MISSING_SUBTLE =
  */
 export function isMissingApiError(error: { name?: string; message?: string }): boolean {
   const message = error.message ?? "";
-  if (error.name === "ReferenceError" || /is not defined/.test(message)) return true;
+  if (error.name === "ReferenceError" || /\bis not defined\b/.test(message)) return true;
   return KNOWN_WEB_APIS.test(message) || MISSING_SUBTLE.test(message);
 }
 

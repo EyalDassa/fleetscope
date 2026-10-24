@@ -30,7 +30,8 @@ describe("isMissingApiError (known API names)", () => {
 
 describe("unsupported_feature", () => {
   it("recognises a CDP method the engine does not implement", () => {
-    const message = "Protocol error (Page.captureScreenshot): 'Page.captureScreenshot' wasn't found";
+    const message =
+      "Protocol error (Page.captureScreenshot): 'Page.captureScreenshot' wasn't found";
     expect(isUnsupportedFeatureError({ message })).toBe(true);
     expect(classifyError(new Error(message))).toBe("unsupported_feature");
   });
