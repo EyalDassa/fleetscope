@@ -8,6 +8,11 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { checkStructure, loadDashboardFiles } from "../dashboards";
+import {
+  LOCAL_GRAFANA_ADMIN_PASSWORD,
+  LOCAL_GRAFANA_ADMIN_USER,
+  LOCAL_GRAFANA_PORT,
+} from "../dev-defaults";
 import { complain, say } from "../out";
 import { GrafanaClient, PushError } from "../push";
 import { reloadDashboards, verifyDashboards } from "../reload";
@@ -59,9 +64,12 @@ async function waitForHealth(baseUrl: string): Promise<void> {
 async function main(): Promise<number> {
   const args = parseArgs(process.argv.slice(2));
   const env = process.env;
-  const baseUrl = `http://127.0.0.1:${env.GRAFANA_PORT || "3001"}`;
-  const password = env.GRAFANA_ADMIN_PASSWORD || "fleetscope_dev_admin";
-  const client = new GrafanaClient(baseUrl, undefined, fetch, { user: "admin", password });
+  const baseUrl = `http://127.0.0.1:${env.GRAFANA_PORT || LOCAL_GRAFANA_PORT}`;
+  const password = env.GRAFANA_ADMIN_PASSWORD || LOCAL_GRAFANA_ADMIN_PASSWORD;
+  const client = new GrafanaClient(baseUrl, undefined, fetch, {
+    user: LOCAL_GRAFANA_ADMIN_USER,
+    password,
+  });
   const files = loadDashboardFiles(DASHBOARDS_DIR);
 
   say(`local Grafana at ${baseUrl}, ${files.length} dashboard file(s)`);

@@ -11,10 +11,10 @@ import {
   pushToGrafana,
   withApiUrl,
 } from "./push";
-import { dashboardJson } from "./test-fixtures";
+import { dashboardJson, testPassword } from "./test-fixtures";
 
 const TOKEN = "glsa_super_secret_token_value";
-const PASSWORD = "ro-password-123";
+const PASSWORD = testPassword();
 const env = {
   CLICKHOUSE_URL: "https://abc.eu-central-1.aws.clickhouse.cloud:8443",
   CLICKHOUSE_GRAFANA_USER: "grafana_ro",
@@ -463,7 +463,7 @@ describe("buildDataSource", () => {
     const { CLICKHOUSE_GRAFANA_USER: _u, CLICKHOUSE_GRAFANA_PASSWORD: _p, ...withoutUser } = env;
     expect(() =>
       buildDataSource(
-        { ...withoutUser, CLICKHOUSE_USER: "admin", CLICKHOUSE_PASSWORD: "x" },
+        { ...withoutUser, CLICKHOUSE_USER: "admin", CLICKHOUSE_PASSWORD: testPassword() },
         false,
       ),
     ).toThrow(/read-only user/);

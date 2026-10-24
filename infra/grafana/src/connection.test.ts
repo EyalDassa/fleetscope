@@ -1,15 +1,14 @@
 import { describe, expect, it } from "vitest";
-import {
-  ConnectionConfigError,
-  connectionFromEnv,
-  LOCAL_GRAFANA_PASSWORD,
-  LOCAL_GRAFANA_USER,
-} from "./connection";
+import { ConnectionConfigError, connectionFromEnv } from "./connection";
 import { disallowedSettings, sqlRuleProblems } from "./design-rules";
+import { LOCAL_GRAFANA_PASSWORD, LOCAL_GRAFANA_USER } from "./dev-defaults";
+import { testPassword } from "./test-fixtures";
 
 // QA-M2-03: the check must run as the read-only Grafana user unless --admin is given on purpose.
 describe("connectionFromEnv", () => {
-  const admin = { CLICKHOUSE_USER: "fleetscope", CLICKHOUSE_PASSWORD: "admin-secret-value" };
+  const adminPassword = testPassword();
+  const readOnlyPassword = testPassword();
+  const admin = { CLICKHOUSE_USER: "fleetscope", CLICKHOUSE_PASSWORD: adminPassword };
 
   it("uses the configured read-only user", () => {
     const { connection, description } = connectionFromEnv(
@@ -17,7 +16,7 @@ describe("connectionFromEnv", () => {
         ...admin,
         CLICKHOUSE_URL: "https://abc.clickhouse.cloud:8443",
         CLICKHOUSE_GRAFANA_USER: "grafana_ro",
-        CLICKHOUSE_GRAFANA_PASSWORD: "read-only-secret",
+        CLICKHOUSE_GRAFANA_PASSWORD: readOnlyPassword,
         CLICKHOUSE_DATABASE: "db",
       },
       false,
@@ -25,12 +24,12 @@ describe("connectionFromEnv", () => {
     expect(connection).toEqual({
       url: "https://abc.clickhouse.cloud:8443",
       user: "grafana_ro",
-      password: "read-only-secret",
+      password: readOnlyPassword,
       database: "db",
     });
     expect(description).toContain("read-only Grafana user");
     expect(description).not.toContain("development default");
-    expect(description).not.toContain("read-only-secret");
+    expect(description).not.toContain(readOnlyPassword);
   });
 
   it("falls back to the development read-only user for a ClickHouse on this machine, never to the admin", () => {
@@ -44,9 +43,7 @@ describe("connectionFromEnv", () => {
       expect(connection.user).not.toBe(admin.CLICKHOUSE_USER);
       expect(description).toContain("development default");
     }
-    // the defaults are the ones of docker-compose and .env.example
-    expect(LOCAL_GRAFANA_USER).toBe("grafana_ro");
-    expect(LOCAL_GRAFANA_PASSWORD).toBe("grafana_ro_dev_password");
+    // dev-defaults.test.ts checks that these are the ones of .env.example
   });
 
   it("fills in only what is missing for a local ClickHouse", () => {
@@ -65,13 +62,17 @@ describe("connectionFromEnv", () => {
 
   it("uses the admin user only with --admin, and says so", () => {
     const { connection, description } = connectionFromEnv(
-      { ...admin, CLICKHOUSE_GRAFANA_USER: "grafana_ro", CLICKHOUSE_GRAFANA_PASSWORD: "x" },
+      {
+        ...admin,
+        CLICKHOUSE_GRAFANA_USER: "grafana_ro",
+        CLICKHOUSE_GRAFANA_PASSWORD: testPassword(),
+      },
       true,
     );
-    expect(connection).toMatchObject({ user: "fleetscope", password: "admin-secret-value" });
+    expect(connection).toMatchObject({ user: "fleetscope", password: adminPassword });
     expect(description).toContain("ADMIN");
     expect(description).toContain("--admin");
-    expect(description).not.toContain("admin-secret-value");
+    expect(description).not.toContain(adminPassword);
   });
 });
 

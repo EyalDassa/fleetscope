@@ -4,9 +4,9 @@ import type { DashboardFile } from "./dashboards";
 import type { JsonObject } from "./json";
 import { GrafanaClient, PushError } from "./push";
 import { reloadDashboards } from "./reload";
-import { dashboardJson } from "./test-fixtures";
+import { dashboardJson, testPassword } from "./test-fixtures";
 
-const PASSWORD = "admin-pw-for-test";
+const PASSWORD = testPassword();
 const overview = dashboardJson({ uid: "fleetscope-overview", title: "Overview v2" });
 const session = dashboardJson({ uid: "fleetscope-session", title: "Session" });
 
