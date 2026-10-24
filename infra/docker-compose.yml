@@ -8,7 +8,7 @@ services:
   clickhouse:
     # 26.8 is an LTS branch (the GitHub release tags end in "-lts"). Pinned to an exact patch so
     # local dev and CI run the same server. Keep this tag in sync with .github/workflows/ci.yml.
-    image: clickhouse/clickhouse-server:26.8.34.13
+    image: clickhouse/clickhouse-server:26.9.23.15
     restart: unless-stopped
     ports:
       # Bound to loopback only: the dev database should not be reachable from the LAN.
