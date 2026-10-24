@@ -91,15 +91,18 @@ describe("the alert files in the repository", () => {
     }
   });
 
-  it("copy the README alert SQL exactly, and use every capacity-alerts block", () => {
+  it("copy the README alert SQL exactly (memory uses the 1-minute block)", () => {
     const snippets = readNamedSnippets(readFileSync(README));
     expect([...snippets.keys()].filter((n) => n.startsWith("capacity-alerts-")).sort()).toEqual([
       "capacity-alerts-cpu-pct",
       "capacity-alerts-limits-changed",
       "capacity-alerts-load-mismatch-pct",
       "capacity-alerts-mem-pct",
+      "capacity-alerts-mem-pct-1m",
       "capacity-alerts-minutes-since-write",
     ]);
+    const used = files.flatMap((f) => JSON.stringify(f.json).match(/-- snippet: [\w-]+/g) ?? []);
+    expect(used).toContain("-- snippet: capacity-alerts-mem-pct-1m");
     expect(alertSnippetProblems(files, snippets)).toEqual([]);
   });
 
@@ -162,6 +165,30 @@ describe("alertStructureProblems", () => {
     expect(messages([file([zero])])).toContain("ifNull");
   });
 
+  it("RV-CAP-01: rejects dashboard variables and macros anywhere in a rule (alerting fills in none)", () => {
+    const withVariable = rule({
+      data: [
+        chQuery("-- snippet: x\nSELECT 1 AS value WHERE ts > $__fromTime"),
+        {
+          refId: "B",
+          datasourceUid: "clickhouse-cloud-api",
+          relativeTimeRange: { from: 600, to: 0 },
+          model: {
+            type: "json",
+            source: "url",
+            parser: "backend",
+            root_selector: "a",
+            url: "/usageCost?org=${ch_org}",
+          },
+        },
+      ],
+      condition: "A",
+    });
+    const text = messages([file([withVariable])]);
+    expect(text).toContain("no dashboard variables or macros");
+    expect(text).toContain("$__fromTime");
+  });
+
   it("wants an interval in whole seconds", () => {
     expect(messages([file([rule()], { interval: "1m" })])).toContain('"interval"');
   });
@@ -198,10 +225,7 @@ describe("README snippets", () => {
         ],
       }),
     ]);
-    const used = alertSnippetProblems([same], snippets).map((p) => p.message);
-    expect(used).toEqual([
-      "the README block `capacity-alerts-unused` is not used by any alert rule",
-    ]);
+    expect(alertSnippetProblems([same], snippets)).toEqual([]); // an unused block is fine
 
     const edited = file([
       rule({
@@ -229,7 +253,7 @@ describe("infinityQueryProblems (billing queries are never executed)", () => {
     source: "url",
     parser: "backend",
     root_selector: "result.costs",
-    url: "/v1/organizations/${ch_org}/usageCost?from_date=2026-10-24&to_date=2026-11-23",
+    url: "/usageCost?from_date=2026-10-24&to_date=2026-11-23",
     url_options: { method: "GET" },
   };
 
@@ -249,6 +273,8 @@ describe("infinityQueryProblems (billing queries are never executed)", () => {
     expect(text({ ...good, url: "https://api.clickhouse.cloud/v1/organizations" })).toContain(
       "url",
     );
+    expect(text({ ...good, url: "/v1/organizations/x/usageCost" })).toContain("url"); // the org is in the base URL
+    expect(text({ ...good, url: "/usageCost?from_date=${__from}" })).toContain("variable");
     expect(text({ ...good, url: `${String(good.url)}&apikey=abc` })).toContain("credentials");
     expect(text({ ...good, url: `${String(good.url)}&secret=abc` })).toContain("credentials");
     expect(

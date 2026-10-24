@@ -24,8 +24,8 @@ export function infinityQueryProblems(model: JsonObject, where: string): Problem
   );
   const url = asString(model.url) ?? "";
   need(
-    /^\/v1\/organizations\/[^/]+\/usageCost(\?|$)/.test(url),
-    'the "url" must be relative to the data source base URL and call /v1/organizations/<org>/usageCost (the org is the dashboard variable ${ch_org})',
+    /^\/usageCost(\?|$)/.test(url) && !/\$[{_]/.test(url),
+    'the "url" must be /usageCost?from_date=...&to_date=..., relative to the data source base URL, which already holds the organisation (https://api.clickhouse.cloud/v1/organizations/<org>). No ${...} variable: an alert rule has none',
   );
   const options = isObject(model.url_options) ? model.url_options : {};
   need((asString(options.method) ?? "GET") === "GET", "the billing API is read with GET");

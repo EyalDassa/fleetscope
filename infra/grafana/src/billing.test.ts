@@ -1,15 +1,13 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { loadAlertFiles } from "./alerts";
 import {
   BILLING_DATASOURCE_UID,
   buildBillingDataSource,
-  CH_ORG_VARIABLE,
-  chOrgFromEnv,
   ensureInfinityPlugin,
   INFINITY_PLUGIN_ID,
   INFINITY_PLUGIN_VERSION,
-  withConstantVariable,
 } from "./billing";
 import { loadDashboardFiles } from "./dashboards";
 import { fakeGrafana } from "./fake-grafana";
@@ -21,23 +19,26 @@ const KEY_ID = `id_${testPassword()}`;
 const KEY_SECRET = `secret_${testPassword()}`;
 const ORG = "3f1c2d4e-0000-4000-8000-000000000001";
 const TOKEN = `glsa_${testPassword()}`;
+const ENV = {
+  CLICKHOUSE_CLOUD_KEY_ID: KEY_ID,
+  CLICKHOUSE_CLOUD_KEY_SECRET: KEY_SECRET,
+  CLICKHOUSE_CLOUD_ORG_ID: ORG,
+};
 
 describe("buildBillingDataSource", () => {
-  it("builds the data source with basic auth, one allowed host and the secret in secureJsonData", () => {
-    const built = buildBillingDataSource({
-      CLICKHOUSE_CLOUD_KEY_ID: KEY_ID,
-      CLICKHOUSE_CLOUD_KEY_SECRET: KEY_SECRET,
-    });
+  it("puts the organisation in the base URL and pins the one endpoint it needs", () => {
+    const built = buildBillingDataSource(ENV);
     expect(built.enabled).toBe(true);
     if (!built.enabled) return;
+    const base = `https://api.clickhouse.cloud/v1/organizations/${ORG}`;
     expect(built.dataSource).toMatchObject({
       uid: "clickhouse-cloud-api",
       name: "ClickHouse Cloud API",
       type: "yesoreyeram-infinity-datasource",
-      url: "https://api.clickhouse.cloud",
+      url: base,
       basicAuth: true,
       basicAuthUser: KEY_ID,
-      jsonData: { auth_method: "basicAuth", allowedHosts: ["https://api.clickhouse.cloud"] },
+      jsonData: { auth_method: "basicAuth", allowedHosts: [`${base}/usageCost`] },
       secureJsonData: { basicAuthPassword: KEY_SECRET },
     });
     // the secret is only in secureJsonData
@@ -46,55 +47,34 @@ describe("buildBillingDataSource", () => {
     );
   });
 
-  it("is skipped, not an error, without the key", () => {
-    const built = buildBillingDataSource({});
-    expect(built.enabled).toBe(false);
-    if (!built.enabled) expect(built.reason).toMatch(/not set.*skipped/);
+  it("is skipped, not an error, without the key or the org id, and names what is missing", () => {
+    const none = buildBillingDataSource({});
+    expect(none.enabled).toBe(false);
+    if (!none.enabled) {
+      expect(none.reason).toContain("CLICKHOUSE_CLOUD_KEY_ID");
+      expect(none.reason).toContain("CLICKHOUSE_CLOUD_ORG_ID");
+    }
+    const noOrg = buildBillingDataSource({ ...ENV, CLICKHOUSE_CLOUD_ORG_ID: "" });
+    expect(noOrg.enabled).toBe(false);
+    if (!noOrg.enabled) {
+      expect(noOrg.reason).toContain("CLICKHOUSE_CLOUD_ORG_ID");
+      expect(noOrg.reason).not.toContain("KEY_ID");
+    }
+    const noSecret = buildBillingDataSource({ ...ENV, CLICKHOUSE_CLOUD_KEY_SECRET: "" });
+    if (!noSecret.enabled) expect(noSecret.reason).toContain("CLICKHOUSE_CLOUD_KEY_SECRET");
+    // a reason never contains a value
+    for (const r of [none, noOrg, noSecret]) {
+      if (!r.enabled) {
+        expect(r.reason).not.toContain(KEY_ID);
+        expect(r.reason).not.toContain(KEY_SECRET);
+      }
+    }
   });
 
-  it("is skipped with a clear note when only one of the two is set", () => {
-    const onlyId = buildBillingDataSource({ CLICKHOUSE_CLOUD_KEY_ID: KEY_ID });
-    expect(onlyId.enabled).toBe(false);
-    if (!onlyId.enabled) expect(onlyId.reason).toContain("CLICKHOUSE_CLOUD_KEY_SECRET");
-    const onlySecret = buildBillingDataSource({ CLICKHOUSE_CLOUD_KEY_SECRET: KEY_SECRET });
-    if (!onlySecret.enabled) expect(onlySecret.reason).toContain("CLICKHOUSE_CLOUD_KEY_ID");
-    // the reason never contains a value
-    if (!onlyId.enabled) expect(onlyId.reason).not.toContain(KEY_ID);
-  });
-
-  it("reads the org id, empty counts as unset", () => {
-    expect(chOrgFromEnv({ CLICKHOUSE_CLOUD_ORG_ID: ` ${ORG} ` })).toBe(ORG);
-    expect(chOrgFromEnv({ CLICKHOUSE_CLOUD_ORG_ID: "" })).toBeUndefined();
-    expect(chOrgFromEnv({})).toBeUndefined();
-  });
-});
-
-describe("withConstantVariable", () => {
-  const dashboard = dashboardJson({
-    templating: {
-      list: [
-        { name: CH_ORG_VARIABLE, type: "constant", query: "", hide: 2 },
-        { name: "other", type: "constant", query: "keep" },
-      ],
-    },
-  });
-
-  it("writes query, current and options of the named constant only", () => {
-    const out = withConstantVariable(dashboard, CH_ORG_VARIABLE, ORG);
-    const list = (out.templating as JsonObject).list as JsonObject[];
-    expect(list[0]).toMatchObject({
-      name: "ch_org",
-      query: ORG,
-      current: { value: ORG },
-      options: [{ value: ORG, selected: true }],
-      hide: 2,
-    });
-    expect(list[1]?.query).toBe("keep");
-  });
-
-  it("returns the dashboard itself when it has no such variable", () => {
-    const plain = dashboardJson();
-    expect(withConstantVariable(plain, CH_ORG_VARIABLE, ORG)).toBe(plain);
+  it("refuses an organisation id that is not a UUID (it becomes part of a URL)", () => {
+    const bad = buildBillingDataSource({ ...ENV, CLICKHOUSE_CLOUD_ORG_ID: "x/../services" });
+    expect(bad.enabled).toBe(false);
+    if (!bad.enabled) expect(bad.reason).toContain("not an organisation id");
   });
 });
 
@@ -105,6 +85,20 @@ describe("pinned plugin version", () => {
       "utf8",
     );
     expect(compose).toContain(`${INFINITY_PLUGIN_ID}@${INFINITY_PLUGIN_VERSION}`);
+  });
+
+  it("the local provisioning file has the same shape as the one the push builds", () => {
+    const yaml = readFileSync(
+      fileURLToPath(new URL("../optional-provisioning/clickhouse-cloud-api.yaml", import.meta.url)),
+      "utf8",
+    );
+    expect(yaml).toContain("uid: clickhouse-cloud-api");
+    expect(yaml).toContain(
+      "url: https://api.clickhouse.cloud/v1/organizations/$CLICKHOUSE_CLOUD_ORG_ID",
+    );
+    expect(yaml).toContain(
+      "- https://api.clickhouse.cloud/v1/organizations/$CLICKHOUSE_CLOUD_ORG_ID/usageCost",
+    );
   });
 });
 
@@ -150,35 +144,32 @@ describe("ensureInfinityPlugin", () => {
   });
 });
 
-describe("pushToGrafana: billing and ch_org", () => {
+describe("pushToGrafana: billing data source and billing alerts", () => {
   const chEnv = {
     CLICKHOUSE_URL: "https://abc.eu-central-1.aws.clickhouse.cloud:8443",
     CLICKHOUSE_GRAFANA_USER: "grafana_ro",
     CLICKHOUSE_GRAFANA_PASSWORD: testPassword(),
   };
-  const capacity = dashboardJson({
-    uid: "fleetscope-capacity",
-    title: "Fleetscope / Capacity",
-    templating: { list: [{ name: "ch_org", type: "constant", query: "", hide: 2 }] },
-  });
+  const alertFiles = loadAlertFiles(fileURLToPath(new URL("../alerts", import.meta.url)));
+  const billingGroup = "Fleetscope billing";
+  const groupKey = `fleetscope/${billingGroup}`;
 
-  function run(
-    overrides: Partial<PushOptions> = {},
-    key: Record<string, string> = {
-      CLICKHOUSE_CLOUD_KEY_ID: KEY_ID,
-      CLICKHOUSE_CLOUD_KEY_SECRET: KEY_SECRET,
-    },
-  ) {
+  function run(overrides: Partial<PushOptions> = {}, env: Record<string, string> = ENV) {
     const grafana = fakeGrafana();
     const lines: string[] = [];
     const options: PushOptions = {
       client: new GrafanaClient("https://stack.grafana.net", TOKEN, grafana.fetchImpl),
       dataSource: buildDataSource(chEnv, false),
       dashboardFiles: [
-        { file: "fleetscope-capacity.json", path: "x", json: capacity, parseError: undefined },
+        {
+          file: "d.json",
+          path: "d",
+          json: dashboardJson({ uid: "fleetscope-capacity", title: "Capacity" }),
+          parseError: undefined,
+        },
       ],
-      billing: buildBillingDataSource(key),
-      chOrg: ORG,
+      billing: buildBillingDataSource(env),
+      alertFiles,
       apiUrl: undefined,
       grafanaIsLocal: false,
       dryRun: false,
@@ -190,40 +181,85 @@ describe("pushToGrafana: billing and ch_org", () => {
     return { grafana, lines, options, result: () => pushToGrafana(options) };
   }
 
-  it("installs the plugin, creates the data source, writes ch_org, and never prints the key", async () => {
+  it("installs the plugin, creates the data source with the org in its URL, pushes both billing rules, never prints the key", async () => {
     const t = run();
     const result = await t.result();
     expect(result.infinityPlugin).toBe("installed");
     expect(result.billingSource).toBe("created");
     expect(t.grafana.state.sources.get(BILLING_DATASOURCE_UID)).toMatchObject({
+      url: `https://api.clickhouse.cloud/v1/organizations/${ORG}`,
       basicAuthUser: KEY_ID,
       secureJsonData: { basicAuthPassword: KEY_SECRET },
     });
-    const stored = t.grafana.state.dashboards.get("fleetscope-capacity") as JsonObject;
-    const org = ((stored.templating as JsonObject).list as JsonObject[])[0];
-    expect(org?.query).toBe(ORG);
+    expect(t.grafana.state.ruleGroups.get(groupKey)?.rules).toHaveLength(2);
     const output = t.lines.join("\n");
-    expect(output).not.toContain(KEY_SECRET);
-    expect(output).not.toContain(KEY_ID);
+    for (const secret of [KEY_SECRET, KEY_ID, ORG]) expect(output).not.toContain(secret);
     expect(output).toContain("data source clickhouse-cloud-api  created");
   });
 
-  it("a second push finds the plugin and updates the data source, the dashboard is unchanged", async () => {
+  it("a second push finds the plugin and updates the data source, the rules are unchanged", async () => {
     const first = run();
     await first.result();
     const second = await pushToGrafana({ ...first.options, log: () => undefined });
     expect(second.infinityPlugin).toBe("unchanged");
     expect(second.billingSource).toBe("updated");
-    expect(second.dashboards).toEqual([{ uid: "fleetscope-capacity", action: "unchanged" }]);
+    expect(second.alerts.map((a) => a.action)).toEqual(["unchanged", "unchanged"]);
   });
 
-  it("without the key the data source is skipped with a note, and the push still works", async () => {
+  it("RV-CAP-02: a push without the key leaves an existing billing group and data source as they are", async () => {
+    const first = run();
+    await first.result();
+    const before = JSON.stringify(first.grafana.state.ruleGroups.get(groupKey));
+    // same Grafana, a machine without the key
+    const second = await pushToGrafana({
+      ...first.options,
+      billing: buildBillingDataSource({}),
+      log: (l) => first.lines.push(l),
+    });
+    expect(second.billingSource).toBe("skipped");
+    expect(second.alerts.find((a) => a.group === billingGroup)).toMatchObject({
+      rules: 2,
+      action: "unchanged",
+    });
+    expect(JSON.stringify(first.grafana.state.ruleGroups.get(groupKey))).toBe(before);
+    expect(first.grafana.state.sources.has(BILLING_DATASOURCE_UID)).toBe(true);
+    const billingPuts = first.grafana.state.calls.filter(
+      (c) => c.startsWith("PUT") && c.includes("rule-groups/Fleetscope%20billing"),
+    );
+    expect(billingPuts).toHaveLength(1); // the first push only
+    expect(first.lines.join("\n")).toContain("exists on this Grafana");
+  });
+
+  it("RV-CAP-02: no data source anywhere: the billing group is not sent at all, an existing one is not emptied", async () => {
+    const t = run({ billing: buildBillingDataSource({}) });
+    // an earlier push left a billing group, then somebody deleted the data source
+    t.grafana.state.ruleGroups.set(groupKey, {
+      title: billingGroup,
+      rules: [{ uid: "x" }, { uid: "y" }],
+    });
+    const result = await t.result();
+    expect(result.alerts.find((a) => a.group === billingGroup)).toMatchObject({
+      rules: 0,
+      action: "unchanged",
+    });
+    expect(t.grafana.state.ruleGroups.get(groupKey)?.rules).toHaveLength(2);
+    expect(
+      t.grafana.state.calls.filter(
+        (c) => c.startsWith("PUT") && c.includes("rule-groups/Fleetscope%20billing"),
+      ),
+    ).toEqual([]);
+    expect(t.lines.join("\n")).toContain("left as it is");
+  });
+
+  it("without the key and without a billing group on Grafana, the push still works and says why", async () => {
     const t = run({ billing: buildBillingDataSource({}) });
     const result = await t.result();
     expect(result.billingSource).toBe("skipped");
     expect(result.infinityPlugin).toBe("not-needed");
     expect(t.grafana.state.sources.has(BILLING_DATASOURCE_UID)).toBe(false);
-    expect(t.lines.join("\n")).toContain("note        billing: CLICKHOUSE_CLOUD_KEY_ID");
+    expect(t.grafana.state.ruleGroups.has(groupKey)).toBe(false);
+    expect(t.grafana.state.ruleGroups.has("fleetscope/Fleetscope capacity")).toBe(true);
+    expect(t.lines.join("\n")).toContain("note        billing: ");
   });
 
   it("an install refused by Grafana skips the data source and warns, it does not fail the push", async () => {
@@ -245,68 +281,49 @@ describe("pushToGrafana: billing and ch_org", () => {
       t.grafana.state.calls.filter((c) => c.startsWith("POST") || c.startsWith("PUT")),
     ).toEqual([]);
   });
-
-  it("warns when a dashboard has ch_org but CLICKHOUSE_CLOUD_ORG_ID is not set", async () => {
-    const t = run({ chOrg: undefined });
-    const result = await t.result();
-    expect(result.warnings.join(" ")).toContain("CLICKHOUSE_CLOUD_ORG_ID is not set");
-  });
 });
 
-describe("the committed Capacity dashboard and ch_org", () => {
-  const files = loadDashboardFiles(fileURLToPath(new URL("../dashboards", import.meta.url))).filter(
-    (f) => f.json?.uid === "fleetscope-capacity",
-  );
-  const variable = (json: JsonObject): JsonObject | undefined =>
-    (((json.templating as JsonObject).list as JsonObject[]) ?? []).find((v) => v.name === "ch_org");
+describe("the committed Capacity dashboard and billing alerts need no variable", () => {
+  const dir = fileURLToPath(new URL("../dashboards", import.meta.url));
+  const capacity = loadDashboardFiles(dir).find((f) => f.json?.uid === "fleetscope-capacity");
+  const alerts = loadAlertFiles(fileURLToPath(new URL("../alerts", import.meta.url)));
 
-  function push(chOrg: string | undefined) {
-    const grafana = fakeGrafana();
-    const lines: string[] = [];
-    const options: PushOptions = {
-      client: new GrafanaClient("https://stack.grafana.net", TOKEN, grafana.fetchImpl),
-      dataSource: buildDataSource(
-        {
-          CLICKHOUSE_URL: "https://abc.eu-central-1.aws.clickhouse.cloud:8443",
-          CLICKHOUSE_GRAFANA_USER: "grafana_ro",
-          CLICKHOUSE_GRAFANA_PASSWORD: testPassword(),
-        },
-        false,
-      ),
-      dashboardFiles: files,
-      billing: buildBillingDataSource({}),
-      chOrg,
-      apiUrl: undefined,
-      grafanaIsLocal: false,
-      dryRun: false,
-      canRead: true,
-      skipHealthCheck: true,
-      log: (line) => lines.push(line),
-    };
-    return { grafana, lines, run: () => pushToGrafana(options) };
-  }
-
-  it("is in the repository with a placeholder ch_org", () => {
-    expect(files).toHaveLength(1);
-    expect(variable((files[0] as { json: JsonObject }).json)?.query).toBe("set-by-grafana-push");
+  it("has no ch_org variable and no billing URL with a variable or an organisation", () => {
+    const text = JSON.stringify(capacity?.json);
+    expect(capacity).toBeDefined();
+    expect(text).not.toContain("ch_org");
+    expect(text).not.toContain("/v1/organizations");
   });
 
-  it("the push overwrites the placeholder with CLICKHOUSE_CLOUD_ORG_ID (query, current and options)", async () => {
-    const t = push(ORG);
-    await t.run();
-    const stored = variable(t.grafana.state.dashboards.get("fleetscope-capacity") as JsonObject);
-    expect(stored).toMatchObject({
-      query: ORG,
-      current: { value: ORG, text: ORG },
-      options: [{ value: ORG }],
-    });
+  it("the billing alert rules call /usageCost with a literal date range, execErrState Error", () => {
+    const rules = alerts
+      .flatMap((f) => f.json.rules as JsonObject[])
+      .filter((r) =>
+        (r.data as JsonObject[]).some((q) => q.datasourceUid === BILLING_DATASOURCE_UID),
+      );
+    expect(rules).toHaveLength(2);
+    for (const rule of rules) {
+      expect(rule.execErrState).toBe("Error");
+      const model = (rule.data as JsonObject[])[0]?.model as JsonObject;
+      expect(model.url).toMatch(
+        /^\/usageCost\?from_date=\d{4}-\d{2}-\d{2}&to_date=\d{4}-\d{2}-\d{2}$/,
+      );
+    }
   });
 
-  it("without the env the placeholder stays and the push says so", async () => {
-    const t = push(undefined);
-    await t.run();
-    const stored = variable(t.grafana.state.dashboards.get("fleetscope-capacity") as JsonObject);
-    expect(stored?.query).toBe("set-by-grafana-push");
-    expect(t.lines.join("\n")).toContain("CLICKHOUSE_CLOUD_ORG_ID is not set");
+  it("the trial constants agree everywhere (RV-CAP-13): start 2026-10-24, end 2026-11-23, credit 300", () => {
+    const billing = JSON.stringify(alerts.find((f) => f.file === "billing.json")?.json);
+    const dashboard = JSON.stringify(capacity?.json);
+    for (const [name, text] of [
+      ["billing.json", billing],
+      ["fleetscope-capacity.json", dashboard],
+    ] as const) {
+      expect(text, `${name} start`).toContain("2026-10-24");
+      expect(text, `${name} end`).toContain("2026-11-23");
+      expect(text, `${name} credit`).toMatch(/\b300\b/);
+      // no other trial-looking date sneaks in
+      const dates = new Set(text.match(/2026-1[01]-\d{2}/g));
+      expect([...dates].sort(), name).toEqual(["2026-10-24", "2026-11-23"]);
+    }
   });
 });

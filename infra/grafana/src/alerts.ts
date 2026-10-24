@@ -65,6 +65,14 @@ export function loadAlertFiles(dir: string): AlertFile[] {
   });
 }
 
+/** Every string anywhere inside a JSON value. */
+function stringsIn(value: unknown): string[] {
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) return value.flatMap(stringsIn);
+  if (isObject(value)) return Object.values(value).flatMap(stringsIn);
+  return [];
+}
+
 export function rulesOf(group: JsonObject): JsonObject[] {
   return asArray(group.rules).filter(isObject);
 }
@@ -113,6 +121,17 @@ export function alertStructureProblems(files: AlertFile[]): Problem[] {
       else if (titles.has(name))
         problems.push({ where, message: "the rule title is used twice in this group" });
       titles.add(name);
+      // Grafana alerting fills in no dashboard variable and no time macro: a rule that has one sends it
+      // literally (the billing rules once called /organizations/${ch_org}/ and could never fire).
+      for (const text of stringsIn(rule.data)) {
+        if (/\$\{|\$__/.test(text)) {
+          problems.push({
+            where,
+            message: `contains "${(/\$\{[^}]*\}?|\$__\w+/.exec(text) ?? [""])[0]}": an alert rule has no dashboard variables or macros, and Grafana would send it as it is. Put the value in the data source or write it out`,
+          });
+          break;
+        }
+      }
       const uid = asString(rule.uid);
       if (!uid || !RULE_UID.test(uid)) {
         problems.push({
@@ -225,12 +244,11 @@ function clickHouseQueryProblems(model: JsonObject, where: string): Problem[] {
 const ALERT_BLOCK_PREFIX = "capacity-alerts-";
 
 /**
- * Every ClickHouse alert query must be a copy of a README block (snippet-copies.ts), and every
- * `capacity-alerts-*` block must be used by some rule.
+ * Every ClickHouse alert query must be a copy of a README block (snippet-copies.ts). (A `capacity-alerts-*`
+ * block that no rule uses is fine: `capacity-alerts-mem-pct` feeds a dashboard stat, the rule uses the 1-minute one.)
  */
 export function alertSnippetProblems(files: AlertFile[], snippets: Map<string, string>): Problem[] {
   const problems: Problem[] = [];
-  const used = new Set<string>();
   for (const { file, json } of files) {
     for (const rule of rulesOf(json)) {
       for (const item of dataOf(rule).filter(isClickHouseQuery)) {
@@ -240,17 +258,6 @@ export function alertSnippetProblems(files: AlertFile[], snippets: Map<string, s
         const where = `alerts/${file}, rule "${String(rule.title)}", query ${String(item.refId)}`;
         const found = snippetCopyProblems(sql, snippets, { where, requireCopy: true });
         problems.push(...found.problems);
-        if (found.used) used.add(found.used);
-      }
-    }
-  }
-  if (files.length > 0) {
-    for (const name of snippets.keys()) {
-      if (name.startsWith(ALERT_BLOCK_PREFIX) && !used.has(name)) {
-        problems.push({
-          where: "alerts/",
-          message: `the README block \`${name}\` is not used by any alert rule`,
-        });
       }
     }
   }
@@ -399,6 +406,14 @@ export async function pushAlertGroups(
       )
       .map((rule) => String(rule.title));
     const path = `/api/v1/provisioning/folder/${encodeURIComponent(folderUid)}/rule-groups/${encodeURIComponent(title)}`;
+    // Every rule skipped: send nothing. A PUT with no rules would empty the group on Grafana.
+    if (wantedRules === 0) {
+      results.push({ group: title, rules: 0, action: "unchanged", skipped });
+      options.log(
+        `alerts      ${title}  left as it is  (all ${skipped.length} rule(s) need the data source ${BILLING_DATASOURCE_UID}, which this push does not set up and Grafana does not have)`,
+      );
+      continue;
+    }
     const existing = options.read ? await client.get(path) : undefined;
     let action: Action = "created";
     if (isObject(existing)) {

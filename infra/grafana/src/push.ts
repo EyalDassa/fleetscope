@@ -21,11 +21,8 @@ import {
 import {
   BILLING_DATASOURCE_UID,
   type BillingConfig,
-  CH_ORG_VARIABLE,
   ensureInfinityPlugin,
-  hasConstantVariable,
   type PluginResult,
-  withConstantVariable,
 } from "./billing";
 import type { Fetch } from "./clickhouse-http";
 import {
@@ -282,8 +279,6 @@ export interface PushOptions {
   dashboardFiles: DashboardFile[];
   /** The ClickHouse Cloud billing data source, or why there is none. Default: skipped without a reason. */
   billing?: BillingConfig;
-  /** CLICKHOUSE_CLOUD_ORG_ID: written into the dashboards' constant variable `ch_org`. */
-  chOrg?: string;
   /** infra/grafana/alerts/*.json: rule groups for the official folder. */
   alertFiles?: AlertFile[];
   /** FLEETSCOPE_API_URL: written into the dashboards' `api_url` variable. */
@@ -391,8 +386,6 @@ export async function pushToGrafana(options: PushOptions): Promise<PushResult> {
       if (committed !== undefined)
         keepingCommittedUrl.push({ file: dashboard.file, url: committed });
     }
-    if (options.chOrg !== undefined)
-      body = withConstantVariable(body, CH_ORG_VARIABLE, options.chOrg);
     return { dashboard, body };
   });
 
@@ -417,16 +410,6 @@ export async function pushToGrafana(options: PushOptions): Promise<PushResult> {
     warnings.push(
       `FLEETSCOPE_API_URL is not set, so the Perfetto links (${keepingCommittedUrl.map((k) => k.file).join(", ")}) keep the committed ${urls}. Set it to the URL of your API; http://localhost:4000 only works on the machine running the API`,
     );
-  }
-  if (options.chOrg === undefined) {
-    const needing = prepared
-      .filter(({ body }) => hasConstantVariable(body, CH_ORG_VARIABLE))
-      .map(({ dashboard }) => dashboard.file);
-    if (needing.length > 0) {
-      warnings.push(
-        `CLICKHOUSE_CLOUD_ORG_ID is not set, so the billing panels (${needing.join(", ")}) keep the committed ${CH_ORG_VARIABLE} and will show no data`,
-      );
-    }
   }
   for (const warning of warnings) log(`warning     ${warning}`);
 
@@ -532,11 +515,22 @@ export async function pushToGrafana(options: PushOptions): Promise<PushResult> {
         else await client.send("POST", "/api/datasources", spec);
       }
       log(
-        `data source ${spec.uid}  ${would}${billingSource}${billingSource === "updated" ? " (the key cannot be compared, so it is always sent again)" : ""}  (${spec.url}, only that host allowed, key ********)`,
+        `data source ${spec.uid}  ${would}${billingSource}${billingSource === "updated" ? " (the key cannot be compared, so it is always sent again)" : ""}  (https://api.clickhouse.cloud/v1/organizations/<org>, only its /usageCost allowed, key ********)`,
       );
     }
   } else {
     log(`note        billing: ${billing.reason}`);
+  }
+  // Whether the alert rules that read the billing data source can go: decided by the TARGET Grafana, not by
+  // this machine's environment. A push without the key must not remove rules whose data source still exists.
+  let billingAvailable = billingSource !== "skipped";
+  if (!billingAvailable && read) {
+    billingAvailable = isObject(await client.get(`/api/datasources/uid/${BILLING_DATASOURCE_UID}`));
+    if (billingAvailable) {
+      log(
+        `note        billing: ${BILLING_DATASOURCE_UID} exists on this Grafana, so it is left as it is and its alert rules are pushed`,
+      );
+    }
   }
 
   // 3. Dashboards. The drift guard compares the last author with the token's login (`me`).
@@ -658,9 +652,7 @@ export async function pushToGrafana(options: PushOptions): Promise<PushResult> {
   }
 
   // 3b. Alert rules, after the data sources and the folder they refer to exist.
-  const skipDataSources = new Set<string>(
-    billingSource === "skipped" ? [BILLING_DATASOURCE_UID] : [],
-  );
+  const skipDataSources = new Set<string>(billingAvailable ? [] : [BILLING_DATASOURCE_UID]);
   const alerts = await pushAlertGroups(client, options.alertFiles ?? [], {
     dryRun,
     // A dry run that could not read the folder cannot tell created from updated; it reads whatever it can.

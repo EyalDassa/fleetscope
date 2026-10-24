@@ -4,7 +4,7 @@
   "rules": [
     {
       "uid": "fs-capacity-memory-warning",
-      "title": "ClickHouse memory above 80%",
+      "title": "ClickHouse memory above 75%",
       "condition": "C",
       "data": [
         {
@@ -23,7 +23,7 @@
             "editorType": "sql",
             "format": 1,
             "queryType": "table",
-            "rawSql": "-- snippet: capacity-alerts-mem-pct\nSELECT maxOrNull(pct) AS value\nFROM\n(\n    SELECT\n        100 * maxIfOrNull(value, metric = 'CGroupMemoryUsed')\n            / nullIf(maxIfOrNull(value, metric = 'CGroupMemoryTotal'), 0) AS pct\n    FROM system.asynchronous_metric_log\n    WHERE event_time >= now() - INTERVAL 10 MINUTE\n      AND metric IN ('CGroupMemoryUsed', 'CGroupMemoryTotal')\n    GROUP BY toStartOfMinute(event_time), hostname\n)",
+            "rawSql": "-- snippet: capacity-alerts-mem-pct-1m\nSELECT maxOrNull(pct) AS value\nFROM\n(\n    SELECT\n        100 * avgIfOrNull(value, metric = 'CGroupMemoryUsedWithoutPageCache')\n            / nullIf(maxIfOrNull(value, metric = 'CGroupMemoryTotal'), 0) AS pct\n    FROM system.asynchronous_metric_log\n    WHERE event_time >= toStartOfMinute(now()) - INTERVAL 1 MINUTE\n      AND event_time < toStartOfMinute(now())\n      AND metric IN ('CGroupMemoryUsedWithoutPageCache', 'CGroupMemoryTotal')\n    GROUP BY hostname\n)",
             "intervalMs": 1000,
             "maxDataPoints": 43200
           }
@@ -60,7 +60,7 @@
               {
                 "evaluator": {
                   "type": "gt",
-                  "params": [80]
+                  "params": [75]
                 }
               }
             ]
@@ -71,8 +71,8 @@
       "noDataState": "OK",
       "execErrState": "Error",
       "annotations": {
-        "summary": "ClickHouse memory is above 80% of its limit",
-        "description": "The highest memory use of any replica over the last 10 minutes is above 80% of its limit, for 10 minutes. If this keeps up, ClickHouse Cloud may scale up (see the Capacity dashboard) or queries will start failing."
+        "summary": "ClickHouse memory has been above 75% of its limit for 10 minutes",
+        "description": "The memory (without page cache) of the busiest replica, averaged over the last whole minute, was above 75% of its limit at every check for 10 minutes. ClickHouse starts refusing queries at about 90%. If this keeps up, ClickHouse Cloud may scale up (see the Capacity dashboard)."
       },
       "labels": {
         "severity": "warning"
@@ -81,7 +81,7 @@
     },
     {
       "uid": "fs-capacity-memory-critical",
-      "title": "ClickHouse memory above 90%",
+      "title": "ClickHouse memory above 85%",
       "condition": "C",
       "data": [
         {
@@ -100,7 +100,7 @@
             "editorType": "sql",
             "format": 1,
             "queryType": "table",
-            "rawSql": "-- snippet: capacity-alerts-mem-pct\nSELECT maxOrNull(pct) AS value\nFROM\n(\n    SELECT\n        100 * maxIfOrNull(value, metric = 'CGroupMemoryUsed')\n            / nullIf(maxIfOrNull(value, metric = 'CGroupMemoryTotal'), 0) AS pct\n    FROM system.asynchronous_metric_log\n    WHERE event_time >= now() - INTERVAL 10 MINUTE\n      AND metric IN ('CGroupMemoryUsed', 'CGroupMemoryTotal')\n    GROUP BY toStartOfMinute(event_time), hostname\n)",
+            "rawSql": "-- snippet: capacity-alerts-mem-pct-1m\nSELECT maxOrNull(pct) AS value\nFROM\n(\n    SELECT\n        100 * avgIfOrNull(value, metric = 'CGroupMemoryUsedWithoutPageCache')\n            / nullIf(maxIfOrNull(value, metric = 'CGroupMemoryTotal'), 0) AS pct\n    FROM system.asynchronous_metric_log\n    WHERE event_time >= toStartOfMinute(now()) - INTERVAL 1 MINUTE\n      AND event_time < toStartOfMinute(now())\n      AND metric IN ('CGroupMemoryUsedWithoutPageCache', 'CGroupMemoryTotal')\n    GROUP BY hostname\n)",
             "intervalMs": 1000,
             "maxDataPoints": 43200
           }
@@ -137,7 +137,7 @@
               {
                 "evaluator": {
                   "type": "gt",
-                  "params": [90]
+                  "params": [85]
                 }
               }
             ]
@@ -148,8 +148,8 @@
       "noDataState": "OK",
       "execErrState": "Error",
       "annotations": {
-        "summary": "ClickHouse memory is above 90% of its limit",
-        "description": "The highest memory use of any replica over the last 10 minutes is above 90% of its limit. Queries and inserts can fail with MEMORY_LIMIT_EXCEEDED."
+        "summary": "ClickHouse memory has been above 85% of its limit for 5 minutes",
+        "description": "The memory (without page cache) of the busiest replica, averaged over the last whole minute, was above 85% of its limit at every check for 5 minutes. ClickHouse refuses queries at about 90%, so queries and inserts can start failing with MEMORY_LIMIT_EXCEEDED."
       },
       "labels": {
         "severity": "critical"

@@ -65,10 +65,11 @@ services:
       GF_PLUGINS_PREINSTALL_SYNC: grafana-clickhouse-datasource@4.23.2,yesoreyeram-infinity-datasource@4.1.3
       # Grafana reads its provisioning from a copy made at start (see the entrypoint below).
       GF_PATHS_PROVISIONING: /tmp/provisioning
-      # ClickHouse Cloud API key for the billing data source. Both unset (the default): no billing
+      # ClickHouse Cloud API key and organisation id for the billing data source. Any unset (the default): no billing
       # data source locally. See infra/grafana/README.md, "Billing".
       CLICKHOUSE_CLOUD_KEY_ID: ${CLICKHOUSE_CLOUD_KEY_ID:-}
       CLICKHOUSE_CLOUD_KEY_SECRET: ${CLICKHOUSE_CLOUD_KEY_SECRET:-}
+      CLICKHOUSE_CLOUD_ORG_ID: ${CLICKHOUSE_CLOUD_ORG_ID:-}
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-fleetscope_dev_admin}
       # Anyone who can reach 127.0.0.1:3001 can look at the dashboards without logging in,
@@ -99,10 +100,10 @@ services:
       - -c
       - >-
         mkdir -p /tmp/provisioning && cp -r /provisioning/base/. /tmp/provisioning/ &&
-        if [ -n "$$CLICKHOUSE_CLOUD_KEY_ID" ] && [ -n "$$CLICKHOUSE_CLOUD_KEY_SECRET" ]; then
+        if [ -n "$$CLICKHOUSE_CLOUD_KEY_ID" ] && [ -n "$$CLICKHOUSE_CLOUD_KEY_SECRET" ] && [ -n "$$CLICKHOUSE_CLOUD_ORG_ID" ]; then
         cp /provisioning/optional/clickhouse-cloud-api.yaml /tmp/provisioning/datasources/;
         echo "fleetscope: billing data source clickhouse-cloud-api provisioned";
-        else echo "fleetscope: no CLICKHOUSE_CLOUD_KEY_ID/SECRET, billing data source not provisioned"; fi;
+        else echo "fleetscope: no CLICKHOUSE_CLOUD_KEY_ID/SECRET/ORG_ID, billing data source not provisioned"; fi;
         exec /run.sh
     volumes:
       # Grafana's own database and the installed plugin.

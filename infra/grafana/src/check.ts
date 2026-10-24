@@ -400,7 +400,7 @@ export async function checkDashboards(options: CheckOptions): Promise<CheckRepor
       if (options.snippets !== undefined) {
         const copy = snippetCopyProblems(query.sql, options.snippets, {
           where: query.where,
-          requireCopy: dashboard.uid === CAPACITY_DASHBOARD_UID && query.kind === "panel",
+          requireCopy: dashboard.uid === CAPACITY_DASHBOARD_UID && query.kind !== "variable",
         });
         report.problems.push(...copy.problems);
       }

@@ -24,7 +24,7 @@
             "source": "url",
             "format": "table",
             "parser": "jq-backend",
-            "url": "/v1/organizations/${ch_org}/usageCost?from_date=2026-10-24&to_date=2026-11-23",
+            "url": "/usageCost?from_date=2026-10-24&to_date=2026-11-23",
             "url_options": {
               "method": "GET"
             },
@@ -79,7 +79,7 @@
       ],
       "for": "0s",
       "noDataState": "OK",
-      "execErrState": "KeepLast",
+      "execErrState": "Error",
       "annotations": {
         "summary": "Less than 50 ClickHouse credits of the $300 trial are left",
         "description": "300 minus the usage since 2026-10-24, from the ClickHouse Cloud API (1 credit is counted as 1 USD). Usage lags by about a day. Delete the service or add a card before the credit is gone."
@@ -111,11 +111,11 @@
             "source": "url",
             "format": "table",
             "parser": "jq-backend",
-            "url": "/v1/organizations/${ch_org}/usageCost?from_date=2026-10-24&to_date=2026-11-23",
+            "url": "/usageCost?from_date=2026-10-24&to_date=2026-11-23",
             "url_options": {
               "method": "GET"
             },
-            "root_selector": "(.result.costs | group_by(.date) | map({date: .[0].date, chc: (map(.totalCHC) | add)}) | map(select(.date < (now | strftime(\"%Y-%m-%d\")))) | .[-3:]) as $full | if ($full | length) == 0 then [] else [{value: ((300 - .result.grandTotalCHC) - (($full | map(.chc) | add) / ($full | length)) * ((((\"2026-11-23T23:59:59Z\" | fromdateiso8601) - now) / 86400)))}] end",
+            "root_selector": "(.result.costs | group_by(.date) | map({date: .[0].date, chc: (map(.totalCHC) | add)})) as $days | (now | strftime(\"%Y-%m-%d\")) as $today | ($days | map(select(.date < $today)) | .[-3:]) as $full | (300 - .result.grandTotalCHC) as $left | ((((\"2026-11-23T00:00:00Z\" | fromdateiso8601) - (($today + \"T00:00:00Z\") | fromdateiso8601)) / 86400)) as $days_to_end | if $left <= 0 then [{value: -1}] elif ($full | length) == 0 then [] else (($full | map(.chc) | add) / ($full | length)) as $avg | if $avg <= 0 then [] else [{value: (($left / $avg | floor) - $days_to_end)}] end end",
             "columns": [
               {
                 "selector": "value",
@@ -166,10 +166,10 @@
       ],
       "for": "0s",
       "noDataState": "OK",
-      "execErrState": "KeepLast",
+      "execErrState": "Error",
       "annotations": {
         "summary": "At the average of the last 3 full days, the trial credit runs out before the trial ends on 2026-11-23",
-        "description": "The value is the credit left at the end of the trial at the current burn rate; below 0 means it runs out first. Lower the service size (ClickHouse Cloud > Settings > Scaling) or accept the end date. Fewer than one full day of history gives no answer."
+        "description": "The value is the number of days the credit lasts, counted from the start of today (UTC), minus the days left until 2026-11-23 (the same projection as the Capacity panel); below 0 means it runs out first, and -1 means it is already used up. Lower the service size (ClickHouse Cloud > Settings > Scaling) or accept the end date. Fewer than one full day of history, or no spend, gives no answer."
       },
       "labels": {
         "severity": "warning"

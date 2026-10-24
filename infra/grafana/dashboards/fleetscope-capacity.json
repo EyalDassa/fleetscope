@@ -33,26 +33,7 @@
     }
   ],
   "templating": {
-    "list": [
-      {
-        "type": "constant",
-        "name": "ch_org",
-        "label": "ClickHouse Cloud organization",
-        "query": "set-by-grafana-push",
-        "current": {
-          "text": "set-by-grafana-push",
-          "value": "set-by-grafana-push"
-        },
-        "options": [
-          {
-            "text": "set-by-grafana-push",
-            "value": "set-by-grafana-push",
-            "selected": true
-          }
-        ],
-        "hide": 2
-      }
-    ]
+    "list": []
   },
   "annotations": {
     "list": [
@@ -1474,7 +1455,7 @@
           "source": "url",
           "parser": "backend",
           "format": "table",
-          "url": "/v1/organizations/${ch_org}/usageCost",
+          "url": "/usageCost",
           "url_options": {
             "method": "GET",
             "data": "",
@@ -1569,7 +1550,7 @@
           "source": "url",
           "parser": "backend",
           "format": "table",
-          "url": "/v1/organizations/${ch_org}/usageCost",
+          "url": "/usageCost",
           "url_options": {
             "method": "GET",
             "data": "",
@@ -1664,7 +1645,7 @@
           "source": "url",
           "parser": "backend",
           "format": "table",
-          "url": "/v1/organizations/${ch_org}/usageCost",
+          "url": "/usageCost",
           "url_options": {
             "method": "GET",
             "data": "",
@@ -1776,7 +1757,7 @@
           "source": "url",
           "parser": "backend",
           "format": "table",
-          "url": "/v1/organizations/${ch_org}/usageCost",
+          "url": "/usageCost",
           "url_options": {
             "method": "GET",
             "data": "",

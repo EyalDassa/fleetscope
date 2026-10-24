@@ -12,7 +12,7 @@
 // See infra/grafana/README.md.
 import { fileURLToPath } from "node:url";
 import { loadAlertFiles } from "../alerts";
-import { buildBillingDataSource, chOrgFromEnv } from "../billing";
+import { buildBillingDataSource } from "../billing";
 import { loadDashboardFiles } from "../dashboards";
 import { complain, say } from "../out";
 import {
@@ -93,7 +93,6 @@ async function main(): Promise<number> {
     dataSource,
     dashboardFiles: files,
     billing: buildBillingDataSource(env),
-    chOrg: chOrgFromEnv(env),
     alertFiles,
     apiUrl: env.FLEETSCOPE_API_URL,
     grafanaIsLocal: grafana.local,
