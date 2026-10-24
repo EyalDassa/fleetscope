@@ -9,7 +9,7 @@ The UI is Grafana (ADR 0003). This spec is for the engineer who builds `infra/gr
 1. **Verdict first.** Overview opens with the fleet verdict in one word, and Session detail opens with the session status and one sentence about what happened. Evidence sits beside the verdict, and the charts come after it.
 2. **Every number drills down to sessions.** Every stat, table row and chart point has a Grafana **data link** to the sessions behind it (link patterns in 4.1). A panel whose values are links ends its title with `↗`, so the link is visible without hovering.
 3. **Honest data.** A count with no events prints `0`. A ratio with no denominator prints `—`. A metric the engine can't provide (`null`) prints `Not available`: never drawn as 0, never interpolated. Simulated data is always labelled (`SIM` in session tables, the Simulated share stat, the Perfetto process name).
-4. **Never colour alone.** A status is shown as a value mapping with glyph + word + colour. An engine is shown with its name (legend, tooltip) + line style + colour.
+4. **Never colour alone.** A status is shown as a value mapping with glyph + word + colour. An engine is shown with its name (legend, tooltip) + colour.
 
 **One meaning per pattern.** Violet means blocked. Engine colours never mean a status, and status colours never mean an engine. A filled panel means a verdict: only the two verdict stats are filled.
 
@@ -17,11 +17,11 @@ The UI is Grafana (ADR 0003). This spec is for the engineer who builds `infra/gr
 
 Grafana's theme supplies every neutral (canvas, panels, text, grid). Hue is used only for status and engine, taken from the approved, measured palette.
 
-| Engine (`engine`) | Dark (default) | Light | `custom.lineStyle` |
-|---|---|---|---|
-| `chromium` | `#56B4E9` | `#0072B2` | `{"fill":"solid"}` |
-| `chrome-headless-shell` | `#E69F00` | `#B86E00` | `{"fill":"dash","dash":[10,10]}` |
-| `lightpanda` | `#CC79A7` | `#B0457F` | `{"fill":"dot","dash":[0,10]}` |
+| Engine (`engine`) | Dark (default) | Light |
+|---|---|---|
+| `chromium` | `#56B4E9` | `#0072B2` |
+| `chrome-headless-shell` | `#E69F00` | `#B86E00` |
+| `lightpanda` | `#CC79A7` | `#B0457F` |
 
 | Status (SQL value) | Mapping text | Dark (default) | Light |
 |---|---|---|---|
@@ -34,10 +34,10 @@ Grafana's theme supplies every neutral (canvas, panels, text, grid). Hue is used
 
 Other colours (dark / light): gauge cells in tables use the approved neutral `--bar`, `#5B7491` / `#6B829E`. The field default colour for any series without an engine override is `#9AA9BB` / `#475569`. The annotations use the status colours: "Failed actions" is Failed, "Issues" is Degraded.
 
-- **Engines:** Okabe-Ito hues; every engine-vs-engine pair has ΔE ≥ 11 under protanopia and deuteranopia (DECISIONS.md). Grafana draws every point as a circle, so the approved marker shapes are lost and the **line style** is the shape cue. Lightpanda is dotted because Grafana has no dash-dot preset (the values above are the editor's own Dash/Dots defaults). Engine series are always lines, because bars can't be dashed. Engine colours never colour text or cells, and engine names are written as in the API.
+- **Engines:** Okabe-Ito hues; every engine-vs-engine pair has ΔE ≥ 11 under protanopia and deuteranopia (DECISIONS.md). **Every time series line is solid** (product owner, 2026-10-24: dashed and dotted lines read as broken data). Series are told apart by colour, the legend and the tooltip; no two series in one panel share a colour. Engine series are always lines. Engine colours never colour text or cells, and engine names are written as in the API.
 - **Statuses:** there are exactly six. `timeout` and `crashed` show as Failed, with the code in the Cause column. Running and Interrupted are not outcomes, so they get the approved greys (`fg-muted`, `fg-subtle`), and the glyph and word tell them apart. The glyphs are plain text characters, not emoji.
 - **Dark is the default and the only theme we commit.** Grafana stores field colours as fixed hex, not theme tokens, so one JSON can't switch with the theme. Set the org default theme to Dark (Administration > Default preferences), locally and on Grafana Cloud. The Light column is a 1:1 find-and-replace map (no hex appears in both columns) if a light copy is ever needed. We don't use Grafana's named colours: they follow the theme, but they aren't our measured palette. The one exception is `text` as a threshold base.
-- **Engine overrides:** every time series panel gets three "Fields with name matching regex" overrides: `/chromium/`, `/chrome-headless-shell/`, `/lightpanda/`. Each sets `color` = `{"mode":"fixed","fixedColor":"<hex>"}` and `custom.lineStyle`. The regexes are unanchored on purpose: neither name contains the other, and they still match whatever prefix the plugin adds to a series name. Set the field default colour to `#9AA9BB`, so nothing falls back to Grafana's classic palette, whose green would read as Healthy.
+- **Engine overrides:** every time series panel gets three "Fields with name matching regex" overrides: `/chromium/`, `/chrome-headless-shell/`, `/lightpanda/`. Each sets `color` = `{"mode":"fixed","fixedColor":"<hex>"}` only; line style stays Grafana's default, solid (never set `custom.lineStyle` to dash or dots). The regexes are unanchored on purpose: neither name contains the other, and they still match whatever prefix the plugin adds to a series name. Set the field default colour to `#9AA9BB`, so nothing falls back to Grafana's classic palette, whose green would read as Healthy.
 - **Status:** SQL returns the lowercase value, and the mapping below adds glyph, word and colour; copy it wherever a status appears. Tables use the cell type **Colored text**. The two verdict stats use the colour mode **Background solid**, which makes Grafana pick dark or white text for contrast, so they read in either theme.
 - **Contrast** (lead estimate): Grafana's dark panel `#181B1F` is slightly lighter than our old `#111821`, which scales the measured ratios by about ×0.97. That gives status text ≥ 6.8:1, Interrupted 5.1:1, and engine lines 7.5 / 7.7 / 5.6:1. Light panels are white, the surface the Light column was measured on.
 
