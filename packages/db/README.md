@@ -1097,7 +1097,11 @@ suggested ones are in brackets. The query format is "Table"; use a Reduce (Last)
 - `capacity-alerts-load-mismatch-pct`: `100 * |written - sent| / sent` for the four append-only tables
   over the 60 whole minutes that ended one minute ago (so the `part_log` flush lag and the minute in
   progress are outside the window). NULL when both are 0 (an idle fleet), 100 when something was
-  written and nothing sent. Same single-replica caveat as `capacity-load`. [> 5 for 15 min]
+  written and nothing sent. Same single-replica caveat as `capacity-load`.  **A backfill trips it, and that is expected**: sent is placed by the event's own `ts` and written by
+  the time ClickHouse received it, so rows stamped earlier than the last hour but written inside it
+  (`sim run --duration 3h`, `db:seed`, a replayed dead-letter file) count as written and not as sent
+  (measured 10.36% against the 5% threshold). Silence the rule, or ignore it, while a backfill runs;
+  it is not a lost write. [> 5 for 15 min]
 - `capacity-alerts-minutes-since-write`: minutes since the last `NewPart` of any of our five tables
   (`sessions` included). NULL when there was none in the last 24 hours. [> 15 only while a run is
   expected; the fleet is idle between runs]
