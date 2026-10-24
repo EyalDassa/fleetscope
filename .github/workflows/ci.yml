@@ -29,6 +29,8 @@ jobs:
         run: bash .github/scripts/check-clickhouse-tag.sh
       - name: Playwright client and browser image versions match
         run: bash .github/scripts/check-playwright-version.sh --strict
+      - name: Upstream browser images and the forwarder sidecar are pinned consistently
+        run: bash .github/scripts/check-browser-images.sh --strict
       - name: Shell scripts are executable in git (a Windows commit drops the bit)
         run: bash .github/scripts/check-executable-bits.sh
 
@@ -80,12 +82,14 @@ jobs:
       - name: Dashboards - structure, design rules, and every SQL query against ClickHouse
         run: pnpm grafana:check
 
-  # End-to-end check of the M1 pipeline: real Chromium containers -> collector -> API -> ClickHouse.
-  # No LLM calls and nothing from outside the repo except the Playwright base image from MCR.
+  # End-to-end check of the pipeline: real browser containers (Chromium, chrome-headless-shell,
+  # Lightpanda) plus their forwarder sidecars -> collector -> API -> ClickHouse.
+  # No LLM calls. From outside the repo it needs the Playwright base image from MCR, node:22-alpine,
+  # and the two upstream browser images from Docker Hub.
   fleet-smoke:
-    name: Fleet smoke (Chromium)
+    name: Fleet smoke (all engines)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     services:
       clickhouse:
         # Keep the tag and env in sync with infra/docker-compose.yml.
@@ -119,9 +123,13 @@ jobs:
       # The browser containers reach the demo site through host.docker.internal, which on Linux is
       # the Docker bridge address, so it must listen on all interfaces, not just loopback.
       DEMO_SITE_HOST: 0.0.0.0
-      # Must equal the image tag built below and the Playwright version pinned in the runner
-      # and collector (checked by .github/scripts/check-playwright-version.sh in the check job).
-      FLEET_BROWSER_IMAGE: fleetscope/playwright-chromium:1.64.1
+      # Image tags. The Chromium tag must equal the one built below and the Playwright version pinned
+      # in the runner and collector (checked by check-playwright-version.sh); the other three are
+      # checked by check-browser-images.sh. Both run in the "check" job.
+      FLEET_BROWSER_IMAGE_CHROMIUM: fleetscope/playwright-chromium:1.64.1-2
+      FLEET_BROWSER_IMAGE_CHROME_HEADLESS_SHELL: chromedp/headless-shell:156.0.8078.48
+      FLEET_BROWSER_IMAGE_LIGHTPANDA: lightpanda/browser:1.0.2
+      FLEET_FORWARDER_IMAGE: fleetscope/forwarder:1
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
@@ -137,12 +145,37 @@ jobs:
           file: infra/browsers/chromium/Dockerfile
           load: true # put the image into the local Docker daemon, where the fleet runner finds it
           push: false
-          tags: fleetscope/playwright-chromium:1.64.1
+          tags: fleetscope/playwright-chromium:1.64.1-2
           # A cache problem (rate limit, outage) must never fail the build, so ignore-error.
           cache-from: type=gha,scope=browser-chromium
           cache-to: type=gha,mode=max,scope=browser-chromium,ignore-error=true
           provenance: false # attestations cannot be loaded into the local daemon
           sbom: false
+      - name: Build the forwarder sidecar image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: infra/browsers
+          file: infra/browsers/forwarder/Dockerfile
+          load: true
+          push: false
+          tags: fleetscope/forwarder:1
+          cache-from: type=gha,scope=browser-forwarder
+          cache-to: type=gha,mode=max,scope=browser-forwarder,ignore-error=true
+          provenance: false
+          sbom: false
+      # The upstream images are used unmodified, so there is nothing to build and no layer cache to
+      # keep (together about 220 MB to download). Docker Hub can answer 429/5xx now and then, so retry.
+      - name: Pull the upstream browser images
+        run: |
+          for image in "$FLEET_BROWSER_IMAGE_CHROME_HEADLESS_SHELL" "$FLEET_BROWSER_IMAGE_LIGHTPANDA"; do
+            for attempt in 1 2 3; do
+              docker pull "$image" && continue 2
+              echo "docker pull $image failed (attempt $attempt), retrying" >&2
+              sleep $((attempt * 10))
+            done
+            echo "could not pull $image" >&2
+            exit 1
+          done
 
       - run: pnpm db:migrate
       - name: Build the api and the demo site
@@ -155,11 +188,20 @@ jobs:
           bash .github/scripts/wait-for-url.sh "$FLEETSCOPE_API_URL/healthz" 60 smoke-logs/api.log
           bash .github/scripts/wait-for-url.sh "$DEMO_SITE_URL/healthz" 60 smoke-logs/demo-site.log
 
-      - name: Run 3 sessions in Chromium containers
-        timeout-minutes: 8
-        run: pnpm fleet run --engines chromium --sessions 3 --concurrency 2 --seed 1
+      # 6 sessions over 3 engines: the runner assigns scenario x engine pairs round-robin, so every
+      # engine gets exactly 2 (assert-fleet-smoke.sh expects that).
+      - name: Run 6 sessions on 3 engines
+        timeout-minutes: 12
+        run: pnpm fleet run --engines chromium,chrome-headless-shell,lightpanda --sessions 6 --concurrency 3 --seed 1
+      # Per engine: sessions ended, actions, container + cdp samples, network requests, no duplicates, no
+      # leaked containers (sidecars included). Lightpanda may have NULL heap / byte sizes (not faked).
       - name: Check ClickHouse and Docker
+        env:
+          SMOKE_ENGINES: chromium chrome-headless-shell lightpanda
+          SMOKE_NULLABLE_ENGINES: lightpanda
+          SMOKE_EXPECTED_SESSIONS: "2"
         run: bash .github/scripts/assert-fleet-smoke.sh
+
 
       - name: Collect diagnostics
         if: failure()

@@ -1,16 +1,20 @@
 #!/usr/bin/env bash
-# Asserts that a fleet smoke run (`pnpm fleet run --engines chromium --sessions 3 ...`) left the
-# right data in ClickHouse and no browser containers behind. Used by the "Fleet smoke (Chromium)"
-# CI job; it also works against a local stack (pnpm infra:up).
+# Asserts that a fleet smoke run (`pnpm fleet run --engines chromium,chrome-headless-shell,lightpanda
+# --sessions 6 ...`) left the right data in ClickHouse and no browser containers behind. Used by the
+# "Fleet smoke (all engines)" CI job; it also works against a local stack (pnpm infra:up).
 #
-# Fails unless:
-#   - there are exactly SMOKE_EXPECTED_SESSIONS (3) `real` sessions of SMOKE_ENGINE (chromium),
+# The checks below run once PER ENGINE in SMOKE_ENGINES (space separated). Fails unless:
+#   - there are exactly SMOKE_EXPECTED_SESSIONS (2 per engine) `real` sessions of the engine,
 #     all with an end status (success | failed | blocked | timeout | crashed, not `running`);
 #   - a `success` session has >= SMOKE_MIN_ACTIONS (3) actions; any other end status needs only
 #     >= 1, because a `blocked` session stops at the bot wall, which can be its first page;
 #   - every session has >= SMOKE_MIN_CONTAINER_SAMPLES (1) resource sample with origin = 'container',
 #     >= SMOKE_MIN_CDP_SAMPLES (1) with origin = 'cdp' and >= SMOKE_MIN_NETWORK_REQUESTS (1) row in
 #     network_requests;
+#   - engines NOT listed in SMOKE_NULLABLE_ENGINES (default "lightpanda") also need a cdp sample with a
+#     JS heap value and a network request with a size. Lightpanda has no Performance.getMetrics and no
+#     Network.*ExtraInfo, so its rows must exist but their heap / byte columns may be NULL (that is the
+#     honest value, see CLAUDE.md "Data honesty"); for those engines the values are not required;
 #   - there are NO duplicate rows: for actions, resource_samples and network_requests, count() must
 #     equal uniqExact(event_id). Counts are shown with count(), so a duplicate is never hidden by
 #     uniqExact (dedupe is the central M1 decision);
@@ -26,7 +30,8 @@
 # Environment (defaults match .env.example):
 #   CLICKHOUSE_URL=http://localhost:8123  CLICKHOUSE_USER=fleetscope  CLICKHOUSE_PASSWORD=...
 #   CLICKHOUSE_DATABASE=fleetscope
-#   SMOKE_ENGINE=chromium  SMOKE_EXPECTED_SESSIONS=3  SMOKE_MIN_ACTIONS=3
+#   SMOKE_ENGINES="chromium chrome-headless-shell lightpanda"  (default: SMOKE_ENGINE, else chromium)
+#   SMOKE_NULLABLE_ENGINES="lightpanda"  SMOKE_EXPECTED_SESSIONS=2 (per engine)  SMOKE_MIN_ACTIONS=3
 #   SMOKE_MIN_CONTAINER_SAMPLES=1  SMOKE_MIN_CDP_SAMPLES=1  SMOKE_MIN_NETWORK_REQUESTS=1
 #   SMOKE_WINDOW_MINUTES=60  SMOKE_WAIT_SECONDS=20
 #   FLEET_CONTAINER_LABELS="fleetscope.session fleetscope.engine"   (space separated label keys)
@@ -36,8 +41,11 @@ url="${CLICKHOUSE_URL:-http://localhost:8123}"
 user="${CLICKHOUSE_USER:-fleetscope}"
 password="${CLICKHOUSE_PASSWORD:?CLICKHOUSE_PASSWORD is not set (see .env.example)}"
 database="${CLICKHOUSE_DATABASE:-fleetscope}"
-engine="${SMOKE_ENGINE:-chromium}"
-expected_sessions="${SMOKE_EXPECTED_SESSIONS:-3}"
+engines="${SMOKE_ENGINES:-${SMOKE_ENGINE:-chromium}}"
+nullable_engines="${SMOKE_NULLABLE_ENGINES-lightpanda}"
+engine="" # set per engine in the loop below
+need_values=1 # 0 for the engines in nullable_engines
+expected_sessions="${SMOKE_EXPECTED_SESSIONS:-2}"
 min_actions="${SMOKE_MIN_ACTIONS:-3}"
 min_samples="${SMOKE_MIN_CONTAINER_SAMPLES:-1}"
 min_cdp="${SMOKE_MIN_CDP_SAMPLES:-1}"
@@ -62,7 +70,9 @@ SELECT
     q.n AS network_requests,
     a.dups AS dup_actions,
     r.dups AS dup_samples,
-    q.dups AS dup_network
+    q.dups AS dup_network,
+    r.heap_n AS cdp_heap_samples,
+    q.sized_n AS sized_requests
 FROM
 (
     SELECT session_id, argMax(status, version) AS status
@@ -85,6 +95,7 @@ LEFT JOIN
         session_id,
         countIf(origin = 'container') AS container_n,
         countIf(origin = 'cdp') AS cdp_n,
+        countIf(origin = 'cdp' AND js_heap_mb IS NOT NULL) AS heap_n,
         count() - uniqExact(event_id) AS dups
     FROM resource_samples
     WHERE source = 'real' AND engine = {engine:String}
@@ -92,7 +103,7 @@ LEFT JOIN
 ) AS r ON r.session_id = s.session_id
 LEFT JOIN
 (
-    SELECT session_id, count() AS n, count() - uniqExact(event_id) AS dups
+    SELECT session_id, count() AS n, count() - uniqExact(event_id) AS dups, countIf(bytes IS NOT NULL) AS sized_n
     FROM network_requests
     WHERE source = 'real' AND engine = {engine:String}
     GROUP BY session_id
@@ -115,6 +126,9 @@ report=""
 check_data() {
   problems=()
   local out
+  need_values=1
+  case " $nullable_engines " in *" $engine "*) need_values=0 ;; esac
+
   if ! out=$(query 2>&1); then
     problems+=("ClickHouse query failed: ${out}")
     report=""
@@ -129,14 +143,15 @@ check_data() {
   fi
 
   # Columns: 1 session_id, 2 status, 3 actions, 4 container_samples, 5 cdp_samples,
-  #          6 network_requests, 7 dup_actions, 8 dup_samples, 9 dup_network
+  #          6 network_requests, 7 dup_actions, 8 dup_samples, 9 dup_network,
+  #          10 cdp_heap_samples, 11 sized_requests
   local line
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     problems+=("$line")
   done < <(printf '%s\n' "$out" | tail -n +2 | awk -F'\t' \
     -v min_actions="$min_actions" -v min_samples="$min_samples" \
-    -v min_cdp="$min_cdp" -v min_network="$min_network" '
+    -v min_cdp="$min_cdp" -v min_network="$min_network" -v need_values="$need_values" '
       NF == 0 { next }
       {
         if ($2 !~ /^(success|failed|blocked|timeout|crashed)$/)
@@ -157,32 +172,40 @@ check_data() {
           printf "session %s has %s duplicate resource_samples rows (same event_id more than once)\n", $1, $8
         if ($9 + 0 != 0)
           printf "session %s has %s duplicate network_requests rows (same event_id more than once)\n", $1, $9
+        if (need_values == 1 && $10 + 0 < 1)
+          printf "session %s has no cdp sample with a JS heap value\n", $1
+        if (need_values == 1 && $11 + 0 < 1)
+          printf "session %s has no network request with a size (bytes)\n", $1
       }')
 }
 
-deadline=$((SECONDS + wait_seconds))
-while true; do
-  check_data
-  if [ "${#problems[@]}" -eq 0 ] || [ "$SECONDS" -ge "$deadline" ]; then
-    break
-  fi
-  sleep 2
-done
-
-echo "Real ${engine} sessions started in the last ${window_minutes} min:"
-if [ -n "$report" ]; then
-  printf '%s\n' "$report" | column -t -s "$(printf '\t')" 2>/dev/null || printf '%s\n' "$report"
-fi
-
 failed=0
-if [ "${#problems[@]}" -ne 0 ]; then
-  failed=1
-  for p in "${problems[@]}"; do
-    echo "FAIL: $p" >&2
+for engine in $engines; do
+  deadline=$((SECONDS + wait_seconds))
+  while true; do
+    check_data
+    if [ "${#problems[@]}" -eq 0 ] || [ "$SECONDS" -ge "$deadline" ]; then
+      break
+    fi
+    sleep 2
   done
-else
-  echo "OK: ${expected_sessions} sessions; actions (>= ${min_actions} if success, else >= 1), container samples >= ${min_samples}, cdp samples >= ${min_cdp}, network requests >= ${min_network}, no duplicate rows"
-fi
+
+  echo "Real ${engine} sessions started in the last ${window_minutes} min:"
+  if [ -n "$report" ]; then
+    printf '%s\n' "$report" | column -t -s "$(printf '\t')" 2>/dev/null || printf '%s\n' "$report"
+  fi
+
+  if [ "${#problems[@]}" -ne 0 ]; then
+    failed=1
+    for p in "${problems[@]}"; do
+      echo "FAIL [${engine}]: $p" >&2
+    done
+  else
+    extra="JS heap and byte sizes present"
+    [ "$need_values" -eq 1 ] || extra="JS heap / byte sizes may be NULL for this engine"
+    echo "OK [${engine}]: ${expected_sessions} sessions; actions (>= ${min_actions} if success, else >= 1), container samples >= ${min_samples}, cdp samples >= ${min_cdp}, network requests >= ${min_network}, no duplicate rows, ${extra}"
+  fi
+done
 
 # --- no containers left behind ----------------------------------------------------------------
 if ! command -v docker >/dev/null 2>&1; then
