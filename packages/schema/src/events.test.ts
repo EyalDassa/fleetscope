@@ -137,6 +137,30 @@ describe("FleetEvent", () => {
   });
 });
 
+describe("session.started routed_from", () => {
+  it("is optional and nullable (absent and null both mean: not routed)", () => {
+    const absent = SessionStartedEvent.parse(valid["session.started"]);
+    expect(absent.routed_from ?? null).toBeNull();
+    expect(
+      SessionStartedEvent.parse({ ...valid["session.started"], routed_from: null }).routed_from,
+    ).toBeNull();
+  });
+
+  it("accepts a known engine and rejects an unknown one", () => {
+    expect(
+      SessionStartedEvent.parse({ ...valid["session.started"], routed_from: "lightpanda" })
+        .routed_from,
+    ).toBe("lightpanda");
+    expect(
+      SessionStartedEvent.safeParse({ ...valid["session.started"], routed_from: "firefox" })
+        .success,
+    ).toBe(false);
+    expect(
+      SessionStartedEvent.safeParse({ ...valid["session.started"], routed_from: "" }).success,
+    ).toBe(false);
+  });
+});
+
 describe("nullable metrics", () => {
   it("accepts js_heap_mb as null, as a number, or absent", () => {
     expect(

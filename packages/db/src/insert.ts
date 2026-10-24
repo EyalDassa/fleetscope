@@ -50,6 +50,8 @@ export interface SessionRow {
   started_at: string;
   startup_ms: number;
   connect_ms: number;
+  /** The engine the assignment chose before routing; `null` when the session was not routed. */
+  routed_from: string | null;
   status: SessionState;
   ended_at: string | null;
   duration_ms: number | null;
@@ -76,6 +78,7 @@ export function runningSessionRow(started: Started): SessionRow {
     started_at: toClickHouseDateTime(started.ts),
     startup_ms: started.startup_ms,
     connect_ms: started.connect_ms,
+    routed_from: started.routed_from ?? null,
     status: SESSION_RUNNING,
     ended_at: null,
     duration_ms: null,
@@ -244,7 +247,7 @@ async function findStoredSessions(
   for (const ids of chunkByEncodedSize(sessionIds)) {
     const result = await client.query({
       query: `SELECT session_id, agent_id, source, engine, provider, engine_version, scenario, region,
-                     toString(started_at) AS started_at, startup_ms, connect_ms, status,
+                     toString(started_at) AS started_at, startup_ms, connect_ms, routed_from, status,
                      if(ended_at IS NULL, NULL, toString(ended_at)) AS ended_at,
                      duration_ms, reason, version
               FROM sessions FINAL

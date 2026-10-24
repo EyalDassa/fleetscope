@@ -187,6 +187,12 @@ export const SessionStartedEvent = z.object({
    * `startup_ms + connect_ms`: the time from "no container" to "a browser I can drive".
    */
   connect_ms: uint32,
+  /**
+   * The engine the assignment chose before the fleet routed the session to another one (`fleet run
+   * --routing by-scenario`, because the first engine lacks something the scenario needs). `engine`
+   * is the engine that actually ran. `null` or absent: the session was not routed.
+   */
+  routed_from: Engine.nullish(),
 });
 export type SessionStartedEvent = z.infer<typeof SessionStartedEvent>;
 
