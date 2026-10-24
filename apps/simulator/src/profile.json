@@ -1,0 +1,793 @@
+{
+  "version": 1,
+  "generated_at": "2026-10-24T14:28:42.682Z",
+  "method": "pnpm sim calibrate: distributions (median and 95th percentile, sampled log-normal) of the real sessions (source='real', interrupted and running left out) in the local ClickHouse. Real sessions per engine: chromium 63, chrome-headless-shell 0, lightpanda 0. An engine with fewer than 10 gets Chromium's numbers with the priors of apps/simulator/src/priors.ts (basis: \"prior\"). Memory starts at most 80% of the way to the peak (real sessions are too short to show the climb). Failure mixes of real Chromium runs include the fleet runner's chaos mode, so they are not the failure rate of the web.",
+  "engines": {
+    "chromium": {
+      "basis": "real",
+      "real_sessions": 63,
+      "note": "measured from 63 real sessions",
+      "engine_version": "156.0.8078.4",
+      "startup_ms": {
+        "p50": 5563,
+        "p95": 20473.7
+      },
+      "connect_ms": {
+        "p50": 294,
+        "p95": 6323.1
+      },
+      "cpu_pct": {
+        "p50": 78.51,
+        "p95": 230.9
+      },
+      "heap_mb": {
+        "p50": 4.24,
+        "p95": 7.41
+      },
+      "scenarios": {
+        "checkout-form": {
+          "duration_ms": {
+            "p50": 1324,
+            "p95": 2744.45
+          },
+          "peak_mem_mib": {
+            "p50": 223.08,
+            "p95": 237.73
+          },
+          "base_ratio": 0.8,
+          "steps": [
+            {
+              "action_type": "goto",
+              "per_session": 3,
+              "target": "localhost",
+              "latency_ms": {
+                "p50": 79,
+                "p95": 192.2
+              }
+            },
+            {
+              "action_type": "fill",
+              "per_session": 5,
+              "target": "[data-testid=\"checkout-address\"]",
+              "latency_ms": {
+                "p50": 23,
+                "p95": 45.15
+              }
+            },
+            {
+              "action_type": "click",
+              "per_session": 3,
+              "target": "[data-testid=\"add-to-cart\"]",
+              "latency_ms": {
+                "p50": 144,
+                "p95": 267.55
+              }
+            },
+            {
+              "action_type": "extract",
+              "per_session": 2,
+              "target": "[data-testid=\"item-title\"]",
+              "latency_ms": {
+                "p50": 11,
+                "p95": 23.35
+              }
+            }
+          ],
+          "network": {
+            "requests": 1.83,
+            "domain": "localhost",
+            "duration_ms": {
+              "p50": 12.5,
+              "p95": 32.25
+            },
+            "bytes": {
+              "p50": 2476,
+              "p95": 3006.55
+            },
+            "bytes_reported": 1,
+            "resource_types": {
+              "document": 44
+            }
+          },
+          "failures": [
+            {
+              "p": 0.125,
+              "status": "blocked",
+              "error_code": "captcha",
+              "reason": "captcha on http://localhost:3100/botwall?rate=0.2&seed=189678",
+              "at": 0.08
+            },
+            {
+              "p": 0.0417,
+              "status": "blocked",
+              "error_code": "http_403",
+              "reason": "HTTP 403 for http://localhost:3100/botwall?rate=0.2&seed=113912",
+              "at": 0.08
+            }
+          ]
+        },
+        "login-and-search": {
+          "duration_ms": {
+            "p50": 1944,
+            "p95": 2480.75
+          },
+          "peak_mem_mib": {
+            "p50": 221.45,
+            "p95": 231.47
+          },
+          "base_ratio": 0.8,
+          "steps": [
+            {
+              "action_type": "fill",
+              "per_session": 2,
+              "target": "[data-testid=\"login-pass\"]",
+              "latency_ms": {
+                "p50": 26.5,
+                "p95": 109.7
+              }
+            },
+            {
+              "action_type": "goto",
+              "per_session": 2.56,
+              "target": "localhost",
+              "latency_ms": {
+                "p50": 84,
+                "p95": 406
+              }
+            },
+            {
+              "action_type": "click",
+              "per_session": 2.56,
+              "target": "[data-testid=\"login-submit\"]",
+              "latency_ms": {
+                "p50": 139,
+                "p95": 364.3
+              }
+            },
+            {
+              "action_type": "extract",
+              "per_session": 2,
+              "target": "[data-testid=\"item-title\"]",
+              "latency_ms": {
+                "p50": 11,
+                "p95": 25.45
+              }
+            }
+          ],
+          "network": {
+            "requests": 1.55,
+            "domain": "localhost",
+            "duration_ms": {
+              "p50": 12,
+              "p95": 64
+            },
+            "bytes": {
+              "p50": 2697,
+              "p95": 2697
+            },
+            "bytes_reported": 1,
+            "resource_types": {
+              "document": 31
+            }
+          },
+          "failures": [
+            {
+              "p": 0.2,
+              "status": "failed",
+              "error_code": "selector_not_found",
+              "reason": "selector not found: [data-testid=\"flaky-button\"] (page.click: Timeout 1500ms exceeded.)",
+              "at": 1
+            }
+          ]
+        },
+        "heavy-page-crawl": {
+          "duration_ms": {
+            "p50": 3922,
+            "p95": 8274.8
+          },
+          "peak_mem_mib": {
+            "p50": 337.08,
+            "p95": 418.07
+          },
+          "base_ratio": 0.72,
+          "steps": [
+            {
+              "action_type": "goto",
+              "per_session": 5.79,
+              "target": "localhost",
+              "latency_ms": {
+                "p50": 435.5,
+                "p95": 2529.05
+              }
+            },
+            {
+              "action_type": "eval",
+              "per_session": 2.79,
+              "target": "document.getElementsByTagName('*').length",
+              "latency_ms": {
+                "p50": 10,
+                "p95": 23
+              }
+            },
+            {
+              "action_type": "extract",
+              "per_session": 3.79,
+              "target": "[data-testid=\"heavy-summary\"]",
+              "latency_ms": {
+                "p50": 11,
+                "p95": 30.45
+              }
+            },
+            {
+              "action_type": "wait",
+              "per_session": 1,
+              "target": "[data-testid=\"js-result\"][data-status=\"done\"]",
+              "latency_ms": {
+                "p50": 19,
+                "p95": 55.3
+              }
+            },
+            {
+              "action_type": "screenshot",
+              "per_session": 1,
+              "target": "localhost",
+              "latency_ms": {
+                "p50": 76,
+                "p95": 247.7
+              }
+            }
+          ],
+          "network": {
+            "requests": 47.84,
+            "domain": "localhost",
+            "duration_ms": {
+              "p50": 234,
+              "p95": 1024.4
+            },
+            "bytes": {
+              "p50": 503,
+              "p95": 518
+            },
+            "bytes_reported": 1,
+            "resource_types": {
+              "document": 30,
+              "image": 879
+            }
+          },
+          "failures": []
+        }
+      }
+    },
+    "chrome-headless-shell": {
+      "basis": "prior",
+      "real_sessions": 0,
+      "derived_from": "chromium",
+      "note": "prior: startup x1.0 (the browser launches inside the container, so its time is in startup_ms instead of connect_ms), connect 150 ms, memory x0.75, cpu x0.9, latency x0.95, heap x0.9; failures as Chromium",
+      "engine_version": "156.0.8078.48",
+      "startup_ms": {
+        "p50": 5563,
+        "p95": 20473.7
+      },
+      "connect_ms": {
+        "p50": 150,
+        "p95": 400
+      },
+      "cpu_pct": {
+        "p50": 70.66,
+        "p95": 207.81
+      },
+      "heap_mb": {
+        "p50": 3.82,
+        "p95": 6.67
+      },
+      "scenarios": {
+        "checkout-form": {
+          "duration_ms": {
+            "p50": 1257.8,
+            "p95": 2607.23
+          },
+          "peak_mem_mib": {
+            "p50": 167.31,
+            "p95": 178.3
+          },
+          "base_ratio": 0.8,
+          "steps": [
+            {
+              "action_type": "goto",
+              "per_session": 3,
+              "target": "localhost",
+              "latency_ms": {
+                "p50": 75.05,
+                "p95": 182.59
+              }
+            },
+            {
+              "action_type": "fill",
+              "per_session": 5,
+              "target": "[data-testid=\"checkout-address\"]",
+              "latency_ms": {
+                "p50": 21.85,
+                "p95": 42.89
+              }
+            },
+            {
+              "action_type": "click",
+              "per_session": 3,
+              "target": "[data-testid=\"add-to-cart\"]",
+              "latency_ms": {
+                "p50": 136.8,
+                "p95": 254.17
+              }
+            },
+            {
+              "action_type": "extract",
+              "per_session": 2,
+              "target": "[data-testid=\"item-title\"]",
+              "latency_ms": {
+                "p50": 10.45,
+                "p95": 22.18
+              }
+            }
+          ],
+          "network": {
+            "requests": 1.83,
+            "domain": "localhost",
+            "duration_ms": {
+              "p50": 11.88,
+              "p95": 30.64
+            },
+            "bytes": {
+              "p50": 2476,
+              "p95": 3006.55
+            },
+            "bytes_reported": 1,
+            "resource_types": {
+              "document": 44
+            }
+          },
+          "failures": [
+            {
+              "p": 0.125,
+              "status": "blocked",
+              "error_code": "captcha",
+              "reason": "captcha on http://localhost:3100/botwall?rate=0.2&seed=189678",
+              "at": 0.08
+            },
+            {
+              "p": 0.0417,
+              "status": "blocked",
+              "error_code": "http_403",
+              "reason": "HTTP 403 for http://localhost:3100/botwall?rate=0.2&seed=113912",
+              "at": 0.08
+            }
+          ]
+        },
+        "login-and-search": {
+          "duration_ms": {
+            "p50": 1846.8,
+            "p95": 2356.71
+          },
+          "peak_mem_mib": {
+            "p50": 166.09,
+            "p95": 173.6
+          },
+          "base_ratio": 0.8,
+          "steps": [
+            {
+              "action_type": "fill",
+              "per_session": 2,
+              "target": "[data-testid=\"login-pass\"]",
+              "latency_ms": {
+                "p50": 25.17,
+                "p95": 104.22
+              }
+            },
+            {
+              "action_type": "goto",
+              "per_session": 2.56,
+              "target": "localhost",
+              "latency_ms": {
+                "p50": 79.8,
+                "p95": 385.7
+              }
+            },
+            {
+              "action_type": "click",
+              "per_session": 2.56,
+              "target": "[data-testid=\"login-submit\"]",
+              "latency_ms": {
+                "p50": 132.05,
+                "p95": 346.09
+              }
+            },
+            {
+              "action_type": "extract",
+              "per_session": 2,
+              "target": "[data-testid=\"item-title\"]",
+              "latency_ms": {
+                "p50": 10.45,
+                "p95": 24.18
+              }
+            }
+          ],
+          "network": {
+            "requests": 1.55,
+            "domain": "localhost",
+            "duration_ms": {
+              "p50": 11.4,
+              "p95": 60.8
+            },
+            "bytes": {
+              "p50": 2697,
+              "p95": 2697
+            },
+            "bytes_reported": 1,
+            "resource_types": {
+              "document": 31
+            }
+          },
+          "failures": [
+            {
+              "p": 0.2,
+              "status": "failed",
+              "error_code": "selector_not_found",
+              "reason": "selector not found: [data-testid=\"flaky-button\"] (page.click: Timeout 1500ms exceeded.)",
+              "at": 1
+            }
+          ]
+        },
+        "heavy-page-crawl": {
+          "duration_ms": {
+            "p50": 3725.9,
+            "p95": 7861.06
+          },
+          "peak_mem_mib": {
+            "p50": 252.81,
+            "p95": 313.55
+          },
+          "base_ratio": 0.72,
+          "steps": [
+            {
+              "action_type": "goto",
+              "per_session": 5.79,
+              "target": "localhost",
+              "latency_ms": {
+                "p50": 413.73,
+                "p95": 2402.6
+              }
+            },
+            {
+              "action_type": "eval",
+              "per_session": 2.79,
+              "target": "document.getElementsByTagName('*').length",
+              "latency_ms": {
+                "p50": 9.5,
+                "p95": 21.85
+              }
+            },
+            {
+              "action_type": "extract",
+              "per_session": 3.79,
+              "target": "[data-testid=\"heavy-summary\"]",
+              "latency_ms": {
+                "p50": 10.45,
+                "p95": 28.93
+              }
+            },
+            {
+              "action_type": "wait",
+              "per_session": 1,
+              "target": "[data-testid=\"js-result\"][data-status=\"done\"]",
+              "latency_ms": {
+                "p50": 18.05,
+                "p95": 52.54
+              }
+            },
+            {
+              "action_type": "screenshot",
+              "per_session": 1,
+              "target": "localhost",
+              "latency_ms": {
+                "p50": 72.2,
+                "p95": 235.31
+              }
+            }
+          ],
+          "network": {
+            "requests": 47.84,
+            "domain": "localhost",
+            "duration_ms": {
+              "p50": 222.3,
+              "p95": 973.18
+            },
+            "bytes": {
+              "p50": 503,
+              "p95": 518
+            },
+            "bytes_reported": 1,
+            "resource_types": {
+              "document": 30,
+              "image": 879
+            }
+          },
+          "failures": []
+        }
+      }
+    },
+    "lightpanda": {
+      "basis": "prior",
+      "real_sessions": 0,
+      "derived_from": "chromium",
+      "note": "prior: startup x0.45, connect 40 ms, memory x0.1, cpu x0.35, latency x0.6, no JS heap, half of the request sizes unreported; fails checkout-form and js-heavy pages with unsupported_feature / unsupported_api",
+      "engine_version": "124.0.6367.29",
+      "startup_ms": {
+        "p50": 2503.35,
+        "p95": 9213.17
+      },
+      "connect_ms": {
+        "p50": 40,
+        "p95": 120
+      },
+      "cpu_pct": {
+        "p50": 27.48,
+        "p95": 80.82
+      },
+      "heap_mb": null,
+      "scenarios": {
+        "checkout-form": {
+          "duration_ms": {
+            "p50": 794.4,
+            "p95": 1646.67
+          },
+          "peak_mem_mib": {
+            "p50": 22.31,
+            "p95": 23.77
+          },
+          "base_ratio": 0.8,
+          "steps": [
+            {
+              "action_type": "goto",
+              "per_session": 3,
+              "target": "localhost",
+              "latency_ms": {
+                "p50": 47.4,
+                "p95": 115.32
+              }
+            },
+            {
+              "action_type": "fill",
+              "per_session": 5,
+              "target": "[data-testid=\"checkout-address\"]",
+              "latency_ms": {
+                "p50": 13.8,
+                "p95": 27.09
+              }
+            },
+            {
+              "action_type": "click",
+              "per_session": 3,
+              "target": "[data-testid=\"add-to-cart\"]",
+              "latency_ms": {
+                "p50": 86.4,
+                "p95": 160.53
+              }
+            },
+            {
+              "action_type": "extract",
+              "per_session": 2,
+              "target": "[data-testid=\"item-title\"]",
+              "latency_ms": {
+                "p50": 6.6,
+                "p95": 14.01
+              }
+            }
+          ],
+          "network": {
+            "requests": 1.83,
+            "domain": "localhost",
+            "duration_ms": {
+              "p50": 7.5,
+              "p95": 19.35
+            },
+            "bytes": {
+              "p50": 2476,
+              "p95": 3006.55
+            },
+            "bytes_reported": 0.5,
+            "resource_types": {
+              "document": 44
+            }
+          },
+          "failures": [
+            {
+              "p": 0.55,
+              "status": "failed",
+              "error_code": "unsupported_feature",
+              "reason": "Page.captureScreenshot is not supported by this engine (-32601)",
+              "at": 0.5
+            },
+            {
+              "p": 0.2,
+              "status": "failed",
+              "error_code": "unsupported_api",
+              "reason": "TypeError: IntersectionObserver is not defined",
+              "at": 0.4
+            }
+          ]
+        },
+        "login-and-search": {
+          "duration_ms": {
+            "p50": 1166.4,
+            "p95": 1488.45
+          },
+          "peak_mem_mib": {
+            "p50": 22.15,
+            "p95": 23.15
+          },
+          "base_ratio": 0.8,
+          "steps": [
+            {
+              "action_type": "fill",
+              "per_session": 2,
+              "target": "[data-testid=\"login-pass\"]",
+              "latency_ms": {
+                "p50": 15.9,
+                "p95": 65.82
+              }
+            },
+            {
+              "action_type": "goto",
+              "per_session": 2.56,
+              "target": "localhost",
+              "latency_ms": {
+                "p50": 50.4,
+                "p95": 243.6
+              }
+            },
+            {
+              "action_type": "click",
+              "per_session": 2.56,
+              "target": "[data-testid=\"login-submit\"]",
+              "latency_ms": {
+                "p50": 83.4,
+                "p95": 218.58
+              }
+            },
+            {
+              "action_type": "extract",
+              "per_session": 2,
+              "target": "[data-testid=\"item-title\"]",
+              "latency_ms": {
+                "p50": 6.6,
+                "p95": 15.27
+              }
+            }
+          ],
+          "network": {
+            "requests": 1.55,
+            "domain": "localhost",
+            "duration_ms": {
+              "p50": 7.2,
+              "p95": 38.4
+            },
+            "bytes": {
+              "p50": 2697,
+              "p95": 2697
+            },
+            "bytes_reported": 0.5,
+            "resource_types": {
+              "document": 31
+            }
+          },
+          "failures": [
+            {
+              "p": 0.1,
+              "status": "failed",
+              "error_code": "unsupported_api",
+              "reason": "TypeError: crypto.subtle is undefined",
+              "at": 0.5
+            },
+            {
+              "p": 0.03,
+              "status": "failed",
+              "error_code": "selector_not_found",
+              "reason": "selector not found",
+              "at": 0.5
+            }
+          ]
+        },
+        "heavy-page-crawl": {
+          "duration_ms": {
+            "p50": 2353.2,
+            "p95": 4964.88
+          },
+          "peak_mem_mib": {
+            "p50": 33.71,
+            "p95": 41.81
+          },
+          "base_ratio": 0.72,
+          "steps": [
+            {
+              "action_type": "goto",
+              "per_session": 5.79,
+              "target": "localhost",
+              "latency_ms": {
+                "p50": 261.3,
+                "p95": 1517.43
+              }
+            },
+            {
+              "action_type": "eval",
+              "per_session": 2.79,
+              "target": "document.getElementsByTagName('*').length",
+              "latency_ms": {
+                "p50": 6,
+                "p95": 13.8
+              }
+            },
+            {
+              "action_type": "extract",
+              "per_session": 3.79,
+              "target": "[data-testid=\"heavy-summary\"]",
+              "latency_ms": {
+                "p50": 6.6,
+                "p95": 18.27
+              }
+            },
+            {
+              "action_type": "wait",
+              "per_session": 1,
+              "target": "[data-testid=\"js-result\"][data-status=\"done\"]",
+              "latency_ms": {
+                "p50": 11.4,
+                "p95": 33.18
+              }
+            },
+            {
+              "action_type": "screenshot",
+              "per_session": 1,
+              "target": "localhost",
+              "latency_ms": {
+                "p50": 45.6,
+                "p95": 148.62
+              }
+            }
+          ],
+          "network": {
+            "requests": 47.84,
+            "domain": "localhost",
+            "duration_ms": {
+              "p50": 140.4,
+              "p95": 614.64
+            },
+            "bytes": {
+              "p50": 503,
+              "p95": 518
+            },
+            "bytes_reported": 0.5,
+            "resource_types": {
+              "document": 30,
+              "image": 879
+            }
+          },
+          "failures": [
+            {
+              "p": 0.45,
+              "status": "failed",
+              "error_code": "unsupported_api",
+              "reason": "ReferenceError: ResizeObserver is not defined",
+              "at": 0.5
+            },
+            {
+              "p": 0.1,
+              "status": "timeout",
+              "error_code": "timeout",
+              "reason": "navigation timeout",
+              "at": 0.6
+            }
+          ]
+        }
+      }
+    }
+  }
+}

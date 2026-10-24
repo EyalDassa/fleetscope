@@ -11,7 +11,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ClickHouseClient } from "./client";
 import { ensureGrafanaUser } from "./grafana-user";
 import { insertEvents } from "./insert";
-import { createReaderClient, createTestDatabase, type TestDatabase } from "./testing";
+import { createReaderClient, createTestDatabase, type TestDatabase, testPassword } from "./testing";
 
 /**
  * Runs the `sql name=...` blocks of packages/db/README.md the way Grafana would: as the read-only
@@ -22,7 +22,7 @@ import { createReaderClient, createTestDatabase, type TestDatabase } from "./tes
 let db: TestDatabase;
 let reader: ClickHouseClient;
 const user = `fleetscope_dash_test_${randomBytes(4).toString("hex")}`;
-const password = "dashboard-test-password";
+const password = testPassword();
 
 // 30 minutes ago, aligned to the minute, so the events stay far inside the 30 day retention and
 // the minute arithmetic below is exact.

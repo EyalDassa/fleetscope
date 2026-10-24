@@ -4,11 +4,13 @@ import { ConfigError, loadDbConfig } from "./config";
 import { chunkByEncodedSize, rawRow, runningSessionRow, toClickHouseDateTime } from "./insert";
 import { splitStatements } from "./migrate";
 import { buildSeedEvents } from "./seed-events";
+import { testPassword } from "./testing";
 
+const PASSWORD = testPassword();
 const env = {
   CLICKHOUSE_URL: "http://localhost:8123",
   CLICKHOUSE_USER: "fleetscope",
-  CLICKHOUSE_PASSWORD: "secret",
+  CLICKHOUSE_PASSWORD: PASSWORD,
   CLICKHOUSE_DATABASE: "fleetscope",
 };
 
@@ -17,7 +19,7 @@ describe("loadDbConfig", () => {
     expect(loadDbConfig(env)).toEqual({
       url: "http://localhost:8123",
       username: "fleetscope",
-      password: "secret",
+      password: PASSWORD,
       database: "fleetscope",
       logLevel: "info",
     });

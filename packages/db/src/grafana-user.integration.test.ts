@@ -2,11 +2,12 @@ import { randomBytes } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type ClickHouseClient, ClickHouseError } from "./client";
 import { ensureGrafanaUser } from "./grafana-user";
-import { createReaderClient, createTestDatabase, type TestDatabase } from "./testing";
+import { createReaderClient, createTestDatabase, type TestDatabase, testPassword } from "./testing";
 
 let db: TestDatabase;
 const user = `fleetscope_grafana_test_${randomBytes(4).toString("hex")}`;
-const password = "first-test-password";
+const password = testPassword();
+const secondPassword = testPassword();
 const readers: ClickHouseClient[] = [];
 
 function readerClient(pass = password): ClickHouseClient {
@@ -202,7 +203,7 @@ describe("the read-only Grafana user", () => {
 
     await ensureGrafanaUser(db.client, {
       user,
-      password: "second-test-password",
+      password: secondPassword,
       database: db.config.database,
     });
     expect(
@@ -210,7 +211,7 @@ describe("the read-only Grafana user", () => {
         readerClient(password).query({ query: "SELECT 1", format: "JSONEachRow" }),
       ),
     ).toBe("AUTHENTICATION_FAILED");
-    const rotated = readerClient("second-test-password");
+    const rotated = readerClient(secondPassword);
     expect(await outcome(() => rotated.query({ query: "SELECT 1", format: "JSONEachRow" }))).toBe(
       "ok",
     );
@@ -219,11 +220,11 @@ describe("the read-only Grafana user", () => {
   });
 
   it("keeps a clear error when the admin may not manage users", async () => {
-    const unprivileged = readerClient("second-test-password");
+    const unprivileged = readerClient(secondPassword);
     await expect(
       ensureGrafanaUser(unprivileged, {
         user: `${user}_other`,
-        password: "whatever-password",
+        password: testPassword(),
         database: db.config.database,
       }),
     ).rejects.toThrow(/could not set up the Grafana user/);
