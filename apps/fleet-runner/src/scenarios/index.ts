@@ -16,6 +16,20 @@ export type ScenarioName = keyof typeof SCENARIOS;
 export const SCENARIO_NAMES = Object.keys(SCENARIOS) as ScenarioName[];
 
 /**
+ * A browser feature a scenario cannot run without. `ENGINE_SPECS[engine].lacks` lists what an
+ * engine does not have; `--routing by-scenario` uses the two to keep a scenario off an engine that
+ * cannot run it (docs/adr/0005). Add a name here only when an engine is verified to lack it.
+ */
+export type Capability = "webWorker";
+
+/** What each scenario needs. `heavy-page-crawl` opens `/js-heavy`, whose probe runs a web worker. */
+export const SCENARIO_NEEDS: Record<ScenarioName, readonly Capability[]> = {
+  "login-and-search": [],
+  "checkout-form": [],
+  "heavy-page-crawl": ["webWorker"],
+};
+
+/**
  * Scenario for session number `index`. A fixed name always wins; `mix` goes round-robin, starting
  * at a point chosen by the run seed so different seeds give different orders.
  */

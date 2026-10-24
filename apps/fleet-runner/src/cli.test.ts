@@ -106,6 +106,7 @@ describe("pnpm fleet: usage errors exit with 2 and print the usage", () => {
         "--scenario",
         "--seed",
         "--agent",
+        "--routing",
         "--session-timeout",
         "cleanup",
       ]) {

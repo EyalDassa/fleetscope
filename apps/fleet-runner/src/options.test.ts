@@ -20,6 +20,7 @@ describe("parseRunArgs", () => {
       scenario: "mix",
       seed: 12345,
       agentId: defaultAgentId(hostname()),
+      routing: "fixed",
       sessionTimeoutMs: 120_000,
     });
   });
@@ -39,6 +40,8 @@ describe("parseRunArgs", () => {
         "7",
         "--agent",
         "my-agent",
+        "--routing",
+        "by-scenario",
         "--session-timeout",
         "30",
       ],
@@ -51,8 +54,13 @@ describe("parseRunArgs", () => {
       scenario: "checkout-form",
       seed: 7,
       agentId: "my-agent",
+      routing: "by-scenario",
       sessionTimeoutMs: 30_000,
     });
+  });
+
+  it("rejects an unknown routing policy and lists the valid ones", () => {
+    expect(() => parseRunArgs(["--routing", "smart"], seed)).toThrow(/fixed, by-scenario/);
   });
 
   it("accepts --seed 0", () => {
@@ -244,6 +252,12 @@ describe("parseTrafficArgs", () => {
       agentId: "t@x",
       engines: ["chromium", "lightpanda"],
     });
+  });
+
+  it("reads --routing, default fixed", () => {
+    expect(parseTrafficArgs([], seed).routing).toBe("fixed");
+    expect(parseTrafficArgs(["--routing", "by-scenario"], seed).routing).toBe("by-scenario");
+    expect(() => parseTrafficArgs(["--routing", "x"], seed)).toThrow(UsageError);
   });
 
   it("rejects bad values", () => {

@@ -259,9 +259,11 @@ export function buildTrace(timeline: SessionTimeline): ChromeTrace {
     meta("thread_sort_index", tid, { sort_index: sortIndex });
   };
 
-  const engine = session.engine_version
+  const ran = session.engine_version
     ? `${session.engine} ${session.engine_version}`
     : session.engine;
+  // `engine` is the engine that ran the session; say so when routing moved it there
+  const engine = session.routed_from ? `${ran} (routed from ${session.routed_from})` : ran;
   meta("process_name", 0, {
     name: `${session.session_id} · ${engine} · ${session.source === "sim" ? "SIM" : "REAL"} · ${STATUS_WORD[status]}`,
   });

@@ -42,7 +42,12 @@ afterAll(async () => {
 });
 
 /** Everything after the five M0 migrations. */
-const AFTER_M0 = ["0006_insert_dedup_window.sql", "0007_fleet_minute.sql", "0008_pricing.sql"];
+const AFTER_M0 = [
+  "0006_insert_dedup_window.sql",
+  "0007_fleet_minute.sql",
+  "0008_pricing.sql",
+  "0009_sessions_routed_from.sql",
+];
 
 const ctx = (session_id: string): EventEnvelope => ({
   session_id,

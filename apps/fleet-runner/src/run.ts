@@ -1,7 +1,7 @@
 import { type CollectedSession, type Collector, createCollector } from "@fleetscope/collector";
 import type { Engine } from "@fleetscope/schema";
 import type { Logger } from "pino";
-import { assignSession } from "./assign";
+import { assignSession, routeSession, unmetNeeds } from "./assign";
 import type { RunnerConfig } from "./config";
 import type { DockerFleet } from "./docker";
 import type { RunOptions } from "./options";
@@ -32,6 +32,11 @@ export interface FleetRunDeps {
   firstIndex?: number;
   /** Close the collectors when done (default). `fleet traffic` keeps them across batches. */
   closeCollectors?: boolean;
+  /**
+   * "engine/scenario" pairs already warned about (no engine of the run can run the scenario). Share
+   * one set across batches (`fleet traffic`) to warn once per run, not once per batch.
+   */
+  warnedUnroutable?: Set<string>;
   /** Test hook. */
   runSession?: typeof runSession;
 }
@@ -59,13 +64,15 @@ export function createCollectors(
 
 /**
  * Runs `options.sessions` sessions with at most `options.concurrency` browser containers alive at
- * once. Engine and scenario come from `assignSession` (every scenario on every engine). Returns when every started session has ended and the collectors have flushed.
+ * once. Engine and scenario come from `assignSession` (every scenario on every engine), then
+ * `routeSession` applies `options.routing`. Returns when every started session has ended and the collectors have flushed.
  */
 export async function runFleet(deps: FleetRunDeps): Promise<FleetRunResult> {
   const { config, options, logger, signal, collectors } = deps;
   const startedAt = Date.now();
 
   const results: SessionResult[] = [];
+  const warned = deps.warnedUnroutable ?? new Set<string>();
   let next = 0;
 
   async function lane(): Promise<void> {
@@ -73,12 +80,21 @@ export async function runFleet(deps: FleetRunDeps): Promise<FleetRunResult> {
       const n = next++;
       if (n >= options.sessions) return;
       const index = (deps.firstIndex ?? 0) + n;
-      const { engine, scenario } = assignSession(
+      const assigned = assignSession(options.engines, options.scenario, options.seed, index);
+      const { engine, scenario, routedFrom } = routeSession(
+        assigned,
         options.engines,
-        options.scenario,
-        options.seed,
-        index,
+        options.routing,
       );
+      const unmet = unmetNeeds(engine, scenario);
+      const key = `${engine}/${scenario}`;
+      if (options.routing === "by-scenario" && unmet.length > 0 && !warned.has(key)) {
+        warned.add(key);
+        logger.warn(
+          { engine, scenario, missing: unmet, engines: options.engines },
+          `routing: no engine of this run can run ${scenario} (needs ${unmet.join(", ")}); it runs on ${engine} and is expected to fail. Add chrome-headless-shell or chromium to --engines`,
+        );
+      }
       const fleet = deps.fleets.get(engine);
       const collector = collectors.get(engine);
       if (!fleet || !collector) throw new Error(`no browser fleet for engine ${engine}`);
@@ -96,6 +112,7 @@ export async function runFleet(deps: FleetRunDeps): Promise<FleetRunResult> {
           {
             index,
             engine,
+            routedFrom,
             scenario,
             seed: sessionSeed(options.seed, index),
           },

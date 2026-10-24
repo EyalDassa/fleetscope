@@ -20,6 +20,7 @@ beforeAll(async () => {
   const a = ctx("tl-a");
   const other = ctx("tl-other"); // same engine: its rows must not leak into tl-a
   const lp = ctx("tl-lp", "lightpanda");
+  const routed = ctx("tl-routed", "chrome-headless-shell");
   const started: FleetEvent[] = [
     newEvent(
       "session.started",
@@ -43,6 +44,19 @@ beforeAll(async () => {
       "session.started",
       lp,
       { engine_version: null, scenario: "x", region: "local", startup_ms: 1, connect_ms: 1 },
+      T0,
+    ),
+    newEvent(
+      "session.started",
+      routed,
+      {
+        engine_version: null,
+        scenario: "heavy-page-crawl",
+        region: "local",
+        startup_ms: 1,
+        connect_ms: 1,
+        routed_from: "lightpanda",
+      },
       T0,
     ),
   ];
@@ -169,12 +183,18 @@ describe("getSessionTimeline", () => {
       region: "local",
       startup_ms: 900,
       connect_ms: 400,
+      routed_from: null,
       status: "failed",
       started_at_ms: T0,
       ended_at_ms: T0 + 3000,
       duration_ms: 3000,
       reason: "selector not found",
     });
+  });
+
+  it("returns routed_from for a routed session, null for the others", async () => {
+    expect((await getTimelineSession(db.client, "tl-routed"))?.routed_from).toBe("lightpanda");
+    expect((await getTimelineSession(db.client, "tl-lp"))?.routed_from).toBeNull();
   });
 
   it("returns a session that is still running with null end fields", async () => {

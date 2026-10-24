@@ -36,12 +36,9 @@ export function statPanel(title: string, rawSql: string, extra: JsonObject = {})
 
 /** A time series that follows every rule of DESIGN.md section 9. */
 export function timeSeriesPanel(title: string, rawSql: string): JsonObject {
-  const engine = (name: string, color: string, fill: string): JsonObject => ({
+  const engine = (name: string, color: string): JsonObject => ({
     matcher: { id: "byRegexp", options: `/${name}/` },
-    properties: [
-      { id: "color", value: { mode: "fixed", fixedColor: color } },
-      { id: "custom.lineStyle", value: { fill } },
-    ],
+    properties: [{ id: "color", value: { mode: "fixed", fixedColor: color } }],
   });
   return {
     id: nextPanelId(),
@@ -56,9 +53,9 @@ export function timeSeriesPanel(title: string, rawSql: string): JsonObject {
         noValue: "No data in range",
       },
       overrides: [
-        engine("chromium", "#56B4E9", "solid"),
-        engine("chrome-headless-shell", "#E69F00", "dash"),
-        engine("lightpanda", "#CC79A7", "dot"),
+        engine("chromium", "#56B4E9"),
+        engine("chrome-headless-shell", "#E69F00"),
+        engine("lightpanda", "#CC79A7"),
       ],
     },
   };

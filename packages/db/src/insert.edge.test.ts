@@ -131,6 +131,16 @@ describe("session snapshots", () => {
     expect(runningSessionRow(started).engine_version).toBeNull();
   });
 
+  it("carries routed_from from the start onto the ended row; absent means null", () => {
+    if (started.type !== "session.started" || ended.type !== "session.ended") {
+      throw new Error("unreachable");
+    }
+    expect(runningSessionRow(started).routed_from).toBeNull();
+    const routed = runningSessionRow({ ...started, routed_from: "lightpanda" });
+    expect(routed.routed_from).toBe("lightpanda");
+    expect(endedSessionRow(routed, ended).routed_from).toBe("lightpanda");
+  });
+
   it("the ended snapshot has a higher version than the running one and keeps the start fields", () => {
     if (started.type !== "session.started" || ended.type !== "session.ended") {
       throw new Error("unreachable");

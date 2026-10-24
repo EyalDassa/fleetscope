@@ -9,7 +9,7 @@ infra/grafana/
   provisioning/datasources/clickhouse.yaml   the data source (uid fleetscope-clickhouse)
   provisioning/dashboards/fleetscope.yaml    loads dashboards/ into the folder "Fleetscope" (uid fleetscope)
   dashboards/                                the dashboard JSON (fleetscope-overview, -sessions, -session, -browsers)
-  src/                                       `pnpm grafana:push`, `grafana:check` and `grafana:reload` (TypeScript)
+  src/                                       `pnpm grafana:push`, `grafana:pull`, `grafana:check` and `grafana:reload` (TypeScript)
 ```
 
 ## Run it locally
@@ -168,20 +168,102 @@ pnpm grafana:check --verbose                # list every query with its row coun
 pnpm grafana:check --allow-dangling-links   # link targets that are not written yet become warnings
 ```
 
+## For the team: official dashboards, and where to build your own
+
+Two folders in Grafana Cloud:
+
+| Folder | What is in it | Who can do what |
+|---|---|---|
+| **Fleetscope** (uid `fleetscope`) | the 4 official dashboards: Overview, Sessions, Session, Browsers. They come from this repository | everybody can **view** and copy from them; only **Admins** can edit. Editors and Viewers cannot save here |
+| **Team dashboards** (uid `fleetscope-team`) | your own dashboards | **Editors** create and edit, Viewers view. `grafana:push` never reads, changes or deletes anything in it |
+
+**Build your own.** Open Team dashboards > New > New dashboard, pick the data source
+**Fleetscope ClickHouse**, and write SQL against the live data (it connects as a read-only user, so
+you cannot damage the data). Explore (compass icon) is the quickest place to try a query first, and
+**Grafana Assistant** can write the SQL and the panels for you; check what it produced, the data is
+real. The tables and the rules for honest queries (NULL is not 0, `source` filter) are in
+`packages/db/README.md`.
+
+**Copy from an official dashboard.**
+- One panel: panel menu > More... > **Copy**, then in your dashboard Add > Paste panel.
+- A whole dashboard: open it, Save dashboard > **Save as copy**, and choose the folder **Team dashboards**.
+- Or just copy the SQL from a panel (Edit > Query) into yours.
+
+**Make a team dashboard official.** Only when the team agrees that it belongs in the product:
+1. `pnpm grafana:pull <uid> --as fleetscope-<name>` writes it as repository JSON into
+   `infra/grafana/dashboards/fleetscope-<name>.json` (ids, versions and the Perfetto URL are cleaned
+   up; the new uid keeps the team copy and the official copy apart).
+2. `pnpm grafana:check` must pass (design rules, query rules, links). Fix what it names.
+3. Commit it in a pull request. After the merge, `pnpm grafana:push` puts it in the official folder.
+
+**Where your dashboards live.** Team dashboards exist **only in Grafana Cloud**; they are not in git.
+Grafana keeps a version history for each one (dashboard settings > Versions), so you can compare and
+restore an older save. They only disappear if somebody deletes the dashboard or folder, or if the
+Grafana Cloud stack itself is deleted. For a dashboard you cannot lose, run
+`pnpm grafana:pull <uid> --out my-backup.json` now and then.
+
 ## `pnpm grafana:push`: Grafana Cloud
 
-Makes a Grafana match the repository: the folder `fleetscope`, the data source
-`fleetscope-clickhouse`, every `dashboards/*.json` (into that folder, `overwrite: true`), and the
+Makes a Grafana match the repository: the folder `fleetscope` (locked, see below), the folder
+`fleetscope-team` (created, then left alone), the data source `fleetscope-clickhouse`, every
+`dashboards/*.json` (into the official folder, `overwrite: true`), and the
 organisation default theme `dark` (the dashboards use dark-only colours). It can run again and again:
 it prints `created`, `updated` or `unchanged` for each part and leaves unchanged dashboards alone.
 The data source always says `updated`: Grafana never returns the password, so it cannot be compared
-and is sent again (the output says so). It does not delete anything; a dashboard in the Grafana
-folder that is not in the repo is reported.
+and is sent again (the output says so). It does not delete anything; a dashboard in the official
+folder that is not in the repo is reported (the team folder is never listed).
 
 ```bash
 pnpm grafana:push --dry-run     # reads Grafana, prints the plan, changes nothing
 pnpm grafana:push               # does it, then checks the data source health
+pnpm grafana:push --force       # also overwrites every dashboard that somebody else saved in Grafana (see below)
+pnpm grafana:push --force fleetscope-overview   # ... or only that one (repeat --force <uid> for more)
+pnpm grafana:pull <uid>         # keeps such a dashboard, or turns a team dashboard into a repository file
 ```
+
+**The folder lock.** Every push sets the permissions of the official folder: role Viewer = View, role
+Editor = View, role Admin = Admin. It uses
+`POST /api/access-control/folders/fleetscope/builtInRoles/<role>` with `{"permission": "View"}` (and
+reads `GET /api/access-control/folders/fleetscope` first, so a run that finds nothing to change says
+`unchanged`). That is the endpoint Grafana's own "Permissions" dialog uses; it changes one role and keeps
+grants to single users or teams, which the push lists in a note (anyone with Edit there can still change
+the official dashboards). Checked against Grafana 13.2.4 (`200 "Permission updated"`, rows read
+back, an Editor refused with "not allowed to update resource" when saving into the folder). The team
+folder gets Viewer = View, Editor = Edit, Admin = Admin the same way.
+
+**The drift guard.** Before overwriting an official dashboard that differs from the repository, the push
+checks who saved it last (`meta.updatedBy`) against the account behind the token (`GET /api/user`). If it
+was somebody else, that dashboard is **refused**: the push prints its uid, who and when, finishes the
+other dashboards, and exits with code 1. `pnpm grafana:pull <uid>` keeps the Grafana version in the
+repository file (then review, `grafana:check`, pull request); `--force <uid>` discards just that one
+(`--force` alone discards every refused one, including edits you have not looked at). Not refused: what the
+push's own account saved, and (local development) what Grafana's file provisioning saved. A repository uid
+that exists in the team folder is always refused, even with `--force`.
+
+**Adopted.** When the repository already equals the dashboard in Grafana but somebody else saved it last
+(typically after their change was pulled and merged), the push saves it again under its own account and prints
+`adopted` (two saves: Grafana makes no new version for a save that changes nothing, so the second one
+carries the real content). Without that, the next ordinary repository change would still look like their edit and be
+refused. Dry run: `would be adopted`.
+
+**Who is "the push".** `meta.updatedBy` holds the *login* of a person but the *name* of a service account
+(Grafana 13.2.4 and Grafana Cloud: login `sa-1-fleetscope-push`, saved dashboards show `fleetscope-push`). The push
+therefore accepts the token's login, and for a service account its name too; a person is compared by login
+only. `meta` can say `Anonymous` for a dashboard the service account only created (version 1), so when `meta`
+names somebody else the push confirms with the newest entry of the version history. Use a dedicated service
+account for the token, and do not give a person a login equal to its name.
+Evidence in `ACCESS-VERIFICATION.md`.
+
+**The push owns the role rows of both folders.** Every run sets Viewer/Editor/Admin on `fleetscope` and on
+`fleetscope-team` back to the values above, so narrowing them by hand (say, hiding drafts from Viewers) is
+undone at the next push. Use grants to single users or teams for exceptions: the push keeps those and lists them.
+
+**`pnpm grafana:pull <uid> [--out <file>] [--as <new-uid>]`** reads a dashboard from any folder and
+writes repository JSON, by default to `infra/grafana/dashboards/<uid>.json`: no `id`/`version`/`meta`,
+the `api_url` variable as committed (the existing file's, else `http://localhost:4000`), every ClickHouse
+data source reference set to `fleetscope-clickhouse`, two-space JSON, and the keys in the order of the
+existing file so `git diff` shows the real change. It changes nothing in Grafana. A token with the
+Viewer role is enough.
 
 | Variable | Used for |
 |---|---|
@@ -238,5 +320,5 @@ for `.env.example` and `infra/grafana/*`. gitleaks keeps scanning those paths.
 
 `pnpm test` runs this package's unit tests (no Docker, no network; ClickHouse and Grafana are faked).
 They cover the macro expansion, variable handling, the dashboard rules and the whole push flow
-against an in-memory Grafana. The real ClickHouse and the real Grafana are exercised by
+against an in-memory Grafana (folder lock, team folder, drift guard, pull). The real ClickHouse and the real Grafana are exercised by
 `pnpm grafana:check` in CI and by hand, as described above.

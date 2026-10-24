@@ -2,7 +2,8 @@
 // in dashboards.ts: they come from the design spec, not from how Grafana works.
 //   - every colour is a Dark hex from section 2 (or `text` / `transparent`)
 //   - every stat and table sets `noValue`
-//   - every time series has `spanNulls: false`, the three engine overrides and a fixed default colour
+//   - every time series has `spanNulls: false`, the three engine overrides and a fixed default colour,
+//     only solid lines (no `custom.lineStyle` dash or dot) and no two overrides with the same colour
 //   - no rawSql uses ifNull(x, 0) or coalesce(x, 0) (a missing value must not turn into a 0)
 import { collectPanels, type Problem } from "./dashboards";
 import { asArray, asString, isObject, type JsonObject } from "./json";
@@ -95,7 +96,7 @@ function timeSeriesProblems(panel: JsonObject, where: string): Problem[] {
     if (!override) {
       problems.push({
         where,
-        message: `missing the "Fields with name matching regex" override /${engine.name}/ (colour ${engine.color}, line style ${engine.lineFill})`,
+        message: `missing the "Fields with name matching regex" override /${engine.name}/ (colour ${engine.color})`,
       });
       continue;
     }
@@ -110,12 +111,95 @@ function timeSeriesProblems(panel: JsonObject, where: string): Problem[] {
         message: `override /${engine.name}/ must set the colour {"mode":"fixed","fixedColor":"${engine.color}"}`,
       });
     }
-    const lineStyle = overridePropertyValue(override, "custom.lineStyle");
-    if (!isObject(lineStyle) || lineStyle.fill !== engine.lineFill) {
+  }
+  problems.push(...lineStyleProblems(defaults, overrides, where));
+  problems.push(...thresholdsStyleProblems(defaults, overrides, where));
+  problems.push(...sharedColorProblems(overrides, where));
+  return problems;
+}
+
+/**
+ * Every time series line is solid (DESIGN.md section 2): series differ by colour, never by dash or
+ * dot. A `custom.lineStyle` is allowed only as {"fill":"solid"}, in the defaults or in any override.
+ */
+function lineStyleProblems(
+  defaults: JsonObject,
+  overrides: JsonObject[],
+  where: string,
+): Problem[] {
+  const problems: Problem[] = [];
+  const check = (lineStyle: unknown, source: string): void => {
+    if (lineStyle === undefined) return;
+    const fill = isObject(lineStyle) ? lineStyle.fill : undefined;
+    if (fill !== "solid") {
       problems.push({
         where,
-        message: `override /${engine.name}/ must set custom.lineStyle with fill "${engine.lineFill}"`,
+        message: `${source} sets custom.lineStyle with fill ${JSON.stringify(fill ?? null)}. Every time series line is solid: tell series apart by colour, and leave custom.lineStyle out`,
       });
+    }
+  };
+  const custom = isObject(defaults.custom) ? defaults.custom : {};
+  check(custom.lineStyle, "the field defaults");
+  for (const override of overrides) {
+    const matcher = isObject(override.matcher) ? override.matcher : {};
+    const label = `override ${asString(matcher.options) ?? asString(matcher.id) ?? "?"}`;
+    check(overridePropertyValue(override, "custom.lineStyle"), label);
+  }
+  return problems;
+}
+
+/** The threshold styles that draw no dashed line. `dashed` and `dashed+area` are the ones Grafana adds. */
+const SOLID_THRESHOLD_MODES: ReadonlySet<string> = new Set(["off", "line", "area", "line+area"]);
+
+/**
+ * Threshold lines are lines too (DESIGN.md section 2): `custom.thresholdsStyle.mode` may only be
+ * off, line, area or line+area, never dashed or dashed+area. A missing mode is Grafana's default, off.
+ */
+function thresholdsStyleProblems(
+  defaults: JsonObject,
+  overrides: JsonObject[],
+  where: string,
+): Problem[] {
+  const problems: Problem[] = [];
+  const check = (style: unknown, source: string): void => {
+    if (style === undefined) return;
+    const mode = isObject(style) ? style.mode : undefined;
+    if (mode === undefined) return;
+    if (typeof mode !== "string" || !SOLID_THRESHOLD_MODES.has(mode)) {
+      problems.push({
+        where,
+        message: `${source} sets custom.thresholdsStyle.mode ${JSON.stringify(mode)}. Every time series line is solid, threshold lines too: use off, line, area or line+area`,
+      });
+    }
+  };
+  const custom = isObject(defaults.custom) ? defaults.custom : {};
+  check(custom.thresholdsStyle, "the field defaults");
+  for (const override of overrides) {
+    const matcher = isObject(override.matcher) ? override.matcher : {};
+    const label = `override ${asString(matcher.options) ?? asString(matcher.id) ?? "?"}`;
+    check(overridePropertyValue(override, "custom.thresholdsStyle"), label);
+  }
+  return problems;
+}
+
+/** No two series overrides of a panel may share a colour: colour is the only way to tell them apart. */
+function sharedColorProblems(overrides: JsonObject[], where: string): Problem[] {
+  const problems: Problem[] = [];
+  const seen = new Map<string, string>();
+  for (const override of overrides) {
+    const value = overridePropertyValue(override, "color");
+    const fixed = isObject(value) ? asString(value.fixedColor)?.toLowerCase() : undefined;
+    if (!fixed) continue;
+    const matcher = isObject(override.matcher) ? override.matcher : {};
+    const label = `/${(asString(matcher.options) ?? "?").replace(/^\/|\/$/g, "")}/`;
+    const first = seen.get(fixed);
+    if (first !== undefined) {
+      problems.push({
+        where,
+        message: `overrides ${first} and ${label} both use the colour ${fixed}. Series are told apart by colour alone, so each needs its own`,
+      });
+    } else {
+      seen.set(fixed, label);
     }
   }
   return problems;

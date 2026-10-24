@@ -1,7 +1,12 @@
 // pnpm grafana:push: makes a Grafana (normally Grafana Cloud) match the repository.
-//   1. folder "Fleetscope" (uid fleetscope)
+//   1. folder "Fleetscope" (uid fleetscope), locked: Viewer and Editor may view, only Admins edit
+//      folder "Team dashboards" (uid fleetscope-team), where Editors build their own dashboards.
+//      Push creates it and sets who may do what, and never reads, changes or deletes what is in it.
 //   2. the ClickHouse data source (uid fleetscope-clickhouse), built from the environment
-//   3. every dashboards/*.json, into that folder
+//   3. every dashboards/*.json, into the official folder. A dashboard that somebody else saved in
+//      Grafana and that differs from the repository is REFUSED (pnpm grafana:pull keeps it,
+//      --force [uid] discards it). One that somebody else saved but that already equals the
+//      repository (after a merged pull) is saved once more under the push's account: "adopted"
 //   4. the organisation's default theme: dark (DESIGN.md section 2)
 // It only reads and writes through Grafana's HTTP API, it can run again and again (it says
 // "unchanged" for what is already right), and it never prints the token or the ClickHouse password.
@@ -14,6 +19,15 @@ import {
   type DashboardFile,
   FOLDER_UID,
 } from "./dashboards";
+import { driftVerdict, identityFrom } from "./drift";
+import {
+  describeAccess,
+  ensureFolderAccess,
+  OFFICIAL_FOLDER_ACCESS,
+  TEAM_FOLDER_ACCESS,
+  TEAM_FOLDER_TITLE,
+  TEAM_FOLDER_UID,
+} from "./folder-access";
 import { isLoopbackHost } from "./hosts";
 import { asArray, canonicalJson, isObject, type JsonObject } from "./json";
 
@@ -223,10 +237,25 @@ export class GrafanaClient {
 
 export type Action = "created" | "updated" | "unchanged";
 
+/** A dashboard push did not overwrite, because somebody else saved it in Grafana. */
+export interface Refusal {
+  uid: string;
+  by: string | undefined;
+  at: string | undefined;
+  /** Why, in a sentence. */
+  reason: string;
+}
+
 export interface PushResult {
   folder: Action;
+  /** The role permissions of the official folder (View for Viewer and Editor, Admin for Admin). */
+  lock: Action;
+  teamFolder: Action;
+  teamAccess: Action;
   dataSource: Action;
-  dashboards: { uid: string; action: Action }[];
+  dashboards: { uid: string; action: Action | "refused" | "adopted" }[];
+  /** Dashboards that were not overwritten. `grafana:push` exits non-zero when this is not empty. */
+  refused: Refusal[];
   /** "dark" was set, was already set, or the token may not change it. */
   theme: Action | "not-allowed";
   /** Dashboards in the Grafana folder that are not in the repository. They are left alone. */
@@ -246,6 +275,10 @@ export interface PushOptions {
   /** True when Grafana is on this machine, so a localhost API URL needs no warning. */
   grafanaIsLocal: boolean;
   dryRun: boolean;
+  /** Overwrite every dashboard that was changed in Grafana by somebody else. */
+  force?: boolean;
+  /** Overwrite only these dashboards (`--force <uid>`). Every uid must be one of the repository's. */
+  forceUids?: readonly string[];
   /** Without a token a dry run cannot read Grafana, and only prints what it would send. */
   canRead: boolean;
   skipHealthCheck: boolean;
@@ -303,6 +336,15 @@ export async function pushToGrafana(options: PushOptions): Promise<PushResult> {
     throw new PushError(
       `fix the dashboard files first (pnpm grafana:check):\n  ${broken.join("\n  ")}`,
     );
+  }
+
+  // `--force <uid>` must name a dashboard of the repository (checked before the first write).
+  const forceUids = new Set(options.forceUids ?? []);
+  const knownUids = new Set(structure.dashboards.map((d) => d.uid));
+  for (const uid of forceUids) {
+    if (!knownUids.has(uid)) {
+      throw new PushError(`--force ${uid}: no dashboard file in the repository has that uid`);
+    }
   }
 
   // Build every dashboard body before the first write, so a problem found now leaves Grafana
@@ -367,6 +409,43 @@ export async function pushToGrafana(options: PushOptions): Promise<PushResult> {
   }
   log(`folder      ${FOLDER_UID} ("${FOLDER_TITLE}")  ${would}${folder}`);
 
+  // Who the token is: the drift guard below needs it, and so does the report on single-user grants.
+  const me = identityFrom(read ? await client.get("/api/user") : undefined);
+
+  // 1b. Lock the official folder. Folder access is read back from Grafana, so a second push says unchanged.
+  const lockResult = await ensureFolderAccess(client, FOLDER_UID, OFFICIAL_FOLDER_ACCESS, {
+    read: dryRun ? read && existingFolder !== undefined : true, // a real run has just created it
+    dryRun,
+    ignoreLogins: me.names,
+  });
+  log(
+    `lock        ${FOLDER_UID}: ${describeAccess(OFFICIAL_FOLDER_ACCESS)}  ${would}${lockResult.action}` +
+      (lockResult.changes.length > 0 ? ` (${lockResult.changes.join("; ")})` : ""),
+  );
+  if (lockResult.extraGrants.length > 0) {
+    log(
+      `note        ${FOLDER_UID} also has grants to single users or teams (${lockResult.extraGrants.join(", ")}); kept. Anyone with Edit there can change the official dashboards`,
+    );
+  }
+
+  // 1c. The team folder: created if missing, access set, and then not looked at again.
+  const existingTeamFolder = read ? await client.get(`/api/folders/${TEAM_FOLDER_UID}`) : undefined;
+  const teamFolder: Action = isObject(existingTeamFolder) ? "unchanged" : "created";
+  if (teamFolder === "created" && !dryRun) {
+    await client.send("POST", "/api/folders", { uid: TEAM_FOLDER_UID, title: TEAM_FOLDER_TITLE });
+  }
+  log(`folder      ${TEAM_FOLDER_UID} ("${TEAM_FOLDER_TITLE}")  ${would}${teamFolder}`);
+  const teamResult = await ensureFolderAccess(client, TEAM_FOLDER_UID, TEAM_FOLDER_ACCESS, {
+    read: dryRun ? read && existingTeamFolder !== undefined : true,
+    dryRun,
+    ignoreLogins: me.names,
+  });
+  log(
+    `access      ${TEAM_FOLDER_UID}: ${describeAccess(TEAM_FOLDER_ACCESS)}  ${would}${teamResult.action}` +
+      (teamResult.changes.length > 0 ? ` (${teamResult.changes.join("; ")})` : "") +
+      "  (its dashboards are never touched)",
+  );
+
   // 2. Data source. Grafana never returns the password, so it is always sent again.
   const existingSource = read
     ? await client.get(`/api/datasources/uid/${dataSource.uid}`)
@@ -390,8 +469,10 @@ export async function pushToGrafana(options: PushOptions): Promise<PushResult> {
       `database ${String(shown.defaultDatabase)}, user ${String(shown.username)}, password ********)`,
   );
 
-  // 3. Dashboards
+  // 3. Dashboards. The drift guard compares the last author with the token's login (`me`).
+
   const results: PushResult["dashboards"] = [];
+  const refused: Refusal[] = [];
   const pushedUids = new Set<string>();
   for (const { dashboard, body } of prepared) {
     const remote = read ? await client.get(`/api/dashboards/uid/${dashboard.uid}`) : undefined;
@@ -400,6 +481,83 @@ export async function pushToGrafana(options: PushOptions): Promise<PushResult> {
     let action: Action = "created";
     if (remoteDashboard) {
       action = comparable(remoteDashboard) === comparable(body) ? "unchanged" : "updated";
+    }
+    const meta = isObject(remote) ? remote.meta : undefined;
+    // A repository uid that lives in the team folder is somebody's work: never move or overwrite it.
+    const inTeamFolder = isObject(meta) && meta.folderUid === TEAM_FOLDER_UID;
+    // meta.updatedBy first; when it names somebody else, confirm with the version history, which is
+    // the more reliable record (a dashboard that the service account only created reports "Anonymous"
+    // in meta, but "fleetscope-push" in its history; measured on Grafana 13.2.4).
+    let verdict = driftVerdict(meta, me);
+    if (verdict.refuse && remoteDashboard && !inTeamFolder) {
+      const latest = await latestVersion(client, dashboard.uid);
+      if (latest) {
+        verdict = driftVerdict(
+          {
+            ...(isObject(meta) ? meta : {}),
+            updatedBy: latest.by,
+            updated: latest.at ?? undefined,
+          },
+          me,
+        );
+      }
+    }
+    const refusal: Refusal | undefined =
+      action === "unchanged"
+        ? undefined
+        : inTeamFolder
+          ? {
+              uid: dashboard.uid,
+              by: verdict.by,
+              at: verdict.at,
+              reason: `it is in the "${TEAM_FOLDER_TITLE}" folder, which push never touches`,
+            }
+          : action === "updated" &&
+              verdict.refuse &&
+              !options.force &&
+              !forceUids.has(dashboard.uid)
+            ? {
+                uid: dashboard.uid,
+                by: verdict.by,
+                at: verdict.at,
+                reason: `last saved in Grafana by ${verdict.by ?? "someone"}${verdict.at ? ` at ${verdict.at}` : ""} and it differs from the repository. Run pnpm grafana:pull ${dashboard.uid} to keep it, or pnpm grafana:push --force ${dashboard.uid} to discard it`,
+              }
+            : undefined;
+    if (refusal) {
+      refused.push(refusal);
+      pushedUids.add(dashboard.uid);
+      results.push({ uid: dashboard.uid, action: "refused" });
+      log(
+        `REFUSED     dashboard ${dashboard.uid}  ${dryRun ? "would be refused" : "not overwritten"}: ${refusal.reason}`,
+      );
+      continue;
+    }
+    // Equal to the repository but last saved by somebody else (a pull that was merged): save it once
+    // more as the push's account. Otherwise the next repository change would look like their edit.
+    const adopt = action === "unchanged" && verdict.refuse && !inTeamFolder && remoteDashboard;
+    if (adopt) {
+      if (!dryRun) {
+        // Grafana makes no new version for a save that changes nothing, so the author would stay.
+        // Save a copy with a different title first, then the real body: the last save is the push's.
+        await client.send("POST", "/api/dashboards/db", {
+          dashboard: { ...body, title: `${String(body.title)} (adopting)` },
+          folderUid: FOLDER_UID,
+          overwrite: true,
+          message: "grafana:push adopting",
+        });
+        await client.send("POST", "/api/dashboards/db", {
+          dashboard: body,
+          folderUid: FOLDER_UID,
+          overwrite: true,
+          message: "grafana:push adopted",
+        });
+      }
+      pushedUids.add(dashboard.uid);
+      results.push({ uid: dashboard.uid, action: "adopted" });
+      log(
+        `dashboard   ${dashboard.uid}  ${would}adopted  (equals the repository; last saved by ${verdict.by}, now saved by ${me.label})`,
+      );
+      continue;
     }
     if (action !== "unchanged" && !dryRun) {
       await client.send("POST", "/api/dashboards/db", {
@@ -463,13 +621,39 @@ export async function pushToGrafana(options: PushOptions): Promise<PushResult> {
 
   return {
     folder,
+    lock: lockResult.action,
+    teamFolder,
+    teamAccess: teamResult.action,
     dataSource: sourceAction,
     dashboards: results,
+    refused,
+
     theme,
     extraDashboards,
     warnings,
     health,
   };
+}
+
+/** Who saved the newest version of a dashboard, and when, from its version history. */
+async function latestVersion(
+  client: GrafanaClient,
+  uid: string,
+): Promise<{ by: string; at: string | undefined } | undefined> {
+  try {
+    const answer = await client.get(`/api/dashboards/uid/${uid}/versions?limit=1`);
+    // Grafana 13 answers { versions: [...] }; older versions answer the array itself.
+    const list = asArray(isObject(answer) ? answer.versions : answer).filter(isObject);
+    const newest = list.reduce<JsonObject | undefined>(
+      (best, v) => (best === undefined || Number(v.version) > Number(best.version) ? v : best),
+      undefined,
+    );
+    const by = typeof newest?.createdBy === "string" ? newest.createdBy : undefined;
+    if (!newest || !by) return undefined;
+    return { by, at: typeof newest.created === "string" ? newest.created : undefined };
+  } catch {
+    return undefined; // no history (permissions, older Grafana): the meta answer stands
+  }
 }
 
 async function checkHealth(

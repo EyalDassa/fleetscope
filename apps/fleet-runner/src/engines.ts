@@ -1,4 +1,5 @@
 import type { Engine } from "@fleetscope/schema";
+import type { Capability } from "./scenarios";
 
 /**
  * How the runner talks to each engine's container. One entry per `ENGINES` value, so a new engine
@@ -25,6 +26,11 @@ export interface EngineSpec {
   defaultImage: string;
   /** Environment of the browser container. */
   env: readonly string[];
+  /**
+   * Browser features this engine is verified NOT to have. `--routing by-scenario` keeps a scenario
+   * that needs one of them off this engine. Empty for the Chrome-based engines.
+   */
+  lacks: readonly Capability[];
 }
 
 export const ENGINE_SPECS: Record<Engine, EngineSpec> = {
@@ -36,6 +42,7 @@ export const ENGINE_SPECS: Record<Engine, EngineSpec> = {
     // Keep this tag in sync with the Playwright version pinned in package.json (CI checks it).
     defaultImage: "fleetscope/playwright-chromium:1.64.1-2",
     env: [],
+    lacks: [],
   },
   "chrome-headless-shell": {
     port: 9222,
@@ -45,6 +52,7 @@ export const ENGINE_SPECS: Record<Engine, EngineSpec> = {
     defaultImage:
       "chromedp/headless-shell:156.0.8078.48@sha256:3da74b0945e4f80f00f0310bcda9f76cee283539ebd200a053a7bebf3de89423",
     env: [],
+    lacks: [],
   },
   lightpanda: {
     port: 9222,
@@ -55,6 +63,10 @@ export const ENGINE_SPECS: Record<Engine, EngineSpec> = {
       "lightpanda/browser:1.0.2@sha256:5d1d724c476957d8c2f8393a51fd089477523b0e5aa9c783c48688785d934fb9",
     // A benchmark fleet should not phone home.
     env: ["LIGHTPANDA_DISABLE_TELEMETRY=true"],
+    // Verified on 1.0.2 and on nightly 1.1.0-nightly.11062: `Worker` exists but no worker ever runs
+    // (script URL, blob: or data:), so the /js-heavy probe times out. See docs/adr/0005 and
+    // tools/worker-probe.mjs. Remove this when a Lightpanda release passes the probe.
+    lacks: ["webWorker"],
   },
 };
 

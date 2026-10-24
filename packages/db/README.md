@@ -29,7 +29,7 @@ Rules:
 - **Applied files are append-only.** Editing or deleting an applied file makes the runner fail
   (checksum). Add a new migration instead. M0 is merged, so `0001` to `0005` are frozen; schema
   changes go in a new file (`0006` sets the insert deduplication window, `0007` adds the
-  `fleet_minute` rollup, `0008` the `pricing` table).
+  `fleet_minute` rollup, `0008` the `pricing` table, `0009` the `sessions.routed_from` column).
 - The first line of `0007` points at `docs/adr/0003-grafana.md`; the file is `0003-grafana-dashboards.md`.
   The comment stays: the checksum covers the whole file, comments included, so fixing it would make
   `db:migrate` fail on every database that already applied `0007`.
@@ -470,6 +470,7 @@ SELECT
     p.agent_id AS agent_id,
     p.source AS source,
     p.engine AS engine,
+    p.routed_from AS routed_from,
     p.engine_version AS engine_version,
     p.provider AS provider,
     p.scenario AS scenario,
@@ -503,6 +504,13 @@ LEFT JOIN issue_facts AS i ON i.session_id = p.session_id
 LEFT JOIN action_facts AS a ON a.session_id = p.session_id
 LEFT JOIN pricing_current AS price ON price.engine = p.engine AND price.provider = p.provider
 ```
+
+**`routed_from` (migration 0009).** The engine the assignment chose before `fleet run --routing by-scenario`
+sent the session to an engine that can run its scenario (docs/adr/0005). `engine` is always the engine that
+**ran** the session, so every per-engine number (success rate, memory, cost) counts what really happened.
+`routed_from` is NULL for a session that was not routed and for every session written before the column
+existed; a non-NULL value means "this session ran on `engine` instead of `routed_from`". Show it next to the
+engine (`chrome-headless-shell (from lightpanda)`), never fold it into `engine`.
 
 **Bounds that keep the lookups cheap (M3).**
 

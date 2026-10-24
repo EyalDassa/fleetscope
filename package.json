@@ -24,6 +24,7 @@
     "db:grafana-user": "pnpm --filter @fleetscope/db grafana-user",
     "db:backfill-rollups": "pnpm --filter @fleetscope/db backfill-rollups",
     "grafana:push": "pnpm --filter @fleetscope/grafana-tools push",
+    "grafana:pull": "pnpm --filter @fleetscope/grafana-tools pull",
     "grafana:check": "pnpm --filter @fleetscope/grafana-tools check",
     "grafana:reload": "pnpm --filter @fleetscope/grafana-tools reload",
     "fleet": "pnpm --filter @fleetscope/fleet-runner fleet",

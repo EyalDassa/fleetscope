@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Fetch } from "./clickhouse-http";
 import type { DashboardFile } from "./dashboards";
+import { fakeGrafana } from "./fake-grafana";
 import type { JsonObject } from "./json";
 import {
   buildDataSource,
@@ -21,115 +22,6 @@ const env = {
   CLICKHOUSE_GRAFANA_PASSWORD: PASSWORD,
   CLICKHOUSE_DATABASE: "fleetscope",
 };
-
-// ---------------------------------------------------------------- a small in-memory Grafana
-
-interface FakeState {
-  folders: Map<string, JsonObject>;
-  sources: Map<string, JsonObject>;
-  dashboards: Map<string, JsonObject>;
-  dashboardFolders: Map<string, unknown>;
-  prefs: JsonObject;
-  /** "METHOD /path" of every request, in order. */
-  calls: string[];
-  authHeaders: Set<string>;
-  allowPreferences: boolean;
-  healthy: boolean;
-}
-
-function fakeGrafana(): { fetchImpl: Fetch; state: FakeState } {
-  const state: FakeState = {
-    folders: new Map(),
-    sources: new Map(),
-    dashboards: new Map(),
-    dashboardFolders: new Map(),
-    prefs: { theme: "" },
-    calls: [],
-    authHeaders: new Set(),
-    allowPreferences: true,
-    healthy: true,
-  };
-  const json = (status: number, body: unknown): Response =>
-    new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
-
-  const fetchImpl = (async (input: URL | string, init?: RequestInit) => {
-    const url = new URL(String(input));
-    const method = init?.method ?? "GET";
-    const path = url.pathname;
-    state.calls.push(`${method} ${path}`);
-    const auth = (init?.headers as Record<string, string> | undefined)?.Authorization;
-    if (auth) state.authHeaders.add(auth);
-    const body = init?.body ? (JSON.parse(String(init.body)) as JsonObject) : undefined;
-    const notFound = json(404, { message: "not found" });
-
-    // The first capture group of `pattern`, when the path matches it.
-    const at = (pattern: RegExp): string | undefined => pattern.exec(path)?.[1];
-
-    const folderUid = at(/^\/api\/folders\/([^/]+)$/);
-    if (folderUid) {
-      const folder = state.folders.get(folderUid);
-      if (method === "GET") return folder ? json(200, folder) : notFound;
-      if (method === "PUT" && folder) {
-        state.folders.set(folderUid, { ...folder, title: body?.title });
-        return json(200, state.folders.get(folderUid));
-      }
-    }
-    if (path === "/api/folders" && method === "POST" && body) {
-      state.folders.set(String(body.uid), { uid: body.uid, title: body.title });
-      return json(200, state.folders.get(String(body.uid)));
-    }
-    if (at(/^\/api\/datasources\/uid\/([^/]+)\/health$/)) {
-      return state.healthy
-        ? json(200, { status: "OK", message: "Data source is working" })
-        : json(400, { status: "ERROR", message: "connection refused" });
-    }
-    const sourceUid = at(/^\/api\/datasources\/uid\/([^/]+)$/);
-    if (sourceUid) {
-      const source = state.sources.get(sourceUid);
-      if (method === "GET")
-        return source ? json(200, { ...source, secureJsonData: undefined }) : notFound;
-      if (method === "PUT" && body) {
-        state.sources.set(sourceUid, body);
-        return json(200, { message: "Datasource updated" });
-      }
-    }
-    if (path === "/api/datasources" && method === "POST" && body) {
-      state.sources.set(String(body.uid), body);
-      return json(200, { message: "Datasource added" });
-    }
-    const dashboardUid = at(/^\/api\/dashboards\/uid\/([^/]+)$/);
-    if (dashboardUid) {
-      const dashboard = state.dashboards.get(dashboardUid);
-      return dashboard
-        ? json(200, { dashboard: { ...dashboard, id: 5, version: 3 }, meta: {} })
-        : notFound;
-    }
-    if (path === "/api/dashboards/db" && method === "POST" && body) {
-      const dashboard = body.dashboard as JsonObject;
-      state.dashboards.set(String(dashboard.uid), dashboard);
-      state.dashboardFolders.set(String(dashboard.uid), body.folderUid);
-      return json(200, { status: "success", uid: dashboard.uid });
-    }
-    if (path === "/api/search") {
-      return json(
-        200,
-        [...state.dashboards.keys()].map((uid) => ({ uid })),
-      );
-    }
-    if (path === "/api/org/preferences") {
-      if (method === "GET") return json(200, state.prefs);
-      if (method === "PATCH") {
-        if (!state.allowPreferences)
-          return json(403, { message: "Permissions needed: orgs.preferences:write" });
-        state.prefs = { ...state.prefs, ...body };
-        return json(200, { message: "Preferences updated" });
-      }
-    }
-    return json(500, { message: `fake Grafana has no route for ${method} ${path}` });
-  }) as unknown as Fetch;
-
-  return { fetchImpl, state };
-}
 
 function dashboardFile(name: string, json: JsonObject): DashboardFile {
   return { file: name, path: name, json, parseError: undefined };

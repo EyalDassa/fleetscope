@@ -118,20 +118,78 @@ describe("designProblems: panels", () => {
     expect(text).toMatch(/\/lightpanda\//);
   });
 
-  it("checks the colour and line style inside an engine override", () => {
+  it("checks the colour inside an engine override", () => {
     const ts = timeSeriesPanel("TS", "SELECT 1");
     const overrides = (ts.fieldConfig as JsonObject).overrides as JsonObject[];
     (overrides[0] as JsonObject).properties = [
       { id: "color", value: { mode: "fixed", fixedColor: "#000000" } },
-      { id: "custom.lineStyle", value: { fill: "dot" } },
     ];
     const text = designProblems(dashboardJson({ panels: [ts] })).map((p) => p.message);
     expect(text.some((m) => m.includes("override /chromium/ must set the colour"))).toBe(true);
-    expect(
-      text.some((m) =>
-        m.includes('override /chromium/ must set custom.lineStyle with fill "solid"'),
-      ),
-    ).toBe(true);
+  });
+
+  describe("every line is solid", () => {
+    const withStyle = (place: "override" | "defaults", fill: string): JsonObject => {
+      const ts = timeSeriesPanel("TS", "SELECT 1");
+      const config = ts.fieldConfig as JsonObject;
+      if (place === "defaults") {
+        (config.defaults as JsonObject).custom = { spanNulls: false, lineStyle: { fill } };
+      } else {
+        const first = (config.overrides as JsonObject[])[0] as JsonObject;
+        (first.properties as JsonObject[]).push({ id: "custom.lineStyle", value: { fill } });
+      }
+      return ts;
+    };
+    const messages = (ts: JsonObject): string[] =>
+      designProblems(dashboardJson({ panels: [ts] })).map((p) => p.message);
+
+    it("accepts an explicit solid line style, in an override or in the defaults", () => {
+      expect(messages(withStyle("override", "solid"))).toEqual([]);
+      expect(messages(withStyle("defaults", "solid"))).toEqual([]);
+    });
+
+    it("rejects dash and dot in an engine override", () => {
+      for (const fill of ["dash", "dot"]) {
+        const text = messages(withStyle("override", fill)).join("\n");
+        expect(text, fill).toContain(`custom.lineStyle with fill "${fill}"`);
+        expect(text, fill).toContain("override /chromium/");
+      }
+    });
+
+    it("rejects dash and dot in the field defaults", () => {
+      for (const fill of ["dash", "dot"]) {
+        const text = messages(withStyle("defaults", fill)).join("\n");
+        expect(text, fill).toContain(
+          `the field defaults sets custom.lineStyle with fill "${fill}"`,
+        );
+      }
+    });
+
+    it("rejects a dash in an override that is not an engine one", () => {
+      const ts = timeSeriesPanel("TS", "SELECT 1");
+      ((ts.fieldConfig as JsonObject).overrides as JsonObject[]).push({
+        matcher: { id: "byName", options: "other" },
+        properties: [{ id: "custom.lineStyle", value: { fill: "dash", dash: [10, 10] } }],
+      });
+      expect(messages(ts).join("\n")).toMatch(
+        /override other sets custom.lineStyle with fill "dash"/,
+      );
+    });
+  });
+
+  it("rejects two series overrides with the same colour", () => {
+    const ts = timeSeriesPanel("TS", "SELECT 1");
+    const overrides = (ts.fieldConfig as JsonObject).overrides as JsonObject[];
+    (overrides[2] as JsonObject).properties = [
+      { id: "color", value: { mode: "fixed", fixedColor: "#e69f00" } }, // same as /chrome-headless-shell/, other case
+    ];
+    const text = designProblems(dashboardJson({ panels: [ts] })).map((p) => p.message);
+    expect(text.some((m) => m.includes("override") || m.includes("both use the colour"))).toBe(
+      true,
+    );
+    expect(text.join("\n")).toMatch(
+      /\/chrome-headless-shell\/ and \/lightpanda\/ both use the colour #e69f00/,
+    );
   });
 });
 

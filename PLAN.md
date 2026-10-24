@@ -143,7 +143,7 @@ Write `docs/adr/0001-clickhouse.md` explaining why ClickHouse and when Postgres 
 
 ## 7. Dashboards (Grafana)
 
-The UI is **Grafana**: Grafana Cloud (free tier) for the deployed demo and a local Grafana OSS container (`localhost:3001`) for development. Dashboards are JSON files in `infra/grafana/dashboards/`, loaded by the local Grafana and uploaded to Grafana Cloud with `pnpm grafana:push`. Grafana queries ClickHouse directly with the official ClickHouse data source (UID `fleetscope-clickhouse`) as a read-only user. Grafana's time picker and variables (`engine`, `source` real/sim/All, `status`, `agent`, `scenario`) are the filters, and they live in the URL. Panels auto-refresh (no SSE). Visual rules (engine and status colours, units, thresholds) are in `design/DESIGN.md`.
+The UI is **Grafana**: Grafana Cloud (free tier) for the deployed demo and a local Grafana OSS container (`localhost:3001`) for development. Dashboards are JSON files in `infra/grafana/dashboards/`, loaded by the local Grafana and uploaded to Grafana Cloud with `pnpm grafana:push`. Grafana queries ClickHouse directly with the official ClickHouse data source (UID `fleetscope-clickhouse`) as a read-only user. Grafana's time picker and variables (`engine`, `source` real/sim/All, `status`, `agent`, `scenario`, and `routed` on Sessions) are the filters, and they live in the URL. Panels auto-refresh (no SSE). Visual rules (engine and status colours, units, thresholds) are in `design/DESIGN.md`.
 
 1. **Overview** (`fleetscope-overview`): verdict; KPIs (active sessions now, sessions in range, success rate, p95 action latency, CPU cores in use, memory in use (GiB), estimated cost, interrupted sessions); time series per engine: actions/min from `fleet_minute`; active sessions and error rate per session from `sessions` (so interrupted sessions can be excluded); a breakdown by engine; recent failures and top failure causes that link into sessions.
 2. **Sessions** (`fleetscope-sessions`): a filterable table (status, engine, agent, scenario, duration, startup + connect, actions, peak memory, estimated cost, source); each row links to Session detail.
@@ -241,7 +241,7 @@ Design versions with critiques and `changes.md`, the lead's round notes, `design
 ## 12. Demo script (about 5 minutes)
 1. Overview in Grafana: the fleet live, with real and simulated sessions labeled.
 2. Click the error spike → Sessions filtered → open a failed Lightpanda session → "Open timeline in Perfetto" shows the failing action next to CPU and memory → ask Grafana Assistant why it failed.
-3. Browsers: Lightpanda uses about 1/10 the memory but fails checkout-form; recommend a per-scenario engine choice.
+3. Browsers: Lightpanda uses about 1/20 the memory but never runs Web Workers, so it fails every heavy-page-crawl (checkout-form works); routing by scenario (ADR 0005) sends those pages to headless-shell and the dashboard shows the routed sessions.
 4. Insights: a zombie session wasting $X/day and a memory-leak suspect.
 5. Claude Code with the MCP server answers the same questions on its own.
 6. Engineering tour: repo, CI (including the check that runs every dashboard query), dashboards as code, ADRs on ClickHouse and Grafana.

@@ -165,29 +165,40 @@ const envelope = {
 
 // Events ----------------------------------------------------------------------------------
 
-export const SessionStartedEvent = z.object({
-  ...envelope,
-  type: z.literal("session.started"),
-  /** `null` when the engine does not report its version. */
-  engine_version: safeLabel.nullable(),
-  scenario: safeLabel,
-  region: safeLabel,
-  /**
-   * From creating the container until the engine's endpoint answers (the server is ready to take a
-   * client). For a Playwright server (Chromium) no browser exists yet at this point: it is launched
-   * when the client connects, and that time is in `connect_ms`. For an engine that starts its
-   * browser before its endpoint answers (CDP: headless-shell, Lightpanda) the launch is in here.
-   */
-  startup_ms: uint32,
-  /**
-   * From the client's `connect()` call until it has a usable browser. For a Playwright server this
-   * includes launching the browser; for a CDP engine it is only the connection.
-   *
-   * The two numbers mean different things per engine, so engines are compared on their sum,
-   * `startup_ms + connect_ms`: the time from "no container" to "a browser I can drive".
-   */
-  connect_ms: uint32,
-});
+export const SessionStartedEvent = z
+  .object({
+    ...envelope,
+    type: z.literal("session.started"),
+    /** `null` when the engine does not report its version. */
+    engine_version: safeLabel.nullable(),
+    scenario: safeLabel,
+    region: safeLabel,
+    /**
+     * From creating the container until the engine's endpoint answers (the server is ready to take a
+     * client). For a Playwright server (Chromium) no browser exists yet at this point: it is launched
+     * when the client connects, and that time is in `connect_ms`. For an engine that starts its
+     * browser before its endpoint answers (CDP: headless-shell, Lightpanda) the launch is in here.
+     */
+    startup_ms: uint32,
+    /**
+     * From the client's `connect()` call until it has a usable browser. For a Playwright server this
+     * includes launching the browser; for a CDP engine it is only the connection.
+     *
+     * The two numbers mean different things per engine, so engines are compared on their sum,
+     * `startup_ms + connect_ms`: the time from "no container" to "a browser I can drive".
+     */
+    connect_ms: uint32,
+    /**
+     * The engine the assignment chose before the fleet routed the session to another one (`fleet run
+     * --routing by-scenario`, because the first engine lacks something the scenario needs). `engine`
+     * is the engine that actually ran. `null` or absent: the session was not routed.
+     */
+    routed_from: Engine.nullish(),
+  })
+  .refine((event) => event.routed_from == null || event.routed_from !== event.engine, {
+    message: "routed_from must name another engine than engine (routed means moved)",
+    path: ["routed_from"],
+  });
 export type SessionStartedEvent = z.infer<typeof SessionStartedEvent>;
 
 export const SessionEndedEvent = z.object({

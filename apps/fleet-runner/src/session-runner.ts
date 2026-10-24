@@ -18,6 +18,8 @@ export interface SessionSpec {
   index: number;
   engine: Engine;
   scenario: ScenarioName;
+  /** The engine the assignment chose, when routing moved the session to `engine`; else null/absent. */
+  routedFrom?: Engine | null;
   /** Seeds the scenario's random choices. */
   seed: number;
 }
@@ -53,7 +55,10 @@ export const wasReported = (status: ResultStatus): boolean =>
 export interface SessionResult {
   index: number;
   sessionId: string;
+  /** The engine that ran the session (after routing). */
   engine: Engine;
+  /** The engine the assignment chose before routing moved the session; null when not routed. */
+  routedFrom: Engine | null;
   scenario: ScenarioName;
   status: ResultStatus;
   reason: string | null;
@@ -138,6 +143,7 @@ export async function runSession(deps: SessionDeps, spec: SessionSpec): Promise<
     index: spec.index,
     sessionId,
     engine: spec.engine,
+    routedFrom: spec.routedFrom ?? null,
     scenario: spec.scenario,
     status: "infra_error",
     reason: null,
@@ -197,6 +203,7 @@ export async function runSession(deps: SessionDeps, spec: SessionSpec): Promise<
     engineVersion: container.engineVersion ?? browser.version(),
     startupMs: container.startupMs,
     connectMs,
+    routedFrom: spec.routedFrom ?? null,
   });
   session = started;
   deps.live?.add(started);

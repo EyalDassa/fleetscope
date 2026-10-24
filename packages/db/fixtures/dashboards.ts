@@ -53,6 +53,8 @@ export interface Filters {
   agent?: string[];
   scenario?: string[];
   cause?: string;
+  /** The Sessions dashboard's "Routed" variable: `all` (default) or `routed` (routed_from is set). */
+  routed?: "all" | "routed";
   session?: string;
 }
 
@@ -160,6 +162,7 @@ function variables(filters: Filters): Map<string, VariableState> {
     ["agent", state("agent", [], true, filters.agent)],
     ["scenario", state("scenario", [], true, filters.scenario)],
     ["cause", text("cause", filters.cause)],
+    ["routed", text("routed", filters.routed ?? "all")],
     ["session", text("session", filters.session)],
     ["api_url", text("api_url", "http://localhost:4000")],
   ]);
@@ -264,6 +267,8 @@ export interface SessionSpec {
   startupMs: number;
   connectMs: number;
   engineVersion?: string | null;
+  /** The engine the assignment chose before the fleet routed the session to `engine` (ADR 0005). */
+  routedFrom?: (typeof ENGINES)[number] | null;
   scenario?: string;
   agent?: string;
   /** One entry per action: [duration_ms, error_code or null]. seq 0 is a goto, the rest are clicks. */
@@ -296,6 +301,7 @@ export function eventsOf(spec: SessionSpec): FleetEvent[] {
         region: "local",
         startup_ms: spec.startupMs,
         connect_ms: spec.connectMs,
+        ...(spec.routedFrom === undefined ? {} : { routed_from: spec.routedFrom }),
       },
       start,
     ),

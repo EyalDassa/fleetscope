@@ -56,9 +56,9 @@ Its `/js-heavy` Web Worker probe times out (`webWorker: timeout after 3000ms`): 
 ```
 pnpm fleet run [--engines chromium] [--sessions 10] [--concurrency 4]
                [--scenario mix|login-and-search|checkout-form|heavy-page-crawl]
-               [--seed N] [--agent ID] [--session-timeout 120]
+               [--seed N] [--agent ID] [--routing fixed|by-scenario] [--session-timeout 120]
 pnpm fleet traffic [--engines chromium] [--rate 3] [--concurrency 2] [--duration 10m] [--agent ID]
-               [--scenario ...] [--seed N] [--session-timeout 120]
+               [--scenario ...] [--seed N] [--routing fixed|by-scenario] [--session-timeout 120]
 pnpm fleet cleanup          # remove every container labelled fleetscope.session (all runs)
 ```
 
@@ -66,6 +66,23 @@ pnpm fleet cleanup          # remove every container labelled fleetscope.session
 `pairs[(seed + i) mod (scenarios x engines)]` over (scenario, engine) pairs, so each block of
 `scenarios x engines` sessions covers every pair once (`src/assign.ts`). A fixed `--scenario` cycles
 the engines.
+
+**Routing (`--routing fixed|by-scenario`, default `fixed`).** `fixed` runs every session on the
+engine it was assigned, which is what you want when measuring each engine on every scenario (a
+Lightpanda `heavy-page-crawl` then fails, honestly). `by-scenario` moves a session off an engine that
+lacks something its scenario needs: `SCENARIO_NEEDS` (`src/scenarios/index.ts`) says what a scenario
+needs (`heavy-page-crawl`: `webWorker`), `ENGINE_SPECS[engine].lacks` what an engine is verified not to
+have (Lightpanda: `webWorker`, see `docs/adr/0005`), and `routeSession` (`src/assign.ts`) picks the
+first capable engine of the run's `--engines` in the order `lightpanda`, `chrome-headless-shell`,
+`chromium`. If no engine of the run is capable the session stays where it was assigned (and fails) and
+the runner logs a warning once per run.
+
+A routed session is recorded honestly: `session.started.routed_from` / `sessions.routed_from` is the
+engine the assignment chose, while `engine` (and everything keyed by it: memory, cost, success rate)
+is the engine that **actually ran** it. So per-engine numbers count where the session ran, never
+where it was meant to run. The summary shows `chrome-headless-shell (from lightpanda)` in the engine
+column and a `routed: N of M sessions` line. Routing happens after the fair assignment, so a routed
+run has more sessions on the capable engine than a `fixed` one.
 
 **`fleet traffic`** keeps sessions coming at `--rate` sessions per minute (default 3) with at most
 `--concurrency` at once (default 2), in batches of `min(concurrency, rate)` sessions. It prints one

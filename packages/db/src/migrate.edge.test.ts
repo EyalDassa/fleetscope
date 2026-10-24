@@ -31,6 +31,7 @@ describe("loadMigrationFiles", () => {
       "0006_insert_dedup_window.sql",
       "0007_fleet_minute.sql",
       "0008_pricing.sql",
+      "0009_sessions_routed_from.sql",
     ]);
     for (const file of files) expect(file.checksum).toMatch(/^[0-9a-f]{64}$/);
     expect(new Set(files.map((f) => f.checksum)).size).toBe(files.length);

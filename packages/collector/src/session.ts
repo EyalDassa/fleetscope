@@ -1,5 +1,6 @@
 import {
   type ActionType,
+  type Engine,
   type EventEnvelope,
   type EventFields,
   type EventType,
@@ -25,6 +26,8 @@ export interface StartSessionOptions {
   startupMs: number;
   /** Milliseconds for the client to connect. For a Playwright server this includes launching the browser. */
   connectMs: number;
+  /** The engine the assignment chose before routing sent the session elsewhere; omit when not routed. */
+  routedFrom?: Engine | null;
 }
 
 /** The numbers the runner takes from Docker for one container, one moment. */
@@ -85,6 +88,8 @@ export class CollectedSession implements PageSink {
         region: safeLabel(options.region, MAX_LABEL),
         startup_ms: wholeMs(options.startupMs),
         connect_ms: wholeMs(options.connectMs),
+        // only on a routed session: an unrouted one sends the same event as before routing existed
+        ...(options.routedFrom ? { routed_from: options.routedFrom } : {}),
       },
       this.startedAt,
     );

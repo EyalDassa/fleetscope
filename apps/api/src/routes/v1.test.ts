@@ -17,6 +17,7 @@ const session: TimelineSession = {
   region: "local",
   startup_ms: 300,
   connect_ms: 40,
+  routed_from: null,
   status: "failed",
   started_at_ms: START,
   ended_at_ms: START + 2000,
