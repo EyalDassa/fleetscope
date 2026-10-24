@@ -292,6 +292,50 @@ describe("pushToGrafana", () => {
     expect((await pushToGrafana(publicUrl.options)).warnings).toEqual([]);
   });
 
+  // QA-M2-11: with the variable unset, a remote Grafana silently kept the committed localhost link.
+  it("warns when FLEETSCOPE_API_URL is not set for a remote Grafana, and says what is kept", async () => {
+    const { options, state } = setup({ apiUrl: undefined });
+    const result = await pushToGrafana(options);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toMatch(
+      /FLEETSCOPE_API_URL is not set.*fleetscope-session\.json.*keep the committed http:\/\/localhost:4000/,
+    );
+    // nothing was rewritten
+    const stored = state.dashboards.get("fleetscope-session") as JsonObject;
+    expect(((stored.templating as JsonObject).list as JsonObject[])[0]).toMatchObject({
+      query: "http://localhost:4000",
+    });
+  });
+
+  it("does not warn about an unset API URL for a local Grafana or when no dashboard has api_url", async () => {
+    const local = setup({ apiUrl: undefined, grafanaIsLocal: true });
+    expect((await pushToGrafana(local.options)).warnings).toEqual([]);
+    const noVariable = setup({
+      apiUrl: undefined,
+      dashboardFiles: [dashboardFile("fleetscope-overview.json", overviewDashboard)],
+    });
+    expect((await pushToGrafana(noVariable.options)).warnings).toEqual([]);
+  });
+
+  // QA-M2-11: the data source is always sent again; say why instead of just "updated".
+  it("explains why the data source says updated every time", async () => {
+    const { options, lines } = setup();
+    await pushToGrafana(options);
+    expect(lines.find((l) => l.startsWith("data source"))).toMatch(
+      /\bcreated\b(?!.*cannot be compared)/,
+    );
+    lines.length = 0;
+    await pushToGrafana(options);
+    expect(lines.find((l) => l.startsWith("data source"))).toMatch(
+      /updated \(the password cannot be compared, so it is always sent again\)/,
+    );
+    lines.length = 0;
+    await pushToGrafana({ ...options, dryRun: true });
+    expect(lines.find((l) => l.startsWith("data source"))).toMatch(
+      /would be updated \(the password cannot be compared/,
+    );
+  });
+
   it("shows the warning in a dry run too", async () => {
     const { options } = setup({ apiUrl: "http://127.0.0.1:4000", dryRun: true });
     expect((await pushToGrafana(options)).warnings).toHaveLength(1);

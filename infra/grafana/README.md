@@ -165,7 +165,9 @@ Makes a Grafana match the repository: the folder `fleetscope`, the data source
 `fleetscope-clickhouse`, every `dashboards/*.json` (into that folder, `overwrite: true`), and the
 organisation default theme `dark` (the dashboards use dark-only colours). It can run again and again:
 it prints `created`, `updated` or `unchanged` for each part and leaves unchanged dashboards alone.
-It does not delete anything; a dashboard in the Grafana folder that is not in the repo is reported.
+The data source always says `updated`: Grafana never returns the password, so it cannot be compared
+and is sent again (the output says so). It does not delete anything; a dashboard in the Grafana
+folder that is not in the repo is reported.
 
 ```bash
 pnpm grafana:push --dry-run     # reads Grafana, prints the plan, changes nothing
@@ -194,16 +196,20 @@ manual step (Administration > Default preferences > Interface theme = Dark).
 2. In the stack: Administration > Users and access > Service accounts > Add service account, role
    **Admin**, then add a token. Copy it once.
 3. ClickHouse must accept connections from Grafana Cloud. ClickHouse Cloud: your service > Settings >
-   Security > IP access list > Add IPs. Either allow access from anywhere (fine for a demo with
-   demo data and a read-only user), or add Grafana Cloud's outbound addresses: the
-   `egress-from-grafana` entries from `https://allowlists.grafana.net/v1/` (they change, so
+   Security > IP access list > Add IPs. **Add Grafana Cloud's outbound addresses and your own IP**:
+   the `egress-from-grafana` entries from `https://allowlists.grafana.net/v1/` (they change, so
    fetch them again from time to time; Grafana's page: "List of Grafana Cloud IP addresses to add
-   to your allowlist"). Run `pnpm db:grafana-user` against that ClickHouse too (set `CLICKHOUSE_URL`,
+   to your allowlist"), and the address you run `db:migrate`, `db:grafana-user`, the API and the
+   fleet runner from. "Allow access from anywhere" is for a short demo only: it puts the whole
+   ClickHouse Cloud service, including its admin user, on the internet. If you use it, the admin
+   password must be the long generated one, kept only in `.env`, and the list should be narrowed
+   again afterwards. Run `pnpm db:grafana-user` against that ClickHouse too (set `CLICKHOUSE_URL`,
    the admin user and the Grafana user variables).
 4. Put `GRAFANA_URL`, `GRAFANA_TOKEN`, `GRAFANA_CLICKHOUSE_URL` and `CLICKHOUSE_GRAFANA_*` in your
    `.env` (or CI secrets). Leave `FLEETSCOPE_API_URL=http://localhost:4000` for the demo where the API
    runs on your laptop (the push warns, which is fine); set the API's public URL if others need the
-   Perfetto links. Run `pnpm grafana:push --dry-run`, then `pnpm grafana:push`.
+   Perfetto links. If the variable is unset, the push also warns and the dashboards keep their
+   committed `http://localhost:4000`. Run `pnpm grafana:push --dry-run`, then `pnpm grafana:push`.
 
 ## Tests
 

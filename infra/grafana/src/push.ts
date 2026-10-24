@@ -273,6 +273,16 @@ export function withApiUrl(dashboard: JsonObject, apiUrl: string): JsonObject {
   };
 }
 
+/** The value of the `api_url` constant variable as committed, or undefined if the dashboard has none. */
+export function committedApiUrl(dashboard: JsonObject): string | undefined {
+  const list = asArray(isObject(dashboard.templating) ? dashboard.templating.list : []);
+  const variable = list.find(
+    (v) => isObject(v) && v.name === API_URL_VARIABLE && v.type === "constant",
+  );
+  if (!isObject(variable)) return undefined;
+  return typeof variable.query === "string" ? variable.query : "";
+}
+
 /** The dashboard as stored, minus what Grafana assigns itself, for comparing with the repo file. */
 export function comparable(dashboard: JsonObject): string {
   const { id: _id, version: _version, ...rest } = dashboard;
@@ -299,6 +309,8 @@ export async function pushToGrafana(options: PushOptions): Promise<PushResult> {
   // untouched instead of half updated.
   const apiUrl = options.apiUrl;
   const filesWithApiUrl: string[] = [];
+  /** Dashboards with an api_url variable that keep the value they were committed with. */
+  const keepingCommittedUrl: { file: string; url: string }[] = [];
   const prepared = structure.dashboards.map((dashboard) => {
     let body = { ...dashboard.json, id: null } as JsonObject;
     if (apiUrl !== undefined) {
@@ -307,6 +319,10 @@ export async function pushToGrafana(options: PushOptions): Promise<PushResult> {
         filesWithApiUrl.push(dashboard.file);
         body = withUrl;
       }
+    } else {
+      const committed = committedApiUrl(body);
+      if (committed !== undefined)
+        keepingCommittedUrl.push({ file: dashboard.file, url: committed });
     }
     return { dashboard, body };
   });
@@ -324,6 +340,13 @@ export async function pushToGrafana(options: PushOptions): Promise<PushResult> {
   ) {
     warnings.push(
       `FLEETSCOPE_API_URL is ${apiUrl}: the Perfetto links (${filesWithApiUrl.join(", ")}) will only work on the machine running the API`,
+    );
+  }
+  // Unset on a remote Grafana: the links silently keep the committed (localhost) address (QA-M2-11).
+  if (!options.grafanaIsLocal && keepingCommittedUrl.length > 0) {
+    const urls = [...new Set(keepingCommittedUrl.map((k) => k.url))].join(", ");
+    warnings.push(
+      `FLEETSCOPE_API_URL is not set, so the Perfetto links (${keepingCommittedUrl.map((k) => k.file).join(", ")}) keep the committed ${urls}. Set it to the URL of your API; http://localhost:4000 only works on the machine running the API`,
     );
   }
   for (const warning of warnings) log(`warning     ${warning}`);
@@ -358,7 +381,11 @@ export async function pushToGrafana(options: PushOptions): Promise<PushResult> {
   }
   const shown = dataSource.jsonData;
   log(
-    `data source ${dataSource.uid}  ${would}${sourceAction}  ` +
+    `data source ${dataSource.uid}  ${would}${sourceAction}${
+      sourceAction === "updated"
+        ? " (the password cannot be compared, so it is always sent again)"
+        : ""
+    }  ` +
       `(${String(shown.secure ? "https" : "http")}://${String(shown.host)}:${String(shown.port)}, ` +
       `database ${String(shown.defaultDatabase)}, user ${String(shown.username)}, password ********)`,
   );
