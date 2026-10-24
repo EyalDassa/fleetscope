@@ -223,7 +223,10 @@ describe("actions", () => {
   it("extract with a check that names missing APIs fails with unsupported_api and raises that issue", async () => {
     const { page, events } = await setup();
     const error = await rejection(
-      page.extract("h1", { check: (text) => (text === "hello" ? "webWorker: timeout" : null) }),
+      page.extract("h1", {
+        check: (text) =>
+          text === "hello" ? { code: "unsupported_api", message: "webWorker: timeout" } : null,
+      }),
     );
     expect(error.code).toBe("unsupported_api");
     expect(error.message).toBe("webWorker: timeout");
@@ -233,6 +236,18 @@ describe("actions", () => {
       kind: "unsupported_api",
       message: "webWorker: timeout",
     });
+  });
+
+  it("extract with a timeout check fails with timeout and the timeout issue", async () => {
+    const { page, events } = await setup();
+    const error = await rejection(
+      page.extract("h1", {
+        check: () => ({ code: "timeout" as const, message: "webWorker: timeout" }),
+      }),
+    );
+    expect(error.code).toBe("timeout");
+    const all = await events();
+    expect(ofType(all, "issue")[0]).toMatchObject({ kind: "timeout" });
   });
 
   it("extract with a check that finds nothing wrong returns the text", async () => {

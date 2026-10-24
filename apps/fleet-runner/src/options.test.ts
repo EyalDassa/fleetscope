@@ -113,10 +113,12 @@ describe("config", () => {
       browserImage: "fleetscope/playwright-chromium:1.64.1-2",
       browserImages: {
         chromium: "fleetscope/playwright-chromium:1.64.1-2",
-        "chrome-headless-shell": "chromedp/headless-shell:156.0.8078.48",
-        lightpanda: "lightpanda/browser:1.0.2",
+        "chrome-headless-shell":
+          "chromedp/headless-shell:156.0.8078.48@sha256:3da74b0945e4f80f00f0310bcda9f76cee283539ebd200a053a7bebf3de89423",
+        lightpanda:
+          "lightpanda/browser:1.0.2@sha256:5d1d724c476957d8c2f8393a51fd089477523b0e5aa9c783c48688785d934fb9",
       },
-      forwarderImage: "fleetscope/forwarder:1",
+      forwarderImage: "fleetscope/forwarder:1-1",
       logLevel: "info",
     });
   });
@@ -138,10 +140,12 @@ describe("config", () => {
       browserImage: "my/image:1",
       browserImages: {
         chromium: "my/image:1",
-        "chrome-headless-shell": "chromedp/headless-shell:156.0.8078.48",
-        lightpanda: "lightpanda/browser:1.0.2",
+        "chrome-headless-shell":
+          "chromedp/headless-shell:156.0.8078.48@sha256:3da74b0945e4f80f00f0310bcda9f76cee283539ebd200a053a7bebf3de89423",
+        lightpanda:
+          "lightpanda/browser:1.0.2@sha256:5d1d724c476957d8c2f8393a51fd089477523b0e5aa9c783c48688785d934fb9",
       },
-      forwarderImage: "fleetscope/forwarder:1",
+      forwarderImage: "fleetscope/forwarder:1-1",
       logLevel: "info",
     });
   });

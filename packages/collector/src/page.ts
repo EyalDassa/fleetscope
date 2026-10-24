@@ -51,10 +51,12 @@ export interface PageConfig {
 export const CAPTCHA_SELECTOR = '[data-testid="captcha"]';
 
 /**
- * Looks at extracted text. Returns `null` when it is fine, or a message naming the Web APIs the
- * engine lacks: the action then fails with `unsupported_api` and raises that issue.
+ * Looks at extracted text. Returns `null` when it is fine. Otherwise the action fails with the given
+ * error code (`unsupported_api` raises that issue, `timeout` the timeout one) and message.
  */
-export type TextCheck = (text: string) => string | null;
+export type TextCheck = (
+  text: string,
+) => { code: "unsupported_api" | "timeout" | "js_error"; message: string } | null;
 
 export interface ActionOptions {
   timeoutMs?: number;
@@ -188,8 +190,8 @@ export class CollectedPage {
       if (options.as === "count") return locator.count();
       const text = (await locator.first().textContent({ timeout })) ?? "";
       // The page itself reports which of its features the engine lacks (the demo site's /js-heavy).
-      const missing = options.check?.(text);
-      if (missing) throw new CollectedError("unsupported_api", missing);
+      const problem = options.check?.(text);
+      if (problem) throw new CollectedError(problem.code, problem.message);
       return text;
     });
   }

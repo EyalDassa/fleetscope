@@ -69,12 +69,17 @@ class RecordingPage {
   };
   extract = async (
     selector: string,
-    options?: { as?: string; check?: (text: string) => string | null },
+    options?: {
+      as?: string;
+      check?: (
+        text: string,
+      ) => { code: "unsupported_api" | "timeout" | "js_error"; message: string } | null;
+    },
   ): Promise<string | number> => {
     this.calls.push(`extract ${selector}`);
     if (options?.check) {
       const problem = options.check(this.options.jsResult ?? '{"webWorker":{"ok":true}}');
-      if (problem) throw new CollectedError("unsupported_api", problem);
+      if (problem) throw new CollectedError(problem.code, problem.message);
     }
     if (this.options.missing?.has(selector)) {
       throw new CollectedError("selector_not_found", `no element for ${selector}`);
@@ -279,19 +284,28 @@ describe("heavy-page-crawl", () => {
     expect(calls).toContain('wait [data-testid="js-result"][data-status="done"]');
   });
 
-  it("a failed /js-heavy probe fails the scenario with unsupported_api, naming the probes", async () => {
-    const page = new RecordingPage({
-      jsResult:
-        '{"intersectionObserver":{"ok":true,"detail":"x"},"webWorker":{"ok":false,"error":"timeout after 3000ms"}}',
-    });
-    const error = await SCENARIOS["heavy-page-crawl"](page as unknown as CollectedPage, {
+  async function crawlWith(jsResult: string) {
+    const page = new RecordingPage({ jsResult });
+    return (await SCENARIOS["heavy-page-crawl"](page as unknown as CollectedPage, {
       baseUrl: BASE,
       rng: createRng(1),
       logger,
-    }).catch((e: unknown) => e);
+    }).catch((e: unknown) => e)) as CollectedError;
+  }
+
+  it("a /js-heavy probe that proves the API is absent fails the scenario with unsupported_api", async () => {
+    const error = await crawlWith(
+      '{"intersectionObserver":{"ok":true},"webWorker":{"ok":false,"error":"ReferenceError: Worker is not defined"}}',
+    );
     expect(error).toBeInstanceOf(CollectedError);
-    expect((error as CollectedError).code).toBe("unsupported_api");
-    expect((error as CollectedError).message).toBe("webWorker: timeout after 3000ms");
+    expect(error.code).toBe("unsupported_api");
+    expect(error.message).toBe("webWorker: ReferenceError: Worker is not defined");
+  });
+
+  it("a /js-heavy probe that timed out is a timeout, not a missing API (R-M3-05)", async () => {
+    const error = await crawlWith('{"webWorker":{"ok":false,"error":"timeout after 3000ms"}}');
+    expect(error.code).toBe("timeout");
+    expect(error.message).toBe("webWorker: timeout after 3000ms");
   });
 
   it("passing probes change nothing", async () => {
@@ -302,11 +316,27 @@ describe("heavy-page-crawl", () => {
 });
 
 describe("failedProbes", () => {
-  it("lists every failed probe and ignores passing ones", () => {
-    expect(failedProbes('{"a":{"ok":true},"b":{"ok":false,"error":"boom"},"c":{"ok":false}}')).toBe(
-      "b: boom; c: failed",
-    );
+  it("names every failed probe and ignores passing ones", () => {
+    expect(
+      failedProbes('{"a":{"ok":true},"b":{"ok":false,"error":"boom"},"c":{"ok":false}}'),
+    ).toEqual({ code: "js_error", message: "b: boom; c: failed" });
     expect(failedProbes('{"a":{"ok":true}}')).toBeNull();
+  });
+  it("only an error that shows the API is absent is unsupported_api", () => {
+    const code = (error: string) => failedProbes(JSON.stringify({ p: { ok: false, error } }))?.code;
+    expect(code("ReferenceError: Worker is not defined")).toBe("unsupported_api");
+    expect(code("TypeError: IntersectionObserver is not a constructor")).toBe("unsupported_api");
+    expect(code("TypeError: Cannot read properties of undefined (reading 'digest')")).toBe(
+      "unsupported_api",
+    );
+    expect(code("timeout after 3000ms")).toBe("timeout");
+    expect(code("Error: something else")).toBe("js_error");
+  });
+  it("a real absence wins over a timeout in the same page", () => {
+    const result = failedProbes(
+      '{"a":{"ok":false,"error":"timeout after 3000ms"},"b":{"ok":false,"error":"ReferenceError: X is not defined"}}',
+    );
+    expect(result?.code).toBe("unsupported_api");
   });
   it("text that is not the probe JSON is not evidence", () => {
     expect(failedProbes("")).toBeNull();

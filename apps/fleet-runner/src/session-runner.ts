@@ -69,6 +69,8 @@ export interface SessionResult {
 }
 
 const VIEWPORT = { width: 1280, height: 720 };
+const CONNECT_TIMEOUT_MS = 60_000;
+const CLOSE_TIMEOUT_MS = 5000;
 
 /** Playwright's own server takes `connect`; every other engine speaks plain CDP. */
 function connectBrowser(container: BrowserContainer): Promise<Browser> {
@@ -78,23 +80,33 @@ function connectBrowser(container: BrowserContainer): Promise<Browser> {
     : chromium.connectOverCDP(container.endpoint, options);
 }
 
+/** A CDP refusal that is about viewport/device emulation (not any other unsupported method). */
+function isViewportRefusal(error: unknown): boolean {
+  return (
+    isUnsupportedFeatureError(error as Error) &&
+    /Emulation\.|setDeviceMetricsOverride|viewport/i.test((error as Error).message)
+  );
+}
+
 /**
  * A fresh context and one page. Always `newContext()`, never `contexts()[0]`: Lightpanda allows one
  * context and one page per CDP connection, and a fresh context is what the other engines get too.
- * Viewport emulation is a CDP call some engines refuse; then the page runs with the engine's
- * default viewport (logged, not hidden).
+ * Viewport emulation is a CDP call an engine may refuse (it fails when the page is created). Only
+ * then the first context is closed (one context per connection!) and the page is opened with the
+ * engine's default viewport, with the real error logged. Any other failure is thrown as it is.
+ * (Lightpanda 1.0.2 has never refused it in our runs, so this path is a guard.)
  */
-async function openPage(browser: Browser, log: Logger): Promise<Page> {
+export async function openPage(browser: Browser, log: Logger): Promise<Page> {
+  const context = await browser.newContext({ viewport: VIEWPORT });
   try {
-    return await (await browser.newContext({ viewport: VIEWPORT })).newPage();
+    return await context.newPage();
   } catch (error) {
-    if (!isUnsupportedFeatureError(error as Error)) throw error;
+    if (!isViewportRefusal(error)) throw error;
     log.warn({ err: error }, "engine refused viewport emulation, using its default viewport");
+    await context.close().catch(() => undefined);
     return await (await browser.newContext({ viewport: null })).newPage();
   }
 }
-const CONNECT_TIMEOUT_MS = 60_000;
-const CLOSE_TIMEOUT_MS = 5000;
 
 /** Runs `promise`, but gives up waiting after `ms`. Never rejects. */
 async function bounded(promise: Promise<unknown> | undefined, ms: number): Promise<void> {
@@ -216,13 +228,22 @@ export async function runSession(deps: SessionDeps, spec: SessionSpec): Promise<
     error = caught ?? new Error("scenario failed");
   }
 
-  const outcome = classifyOutcome({
+  let outcome = classifyOutcome({
     error,
     interrupted: deps.signal.aborted,
     timedOut,
     sessionTimeoutMs: deps.sessionTimeoutMs,
     disconnected,
   });
+
+  // A forwarder that died mid-session makes the demo site unreachable: that is our infrastructure,
+  // not the engine, so say so instead of leaving a bare nav_error.
+  if (outcome.status !== "success" && !deps.signal.aborted && (await container.forwarderExited())) {
+    outcome = {
+      status: "failed",
+      reason: `infra: forwarder sidecar exited (${outcome.reason ?? outcome.status})`,
+    };
+  }
 
   clearTimeout(deadline);
   deps.signal.removeEventListener("abort", onAbort);

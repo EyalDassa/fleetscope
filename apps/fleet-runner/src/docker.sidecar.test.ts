@@ -115,7 +115,7 @@ describe("DockerFleet with a forwarder sidecar", () => {
     expect(order).toEqual(["sidecar", "browser"]);
   });
 
-  it("is fine when the port is already taken: the browser image has its own forwarder", async () => {
+  it("a taken port is a hard error: the browser image runs its own forwarder (R-M3-02)", async () => {
     const order: string[] = [];
     const { port } = await fakeBrowser("{}");
     const sidecar = sidecarContainer(order, {
@@ -128,9 +128,24 @@ describe("DockerFleet with a forwarder sidecar", () => {
       docker,
       forwarder: { image: "fwd:1" },
     });
-    await expect(fleet.startBrowser({ sessionId: "s1" })).resolves.toMatchObject({
-      id: "browser-1",
-    });
+    await expect(fleet.startBrowser({ sessionId: "s1" })).rejects.toThrow(
+      /already taken inside the browser container.*pnpm browsers:build/,
+    );
+    expect(order).toEqual(["sidecar", "browser"]);
+  });
+
+  it("reports whether the sidecar is still running", async () => {
+    const order: string[] = [];
+    const { port } = await fakeBrowser("{}");
+    const sidecar = sidecarContainer(order, { logs: LISTENING });
+    const { docker } = setup(3000, port, sidecar, order);
+    const started = await new DockerFleet("browser:1", "chromium", logger, {
+      docker,
+      forwarder: { image: "fwd:1" },
+    }).startBrowser({ sessionId: "s1" });
+    expect(await started.forwarderExited()).toBe(false);
+    sidecar.inspect.mockResolvedValue({ State: { Running: false, ExitCode: 1 } });
+    expect(await started.forwarderExited()).toBe(true);
   });
 
   it("fails the session, and removes both containers, if the sidecar dies for another reason", async () => {

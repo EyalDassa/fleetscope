@@ -19,8 +19,8 @@ The table is `src/engines.ts`, one entry per `ENGINES` value.
 | engine | image (override) | port | ready when | connect |
 |---|---|---|---|---|
 | `chromium` | `fleetscope/playwright-chromium:1.64.1-2` (`FLEET_BROWSER_IMAGE_CHROMIUM`, old name `FLEET_BROWSER_IMAGE`) | 3000 | `GET /` 2xx | `chromium.connect(ws://...)`, Playwright's server launches Chromium |
-| `chrome-headless-shell` | `chromedp/headless-shell:156.0.8078.48` (`FLEET_BROWSER_IMAGE_CHROME_HEADLESS_SHELL`) | 9222 | `GET /json/version` 2xx | `connectOverCDP(http://127.0.0.1:<port>)` |
-| `lightpanda` | `lightpanda/browser:1.0.2` (`FLEET_BROWSER_IMAGE_LIGHTPANDA`) | 9222 | `GET /json/version` 2xx | `connectOverCDP(ws://127.0.0.1:<port>/)` |
+| `chrome-headless-shell` | `chromedp/headless-shell:156.0.8078.48@sha256:3da74b0945e4f80f00f0310bcda9f76cee283539ebd200a053a7bebf3de89423` (`FLEET_BROWSER_IMAGE_CHROME_HEADLESS_SHELL`) | 9222 | `GET /json/version` 2xx | `connectOverCDP(http://127.0.0.1:<port>)` |
+| `lightpanda` | `lightpanda/browser:1.0.2@sha256:5d1d724c476957d8c2f8393a51fd089477523b0e5aa9c783c48688785d934fb9` (`FLEET_BROWSER_IMAGE_LIGHTPANDA`) | 9222 | `GET /json/version` 2xx | `connectOverCDP(ws://127.0.0.1:<port>/)` |
 
 Every session opens a fresh context with `browser.newContext()` and one page (Lightpanda allows one
 context and one page per CDP connection). If an engine refuses viewport emulation the page runs with
@@ -28,7 +28,7 @@ its default viewport (logged).
 
 **Forwarder sidecar.** The browsers open the demo site as `http://localhost:3100`. For every engine
 the runner starts, next to the browser, a container from `FLEET_FORWARDER_IMAGE`
-(`fleetscope/forwarder:1`) with `NetworkMode: container:<browser>`: it shares the browser's
+(`fleetscope/forwarder:1-1`) with `NetworkMode: container:<browser>`: it shares the browser's
 `localhost` but not its cgroup, so the forwarder's memory is never in a session's samples. It has the
 same `fleetscope.*` labels plus `fleetscope.role=forwarder` (the browser has `role=browser`).
 `startup_ms` is browser create to browser ready; the sidecar starts alongside, must be listening
@@ -36,11 +36,20 @@ before the scenario starts, and is not counted. Teardown: sidecar first, then th
 sidecar finds the port taken (an old chromium image with its own forwarder) that is accepted; any
 other sidecar failure is an `infra_error`. The stats sampler reads the browser container only.
 
+**Chromium's memory includes Playwright's `run-server`.** The chromium container runs a Node.js
+process next to Chromium; the CDP engines have only the browser. Measured on Docker Desktop (image
+`1.64.1-2`): the container alone, before any client connects, reads about 114 MiB (the stats figure;
+anon 111 MiB), and that is the Node process (RSS 162 MiB, 165 MiB with a 20 000-node `/heavy` page
+loaded; RSS also counts shared library pages). So chromium's "peak memory" is about 110 MiB higher
+than the same Chromium run over CDP. Running chromium over CDP like the others is planned for M4.
+
 **What Lightpanda does not provide** (recorded, never faked): no `Performance.getMetrics`, so every
 `cdp` sample has `js_heap_mb = null` ("not available"); no `*ExtraInfo` network events, so request
 sizes and timing fall back to what Playwright can see; its `Browser.getVersion` pretends to be a
 Chrome, so `engine_version` is its own `Lightpanda-Version` from `/json/version`. A CDP method it
 lacks fails the action with `unsupported_feature`; a missing page API is an `unsupported_api` issue.
+Its `/js-heavy` Web Worker probe times out (`webWorker: timeout after 3000ms`): that is a `timeout`
+(issue and session status), not an unsupported-API claim, because a timeout does not prove absence.
 
 ## Commands
 

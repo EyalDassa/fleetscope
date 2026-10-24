@@ -38,6 +38,15 @@ async function prepare(options: RunOptions, label: string) {
       }),
     ]),
   );
+  if (process.env.FLEET_BROWSER_IMAGE?.trim()) {
+    logger.warn(
+      {
+        chromiumImage: config.browserImages.chromium,
+        setTo: process.env.FLEET_BROWSER_IMAGE.trim(),
+      },
+      "FLEET_BROWSER_IMAGE is the legacy name for the chromium image. If it points at a pre-M3 image (revision 1, with its own forwarder), chromium's memory includes the forwarder: use FLEET_BROWSER_IMAGE_CHROMIUM=fleetscope/playwright-chromium:1.64.1-2",
+    );
+  }
   const anyFleet = fleets.values().next().value as DockerFleet;
   const collectors = createCollectors(config, options, logger);
   const live = new Set<CollectedSession>();

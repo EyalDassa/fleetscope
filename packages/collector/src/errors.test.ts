@@ -46,6 +46,21 @@ describe("unsupported_feature", () => {
     expect(classifyError(new Error("This browser is not supported"))).toBe("unknown");
   });
 
+  it("a page's own 'Method not found' is not an engine limit (R-M3-08)", () => {
+    expect(isUnsupportedFeatureError({ message: "page.evaluate: Error: Method not found" })).toBe(
+      false,
+    );
+    expect(classifyError(new Error("UnknownMethod"), "js_error")).toBe("js_error");
+  });
+
+  it("'Method not found' inside the Protocol error wrapper still counts", () => {
+    expect(
+      isUnsupportedFeatureError({
+        message: "Protocol error (Emulation.setX): Method not found",
+      }),
+    ).toBe(true);
+  });
+
   it("a closed browser is still browser_closed", () => {
     expect(classifyError(new Error("Target closed: not supported"))).toBe("browser_closed");
   });

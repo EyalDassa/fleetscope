@@ -1,3 +1,4 @@
+import { isMissingApiError } from "@fleetscope/collector";
 import { demoUrl, tid } from "./steps";
 import type { Scenario } from "./types";
 
@@ -14,8 +15,15 @@ interface Probe {
  * Reads /js-heavy's result (`{"webWorker":{"ok":false,"error":"timeout after 3000ms"},...}`) and
  * names the failed probes: `webWorker: timeout after 3000ms; cryptoSubtleDigest: ...`. `null` when
  * every probe passed. Text that is not that JSON is not evidence about the engine: `null`.
+ *
+ * The code says what the failure shows. Only an error that proves the API is absent (a
+ * ReferenceError, a TypeError naming a known API: `isMissingApiError`) is `unsupported_api`. A probe
+ * that ran out of time is `timeout`: on a busy machine that says nothing about the engine, so it
+ * must not become a verdict that the engine lacks the API. Anything else is `js_error`.
  */
-export function failedProbes(text: string): string | null {
+export function failedProbes(
+  text: string,
+): { code: "unsupported_api" | "timeout" | "js_error"; message: string } | null {
   let probes: Record<string, Probe>;
   try {
     probes = JSON.parse(text) as Record<string, Probe>;
@@ -25,8 +33,17 @@ export function failedProbes(text: string): string | null {
   if (typeof probes !== "object" || probes === null) return null;
   const failed = Object.entries(probes)
     .filter(([, probe]) => probe?.ok === false)
-    .map(([name, probe]) => `${name}: ${probe.error ?? "failed"}`);
-  return failed.length === 0 ? null : failed.join("; ");
+    .map(([name, probe]) => ({ name, error: probe.error ?? "failed" }));
+  if (failed.length === 0) return null;
+
+  const absent = failed.some(({ error }) =>
+    isMissingApiError({ name: /^(\w+):/.exec(error)?.[1], message: error }),
+  );
+  const timedOut = failed.some(({ error }) => /^timeout after \d+ms/i.test(error));
+  return {
+    code: absent ? "unsupported_api" : timedOut ? "timeout" : "js_error",
+    message: failed.map(({ name, error }) => `${name}: ${error}`).join("; "),
+  };
 }
 
 /**

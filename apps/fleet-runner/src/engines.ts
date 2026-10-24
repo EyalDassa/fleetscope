@@ -42,7 +42,8 @@ export const ENGINE_SPECS: Record<Engine, EngineSpec> = {
     readyPath: "/json/version",
     connect: "cdp-http",
     imageEnv: "FLEET_BROWSER_IMAGE_CHROME_HEADLESS_SHELL",
-    defaultImage: "chromedp/headless-shell:156.0.8078.48",
+    defaultImage:
+      "chromedp/headless-shell:156.0.8078.48@sha256:3da74b0945e4f80f00f0310bcda9f76cee283539ebd200a053a7bebf3de89423",
     env: [],
   },
   lightpanda: {
@@ -50,13 +51,14 @@ export const ENGINE_SPECS: Record<Engine, EngineSpec> = {
     readyPath: "/json/version",
     connect: "cdp-ws",
     imageEnv: "FLEET_BROWSER_IMAGE_LIGHTPANDA",
-    defaultImage: "lightpanda/browser:1.0.2",
+    defaultImage:
+      "lightpanda/browser:1.0.2@sha256:5d1d724c476957d8c2f8393a51fd089477523b0e5aa9c783c48688785d934fb9",
     // A benchmark fleet should not phone home.
     env: ["LIGHTPANDA_DISABLE_TELEMETRY=true"],
   },
 };
 
-export const DEFAULT_FORWARDER_IMAGE = "fleetscope/forwarder:1";
+export const DEFAULT_FORWARDER_IMAGE = "fleetscope/forwarder:1-1";
 
 /** Image per engine from the environment. `FLEET_BROWSER_IMAGE` is the old name for chromium's. */
 export function engineImages(env: NodeJS.ProcessEnv): Record<Engine, string> {

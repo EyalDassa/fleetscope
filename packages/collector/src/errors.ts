@@ -55,10 +55,13 @@ export function isMissingApiError(error: { name?: string; message?: string }): b
  */
 export function isUnsupportedFeatureError(error: { message?: string }): boolean {
   const message = error.message ?? "";
-  if (/-32601|Method not found|UnknownMethod/i.test(message)) return true;
+  // The JSON-RPC code is specific enough on its own.
+  if (/-32601/.test(message)) return true;
+  // Everything else must come in Playwright's "Protocol error" wrapper, so a page's own
+  // "Method not found" (thrown from eval or an app call) is not taken for an engine limit.
   return (
     /Protocol error/i.test(message) &&
-    /wasn't found|was not found|not implemented|not supported|unsupported|not available/i.test(
+    /wasn't found|was not found|Method not found|UnknownMethod|not implemented|not supported|unsupported|not available/i.test(
       message,
     )
   );

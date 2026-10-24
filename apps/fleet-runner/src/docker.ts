@@ -38,6 +38,11 @@ export interface BrowserContainer {
   startedAtMs: number | undefined;
   /** Opens Docker's stats stream (browser container only): one frame about every second. */
   openStatsStream(): Promise<StatsStream>;
+  /**
+   * True if the forwarder sidecar is no longer running (it died mid-session), so a failed page load
+   * is the runner's infrastructure, not the engine. `false` if it runs or there is no sidecar.
+   */
+  forwarderExited(): Promise<boolean>;
   /** Force-removes the sidecar first, then the browser (and its volumes). Safe to call twice. */
   remove(): Promise<void>;
 }
@@ -51,7 +56,7 @@ export interface StartOptions {
 }
 
 export interface ForwarderOptions {
-  /** Sidecar image (`fleetscope/forwarder:1`). */
+  /** Sidecar image (`fleetscope/forwarder:1-1`). */
   image: string;
   /** Environment of the sidecar, e.g. `DEMO_SITE_UPSTREAM=host.docker.internal:3100`. */
   env?: string[];
@@ -270,6 +275,14 @@ export class DockerFleet {
           };
           return { frames: parseStatsFrames(stream), close: () => stream.destroy() };
         },
+        forwarderExited: async () => {
+          if (!sidecar) return false;
+          try {
+            return !(await sidecar.inspect()).State.Running;
+          } catch {
+            return false;
+          }
+        },
         remove,
       };
     } catch (error) {
@@ -355,8 +368,8 @@ export class DockerFleet {
 
   /**
    * Waits until the forwarder logs that it listens. If its bind fails because the port is taken,
-   * the browser image brings its own forwarder (the chromium image before M3): fine, the browser
-   * reaches the demo site either way.
+   * the browser image brings its own forwarder (the chromium image before M3): that is an error,
+   * because its memory would be inside this browser's samples and not inside the other engines'.
    */
   private async waitForSidecar(sidecar: Docker.Container, { signal }: StartOptions): Promise<void> {
     const deadline = Date.now() + SIDECAR_READY_TIMEOUT_MS;
@@ -371,9 +384,12 @@ export class DockerFleet {
       if (/127\.0\.0\.1:\d+ -> /.test(logs)) return;
       const state = (await sidecar.inspect()).State;
       if (!state.Running) {
+        // Port 3100 already taken inside the browser: the browser image runs its own forwarder (a
+        // stale image). Its memory would be in every sample of this engine and not in the others'.
         if (PORT_BUSY.test(logs)) {
-          this.logger.debug("forwarder port already taken in the browser: using the browser's own");
-          return;
+          throw new Error(
+            "port 3100 is already taken inside the browser container: the browser image runs its own forwarder (stale image?). Run: pnpm browsers:build",
+          );
         }
         throw new Error(
           `forwarder sidecar exited with code ${state.ExitCode}${logs ? `: ${logs}` : ""}`,
