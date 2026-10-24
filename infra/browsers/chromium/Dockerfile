@@ -33,7 +33,8 @@ ARG PLAYWRIGHT_VERSION
 ARG IMAGE_REVISION
 LABEL org.opencontainers.image.title="fleetscope-playwright-chromium" \
       org.opencontainers.image.description="Playwright ${PLAYWRIGHT_VERSION} run-server with Chromium, one container per Fleetscope session" \
-      fleetscope.playwright-version="${PLAYWRIGHT_VERSION}"       fleetscope.image-revision="${IMAGE_REVISION}"
+      fleetscope.playwright-version="${PLAYWRIGHT_VERSION}" \
+      fleetscope.image-revision="${IMAGE_REVISION}"
 
 # Install only the CLI/server package, with the exact version. It does not download browsers
 # (those come from the base image via PLAYWRIGHT_BROWSERS_PATH=/ms-playwright), and

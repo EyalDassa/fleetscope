@@ -14,8 +14,10 @@
 #   - engines NOT listed in SMOKE_NULLABLE_ENGINES (default "lightpanda") also need a cdp sample with a
 #     JS heap value and a network request with a size. Lightpanda has no Performance.getMetrics and no
 #     Network.*ExtraInfo, so their heap / byte columns may be NULL (that is the honest value, see
-#     CLAUDE.md "Data honesty") and a session that ends at the bot wall may have no network_requests
-#     row at all. The cdp sample row itself is still required;
+#     CLAUDE.md "Data honesty") and ONLY a `blocked` session (stopped at the bot wall) may have no
+#     network_requests row at all. The cdp sample row itself is still required;
+#   - every session that is not `blocked` has at least one successful (ok) action, and every engine has
+#     at least one in total, so an engine that fails every action cannot pass;
 
 #   - there are NO duplicate rows: for actions, resource_samples and network_requests, count() must
 #     equal uniqExact(event_id). Counts are shown with count(), so a duplicate is never hidden by
@@ -74,7 +76,8 @@ SELECT
     r.dups AS dup_samples,
     q.dups AS dup_network,
     r.heap_n AS cdp_heap_samples,
-    q.sized_n AS sized_requests
+    q.sized_n AS sized_requests,
+    a.ok_n AS ok_actions
 FROM
 (
     SELECT session_id, argMax(status, version) AS status
@@ -86,7 +89,7 @@ FROM
 ) AS s
 LEFT JOIN
 (
-    SELECT session_id, count() AS n, count() - uniqExact(event_id) AS dups
+    SELECT session_id, count() AS n, count() - uniqExact(event_id) AS dups, countIf(ok) AS ok_n
     FROM actions
     WHERE source = 'real' AND engine = {engine:String}
     GROUP BY session_id
@@ -115,6 +118,11 @@ FORMAT TSVWithNames
 SQL
 
 query() {
+  # Test hook (test-assert-fleet-smoke.sh): read the report from a file instead of ClickHouse.
+  if [ -n "${SMOKE_TSV_FILE:-}" ]; then
+    cat "$SMOKE_TSV_FILE"
+    return
+  fi
   curl --silent --show-error --fail-with-body --max-time 20 \
     --user "${user}:${password}" \
     --data-binary "$sql" \
@@ -129,11 +137,13 @@ check_data() {
   problems=()
   local out
   need_values=1
-  eff_min_network="$min_network"
+  blocked_without_network=0
   case " $nullable_engines " in
-    # Lightpanda reports no network events for a page that ends at the bot wall (a 403 on the first
-    # page, which the seeded smoke run does hit), so it may have no network_requests row at all.
-    *" $engine "*) need_values=0; eff_min_network=0 ;;
+    # Lightpanda reports no heap and may have no byte sizes. It also reports no network events for a
+    # page that ends at the bot wall (a 403 on the first page, which the seeded smoke run does hit),
+    # so ONLY a `blocked` session may have no network_requests row. Any other Lightpanda session
+    # needs network rows, so a Lightpanda whose network capture is broken still fails CI.
+    *" $engine "*) need_values=0; blocked_without_network=1 ;;
   esac
 
   if ! out=$(query 2>&1); then
@@ -151,15 +161,18 @@ check_data() {
 
   # Columns: 1 session_id, 2 status, 3 actions, 4 container_samples, 5 cdp_samples,
   #          6 network_requests, 7 dup_actions, 8 dup_samples, 9 dup_network,
-  #          10 cdp_heap_samples, 11 sized_requests
+  #          10 cdp_heap_samples, 11 sized_requests, 12 ok_actions
+
   local line
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     problems+=("$line")
   done < <(printf '%s\n' "$out" | tail -n +2 | awk -F'\t' \
     -v min_actions="$min_actions" -v min_samples="$min_samples" \
-    -v min_cdp="$min_cdp" -v min_network="$eff_min_network" -v need_values="$need_values" '
+    -v min_cdp="$min_cdp" -v min_network="$min_network" -v need_values="$need_values" \
+    -v blocked_without_network="$blocked_without_network" '
       NF == 0 { next }
+      { total_ok += $12 }
       {
         if ($2 !~ /^(success|failed|blocked|timeout|crashed)$/)
           printf "session %s has status \"%s\", expected an end status\n", $1, $2
@@ -171,8 +184,13 @@ check_data() {
           printf "session %s has %s container resource samples, expected at least %d\n", $1, $4, min_samples
         if ($5 + 0 < min_cdp)
           printf "session %s has %s cdp resource samples, expected at least %d\n", $1, $5, min_cdp
-        if ($6 + 0 < min_network)
-          printf "session %s has %s network_requests rows, expected at least %d\n", $1, $6, min_network
+        net_needed = (blocked_without_network == 1 && $2 == "blocked") ? 0 : min_network
+        if ($6 + 0 < net_needed)
+          printf "session %s (%s) has %s network_requests rows, expected at least %d\n", $1, $2, $6, net_needed
+        # Every session that was not stopped by the bot wall must have done something: a browser that
+        # fails its very first action (all of them) is a broken engine, not a pass.
+        if ($2 != "blocked" && $12 + 0 < 1)
+          printf "session %s (%s) has no successful (ok) action\n", $1, $2
         if ($7 + 0 != 0)
           printf "session %s has %s duplicate action rows (same event_id more than once)\n", $1, $7
         if ($8 + 0 != 0)
@@ -183,6 +201,10 @@ check_data() {
           printf "session %s has no cdp sample with a JS heap value\n", $1
         if (need_values == 1 && $11 + 0 < 1)
           printf "session %s has no network request with a size (bytes)\n", $1
+      }
+      END {
+        if (NR > 0 && total_ok + 0 < 1)
+          print "no session of this engine has a single successful (ok) action"
       }')
 }
 
@@ -210,12 +232,14 @@ for engine in $engines; do
   else
     extra="JS heap and byte sizes present"
     [ "$need_values" -eq 1 ] || extra="JS heap / byte sizes may be NULL for this engine"
-    echo "OK [${engine}]: ${expected_sessions} sessions; actions (>= ${min_actions} if success, else >= 1), container samples >= ${min_samples}, cdp samples >= ${min_cdp}, network requests >= ${eff_min_network}, no duplicate rows, ${extra}"
+    echo "OK [${engine}]: ${expected_sessions} sessions; actions (>= ${min_actions} if success, else >= 1), container samples >= ${min_samples}, cdp samples >= ${min_cdp}, network requests >= ${min_network}$([ "$blocked_without_network" -eq 1 ] && echo " (not for blocked sessions)"), an ok action in every session that was not blocked, no duplicate rows, ${extra}"
   fi
 done
 
 # --- no containers left behind ----------------------------------------------------------------
-if ! command -v docker >/dev/null 2>&1; then
+if [ "${SMOKE_SKIP_DOCKER:-}" = "1" ]; then
+  echo "SKIP: leaked-container check (SMOKE_SKIP_DOCKER=1, tests only)"
+elif ! command -v docker >/dev/null 2>&1; then
   echo "FAIL: docker not found, cannot check for leaked containers" >&2
   failed=1
 else

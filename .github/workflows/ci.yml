@@ -31,6 +31,8 @@ jobs:
         run: bash .github/scripts/check-playwright-version.sh --strict
       - name: Upstream browser images and the forwarder sidecar are pinned consistently
         run: bash .github/scripts/check-browser-images.sh --strict
+      - name: The fleet smoke assertions decide as intended (no ClickHouse, no Docker)
+        run: bash .github/scripts/test-assert-fleet-smoke.sh
       - name: Shell scripts are executable in git (a Windows commit drops the bit)
         run: bash .github/scripts/check-executable-bits.sh
 
@@ -127,9 +129,9 @@ jobs:
       # in the runner and collector (checked by check-playwright-version.sh); the other three are
       # checked by check-browser-images.sh. Both run in the "check" job.
       FLEET_BROWSER_IMAGE_CHROMIUM: fleetscope/playwright-chromium:1.64.1-2
-      FLEET_BROWSER_IMAGE_CHROME_HEADLESS_SHELL: chromedp/headless-shell:156.0.8078.48
-      FLEET_BROWSER_IMAGE_LIGHTPANDA: lightpanda/browser:1.0.2
-      FLEET_FORWARDER_IMAGE: fleetscope/forwarder:1
+      FLEET_BROWSER_IMAGE_CHROME_HEADLESS_SHELL: chromedp/headless-shell:156.0.8078.48@sha256:3da74b0945e4f80f00f0310bcda9f76cee283539ebd200a053a7bebf3de89423
+      FLEET_BROWSER_IMAGE_LIGHTPANDA: lightpanda/browser:1.0.2@sha256:5d1d724c476957d8c2f8393a51fd089477523b0e5aa9c783c48688785d934fb9
+      FLEET_FORWARDER_IMAGE: fleetscope/forwarder:1-1
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
@@ -158,7 +160,7 @@ jobs:
           file: infra/browsers/forwarder/Dockerfile
           load: true
           push: false
-          tags: fleetscope/forwarder:1
+          tags: fleetscope/forwarder:1-1
           cache-from: type=gha,scope=browser-forwarder
           cache-to: type=gha,mode=max,scope=browser-forwarder,ignore-error=true
           provenance: false

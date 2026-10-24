@@ -27,8 +27,8 @@
     "grafana:check": "pnpm --filter @fleetscope/grafana-tools check",
     "grafana:reload": "pnpm --filter @fleetscope/grafana-tools reload",
     "fleet": "pnpm --filter @fleetscope/fleet-runner fleet",
-    "browsers:build": "docker build -f infra/browsers/chromium/Dockerfile -t fleetscope/playwright-chromium:1.64.1-2 infra/browsers && docker build -f infra/browsers/forwarder/Dockerfile -t fleetscope/forwarder:1 infra/browsers",
-    "browsers:pull": "docker pull chromedp/headless-shell:156.0.8078.48 && docker pull lightpanda/browser:1.0.2",
+    "browsers:build": "docker build -f infra/browsers/chromium/Dockerfile -t fleetscope/playwright-chromium:1.64.1-2 infra/browsers && docker build -f infra/browsers/forwarder/Dockerfile -t fleetscope/forwarder:1-1 infra/browsers",
+    "browsers:pull": "docker pull chromedp/headless-shell:156.0.8078.48@sha256:3da74b0945e4f80f00f0310bcda9f76cee283539ebd200a053a7bebf3de89423 && docker pull lightpanda/browser:1.0.2@sha256:5d1d724c476957d8c2f8393a51fd089477523b0e5aa9c783c48688785d934fb9",
     "sim": "pnpm --filter @fleetscope/simulator sim"
   },
   "devDependencies": {

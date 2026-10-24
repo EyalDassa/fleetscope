@@ -6,16 +6,16 @@ The fleet runner starts **one browser container per session** (PLAN.md section 3
 ```
 infra/browsers/
   chromium/Dockerfile    Playwright server + Chromium               -> fleetscope/playwright-chromium:1.64.1-2
-  forwarder/Dockerfile   the sidecar (Node + forward-port.mjs)      -> fleetscope/forwarder:1
+  forwarder/Dockerfile   the sidecar (Node + forward-port.mjs)      -> fleetscope/forwarder:1-1
   forward-port.mjs       loopback port forwarder (runs in the sidecar only)
 ```
 
 | Engine | Image | Built or pulled | Port | Ready when |
 |---|---|---|---|---|
 | `chromium` | `fleetscope/playwright-chromium:1.64.1-2` | built, `pnpm browsers:build` | 3000 (Playwright `run-server`) | TCP connect |
-| `chrome-headless-shell` | `chromedp/headless-shell:156.0.8078.48` | pulled, `pnpm browsers:pull`, unmodified | 9222 (CDP) | `GET /json/version` |
-| `lightpanda` | `lightpanda/browser:1.0.2` | pulled, `pnpm browsers:pull`, unmodified | 9222 (CDP) | `GET /json/version` |
-| sidecar | `fleetscope/forwarder:1` | built, `pnpm browsers:build` | none (loopback only) | log line `127.0.0.1:3100 -> ...` |
+| `chrome-headless-shell` | `chromedp/headless-shell:156.0.8078.48@sha256:3da74b0945e4f80f00f0310bcda9f76cee283539ebd200a053a7bebf3de89423` | pulled, `pnpm browsers:pull`, unmodified | 9222 (CDP) | `GET /json/version` |
+| `lightpanda` | `lightpanda/browser:1.0.2@sha256:5d1d724c476957d8c2f8393a51fd089477523b0e5aa9c783c48688785d934fb9` | pulled, `pnpm browsers:pull`, unmodified | 9222 (CDP) | `GET /json/version` |
+| sidecar | `fleetscope/forwarder:1-1` | built, `pnpm browsers:build` | none (loopback only) | log line `127.0.0.1:3100 -> ...` |
 
 The runner reads the image names from `FLEET_BROWSER_IMAGE_CHROMIUM`,
 `FLEET_BROWSER_IMAGE_CHROME_HEADLESS_SHELL`, `FLEET_BROWSER_IMAGE_LIGHTPANDA` and
@@ -29,9 +29,9 @@ pnpm browsers:pull    # the two upstream images (headless-shell 537 MB on disk, 
 
 Checked on 2026-10-24 (Docker Hub, `docker pull` and `docker inspect`):
 
-- `chromedp/headless-shell:156.0.8078.48`: entrypoint `/headless-shell/run.sh`, exposes 9222 and 9223
+- `chromedp/headless-shell:156.0.8078.48@sha256:3da74b0945e4f80f00f0310bcda9f76cee283539ebd200a053a7bebf3de89423`: entrypoint `/headless-shell/run.sh`, exposes 9222 and 9223
   (Chrome listens on 9223 and a `socat` in the image republishes it on 9222).
-- `lightpanda/browser:1.0.2`: entrypoint `tini --`, command `lightpanda serve --host 0.0.0.0 --port 9222`,
+- `lightpanda/browser:1.0.2@sha256:5d1d724c476957d8c2f8393a51fd089477523b0e5aa9c783c48688785d934fb9`: entrypoint `tini --`, command `lightpanda serve --host 0.0.0.0 --port 9222`,
   runs as the user `lightpanda`. `GET /json/version` answers `{"Browser": "Lightpanda/1.0", ...,
   "webSocketDebuggerUrl": "ws://127.0.0.1:9222/"}`.
   **That URL carries the container's own port 9222, not the published one.** `chromium.connectOverCDP("http://127.0.0.1:<published>")`
@@ -62,9 +62,13 @@ forwarder out of the image).
 | `apps/fleet-runner/src/engines.ts` | the default image, used when the env var is not set |
 | `apps/fleet-runner`, `packages/collector` | `playwright-core`, an exact pin (no `^`) |
 
-**Upstream and sidecar images.** `.github/scripts/check-browser-images.sh --strict` checks that
-`chromedp/headless-shell:<tag>`, `lightpanda/browser:<tag>` and `fleetscope/forwarder:<tag>` carry the
-same tag in `.env.example` (the reference), `.github/workflows/ci.yml`, the runner's `engines.ts`,
+**Upstream and sidecar images.** Tags on Docker Hub are mutable, so the two upstream images are pinned
+by tag **and digest** (`<tag>@sha256:<digest of the image index>`; the tag is for humans, Docker uses the
+digest). Get a digest with `docker buildx imagetools inspect <image>:<tag>`, checked on 2026-10-24 for
+`156.0.8078.48` and `1.0.2`. Our sidecar is tagged `1-<revision>` (`ARG IMAGE_REVISION` in
+`forwarder/Dockerfile`), bumped whenever the Dockerfile or `forward-port.mjs` changes, so a stale local
+image is never reused under the old tag. `.github/scripts/check-browser-images.sh --strict` checks that
+the three images are written the same way, digest and revision included, in `.env.example` (the reference), `.github/workflows/ci.yml`, the runner's `engines.ts`,
 this README, and (for the forwarder) the `browsers:build` script in `package.json`. Both scripts print
 what they compared.
 
@@ -124,7 +128,7 @@ the real compatibility gaps we want to show for Lightpanda. `localhost` is a sec
 engine. The Chromium-only flags that fake a secure origin (`--unsafely-treat-insecure-origin-as-secure`,
 `--host-resolver-rules`) are no option for Lightpanda.
 
-**How.** Per session the runner starts a second container from `fleetscope/forwarder:1` with
+**How.** Per session the runner starts a second container from `fleetscope/forwarder:1-1` with
 `HostConfig.NetworkMode: "container:<browser container id>"`. It shares the browser container's network
 namespace (so the same `localhost`) but has its own cgroup. It runs `node forward-port.mjs`, which
 listens on `127.0.0.1:3100` and `[::1]:3100` and forwards each connection to
@@ -132,8 +136,8 @@ listens on `127.0.0.1:3100` and `[::1]:3100` and forwards each connection to
 
 ```bash
 # by hand (browser = any of the three engines):
-B=$(docker run -d --init --add-host host.docker.internal:host-gateway lightpanda/browser:1.0.2)
-S=$(docker run -d --network container:$B fleetscope/forwarder:1)   # no --add-host here, see below
+B=$(docker run -d --init --add-host host.docker.internal:host-gateway lightpanda/browser:1.0.2@sha256:5d1d724c476957d8c2f8393a51fd089477523b0e5aa9c783c48688785d934fb9)
+S=$(docker run -d --network container:$B fleetscope/forwarder:1-1)   # no --add-host here, see below
 docker logs $S    # forward-port: 127.0.0.1:3100 -> host.docker.internal:3100
 docker run --rm --network container:$B node:22-alpine wget -qO- http://localhost:3100/healthz
 ```

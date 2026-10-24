@@ -4,7 +4,7 @@
 # memory and CPU are not counted in the browser's samples (that is the point, see README.md).
 #
 #   pnpm browsers:build
-#   = docker build -f infra/browsers/forwarder/Dockerfile -t fleetscope/forwarder:1 infra/browsers
+#   = docker build -f infra/browsers/forwarder/Dockerfile -t fleetscope/forwarder:1-1 infra/browsers
 #
 # Listens on 127.0.0.1:<port> and [::1]:<port>, forwards to $DEMO_SITE_UPSTREAM
 # (default host.docker.internal:3100; the port inside equals the upstream port). Exits non-zero if it
@@ -13,10 +13,16 @@
 # --add-host together with --network container:).
 #
 # Alpine keeps the image small (about 60 MB, Node only for this one script). Non-root user `node`.
+# The image tag is 1-<revision>. Bump the revision (here, in package.json, .env.example, ci.yml, the
+# README and the runner's default) whenever this file or forward-port.mjs changes, or a stale local
+# image would be used. .github/scripts/check-browser-images.sh checks the tag against this value.
+ARG IMAGE_REVISION=1
 FROM node:22-alpine
 
+ARG IMAGE_REVISION
 LABEL org.opencontainers.image.title="fleetscope-forwarder" \
-      org.opencontainers.image.description="Loopback port forwarder sidecar for Fleetscope browser containers"
+      org.opencontainers.image.description="Loopback port forwarder sidecar for Fleetscope browser containers" \
+      fleetscope.image-revision="${IMAGE_REVISION}"
 
 ENV DEMO_SITE_UPSTREAM=host.docker.internal:3100
 

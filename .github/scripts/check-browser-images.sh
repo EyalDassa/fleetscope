@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
-# Fails unless the pinned upstream browser images and the forwarder sidecar image carry the same tag
-# everywhere they are written down:
-#   chromedp/headless-shell:<tag>   lightpanda/browser:<tag>   fleetscope/forwarder:<tag>
+# Fails unless the pinned upstream browser images and the forwarder sidecar image are written the
+# same way everywhere:
+#   chromedp/headless-shell:<tag>@sha256:<digest>   lightpanda/browser:<tag>@sha256:<digest>
+#     (tags on Docker Hub are mutable, so the digest of the image index is pinned too; the tag stays
+#      for humans. Get a digest with: docker buildx imagetools inspect <image>:<tag>)
+#   fleetscope/forwarder:1-<revision>   (revision = ARG IMAGE_REVISION of infra/browsers/forwarder/Dockerfile,
+#      bumped whenever that Dockerfile or forward-port.mjs changes)
 # Reference: the uncommented FLEET_BROWSER_IMAGE_CHROME_HEADLESS_SHELL, FLEET_BROWSER_IMAGE_LIGHTPANDA
 # and FLEET_FORWARDER_IMAGE lines in .env.example. Checked: package.json (browsers:pull / browsers:build),
 # .github/workflows/ci.yml, apps/fleet-runner/src/engines.ts (the runner's defaults), the forwarder
@@ -27,11 +31,11 @@ cd "$root"
 errors=0
 fail() { echo "ERROR: $*" >&2; errors=$((errors + 1)); }
 
-# <env var in .env.example> <image repository>
+# <env var in .env.example> <image repository> <needs a digest: 1|0>
 images=(
-  "FLEET_BROWSER_IMAGE_CHROME_HEADLESS_SHELL chromedp/headless-shell"
-  "FLEET_BROWSER_IMAGE_LIGHTPANDA lightpanda/browser"
-  "FLEET_FORWARDER_IMAGE fleetscope/forwarder"
+  "FLEET_BROWSER_IMAGE_CHROME_HEADLESS_SHELL chromedp/headless-shell 1"
+  "FLEET_BROWSER_IMAGE_LIGHTPANDA lightpanda/browser 1"
+  "FLEET_FORWARDER_IMAGE fleetscope/forwarder 0"
 )
 # <file> <repositories it must mention, comma separated>
 files=(
@@ -47,7 +51,7 @@ files=(
 
 declare -A expected
 for entry in "${images[@]}"; do
-  read -r var repo <<< "$entry"
+  read -r var repo needs_digest <<< "$entry"
   value=$(grep -E "^${var}=" .env.example | head -n 1 | cut -d= -f2- | tr -d '[:space:]' || true)
   if [ -z "$value" ]; then
     fail ".env.example has no uncommented ${var}="
@@ -58,9 +62,31 @@ for entry in "${images[@]}"; do
     *) fail ".env.example: ${var}=${value} is not an image of ${repo}"; continue ;;
   esac
   tag="${value#"${repo}:"}"
+  digest=""
+  case "$tag" in *@*) digest="${tag#*@}"; tag="${tag%%@*}" ;; esac
   if ! printf '%s' "$tag" | grep -Eq '^[0-9][A-Za-z0-9._-]*$' || [ "$tag" = "latest" ]; then
     fail ".env.example: ${var}=${value} must be an exact version tag, not '${tag}'"
     continue
+  fi
+  if [ "$needs_digest" -eq 1 ] && ! printf '%s' "$digest" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+    fail ".env.example: ${var}=${value} must be pinned by digest too (<tag>@sha256:<64 hex digits>)"
+    continue
+  fi
+  if [ "$needs_digest" -eq 0 ] && [ -n "$digest" ]; then
+    fail ".env.example: ${var}=${value} is built by us and must not have a digest"
+    continue
+  fi
+  if [ "$repo" = "fleetscope/forwarder" ]; then
+    # tag = 1-<revision>; the revision is the ARG IMAGE_REVISION of the forwarder Dockerfile.
+    revision=$(sed -nE 's/^ARG IMAGE_REVISION=([0-9]+)[[:space:]]*$/\1/p' infra/browsers/forwarder/Dockerfile | head -n 1)
+    if [ -z "$revision" ]; then
+      fail "infra/browsers/forwarder/Dockerfile has no 'ARG IMAGE_REVISION=<n>' line"
+      continue
+    fi
+    if [ "$tag" != "1-${revision}" ]; then
+      fail ".env.example: ${var}=${value}: the tag must be 1-${revision} (ARG IMAGE_REVISION=${revision} in infra/browsers/forwarder/Dockerfile)"
+      continue
+    fi
   fi
   expected[$repo]="$value"
   echo "pinned:      ${value} (.env.example, ${var})"
@@ -81,7 +107,8 @@ for entry in "${files[@]}"; do
     want="${expected[$repo]:-}"
     [ -n "$want" ] || continue # already reported above
     # A trailing "." or "-" is sentence punctuation, not part of the tag.
-    found=$(grep -oE "${repo}:[A-Za-z0-9][A-Za-z0-9._-]*" "$file" | sed -E 's/[.-]+$//' | sort -u || true)
+    found=$(grep -oE "${repo}:[A-Za-z0-9][A-Za-z0-9._-]*(@sha256:[0-9a-f]+)?" "$file" | sed -E 's/[.-]+$//' | sort -u || true)
+
     if [ -z "$found" ]; then
       fail "$file does not mention ${want}"
       continue
