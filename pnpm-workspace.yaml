@@ -1,6 +1,8 @@
 packages:
   - apps/*
   - packages/*
+  # Tooling that belongs to the Grafana setup (dashboard push and check scripts).
+  - infra/grafana
 
 # pnpm 12: dependency build scripts (postinstall etc.) are denied unless listed here,
 # and unreviewed ones make `pnpm install` fail (strictDepBuilds defaults to true).

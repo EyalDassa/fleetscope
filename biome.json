@@ -17,7 +17,8 @@
       "!**/test-results",
       "!pnpm-lock.yaml",
       "!.claude",
-      "!design"
+      "!design",
+      "!infra/grafana/dashboards"
     ]
   },
   "formatter": {
@@ -42,6 +43,18 @@
       }
     }
   },
+  "overrides": [
+    {
+      "includes": ["infra/grafana/**"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noTemplateCurlyInString": "off"
+          }
+        }
+      }
+    }
+  ],
   "assist": {
     "actions": {
       "source": {

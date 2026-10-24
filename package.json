@@ -21,6 +21,9 @@
     "infra:down": "docker compose --project-directory . -f infra/docker-compose.yml down",
     "db:migrate": "pnpm --filter @fleetscope/db migrate",
     "db:seed": "pnpm --filter @fleetscope/db seed",
+    "db:grafana-user": "pnpm --filter @fleetscope/db grafana-user",
+    "grafana:push": "pnpm --filter @fleetscope/grafana-tools push",
+    "grafana:check": "pnpm --filter @fleetscope/grafana-tools check",
     "fleet": "pnpm --filter @fleetscope/fleet-runner fleet",
     "browsers:build": "docker build -f infra/browsers/chromium/Dockerfile -t fleetscope/playwright-chromium:1.64.1 infra/browsers"
   },
