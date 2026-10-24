@@ -8,7 +8,7 @@ The UI is Grafana (ADR 0003). This spec is for the engineer who builds `infra/gr
 
 1. **Verdict first.** Overview opens with the fleet verdict in one word, and Session detail opens with the session status and one sentence about what happened. Evidence sits beside the verdict, and the charts come after it.
 2. **Every number drills down to sessions.** Every stat, table row and chart point has a Grafana **data link** to the sessions behind it (link patterns in 4.1). A panel whose values are links ends its title with `↗`, so the link is visible without hovering.
-3. **Honest data.** A count with no events prints `0`. A ratio with no denominator prints `—`. A metric the engine can't provide (`null`) prints `Not available`: never drawn as 0, never interpolated. Simulated data is always labelled (`SIM` in session tables, the Simulated share stat, the Perfetto process name).
+3. **Honest data.** A count with no events prints `0`. A count with its share is one text value, `39 · 4%` (Routed sessions), with the definition in the panel description. A ratio with no denominator prints `—`. A metric the engine can't provide (`null`) prints `Not available`: never drawn as 0, never interpolated. Simulated data is always labelled (`SIM` in session tables, the Simulated share stat, the Perfetto process name).
 4. **Never colour alone.** A status is shown as a value mapping with glyph + word + colour. An engine is shown with its name (legend, tooltip) + colour.
 
 **One meaning per pattern.** Violet means blocked. Engine colours never mean a status, and status colours never mean an engine. A filled panel means a verdict: only the two verdict stats are filled.
@@ -100,6 +100,7 @@ Other colours (dark / light): gauge cells in tables use the approved neutral `--
 | `source` | custom, single, All | `real,sim` | All | overview, sessions |
 | `status` | custom, multi, All | `Healthy : healthy`, … all six | All | sessions |
 | `agent`, `scenario` | query, multi, All | distinct values from `sessions FINAL` within `$__timeFilter(started_at)` | All | sessions |
+| `routed` | custom, single | `All : all`, `Routed only : routed` | All | sessions (ADR 0005; the Browsers "Routed sessions" stat links to `var-routed=routed`) |
 | `session` | textbox | a session id | empty | session |
 | `api_url` | constant, hidden | API base URL (set by provisioning and `grafana:push`) | – | session |
 
