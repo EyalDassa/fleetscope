@@ -75,3 +75,12 @@ export function createReaderClient(config: DbConfig, username: string, password:
     log: { level: ClickHouseLogLevel.OFF },
   });
 }
+
+/**
+ * A random password for a test user. Tests use this instead of a literal such as "my-test-password",
+ * which secret scanners flag (and which would be a real credential if copied somewhere). 24 hex
+ * characters satisfy the Grafana user's "at least 8 characters" rule.
+ */
+export function testPassword(): string {
+  return randomBytes(12).toString("hex");
+}
