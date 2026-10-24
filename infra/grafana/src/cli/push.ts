@@ -1,7 +1,10 @@
-// pnpm grafana:push [--dry-run] [--skip-health-check] [--dir <folder>]
+// pnpm grafana:push [--dry-run] [--force] [--skip-health-check] [--dir <folder>]
 //
-// Makes the Grafana at GRAFANA_URL match the repository: folder, ClickHouse data source, dashboards
-// and the dark default theme. GRAFANA_TOKEN is a service account token with the Admin role.
+// Makes the Grafana at GRAFANA_URL match the repository: the locked official folder, the team folder
+// (created, never touched inside), the ClickHouse data source, dashboards and the dark default
+// theme. GRAFANA_TOKEN is a service account token with the Admin role.
+// A dashboard that somebody else saved in Grafana and that differs from the repository is refused
+// (exit code 1 at the end); --force overwrites it, pnpm grafana:pull <uid> keeps it first.
 // --dry-run changes nothing. With GRAFANA_URL and GRAFANA_TOKEN set it reads Grafana and says what
 // would be created, updated or left alone; without them it only prints the plan.
 // See infra/grafana/README.md.
@@ -19,6 +22,7 @@ import {
 
 interface Args {
   dryRun: boolean;
+  force: boolean;
   skipHealthCheck: boolean;
   dir: string;
 }
@@ -26,12 +30,14 @@ interface Args {
 function parseArgs(argv: string[]): Args {
   const args: Args = {
     dryRun: false,
+    force: false,
     skipHealthCheck: false,
     dir: fileURLToPath(new URL("../../dashboards", import.meta.url)),
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--dry-run") args.dryRun = true;
+    else if (arg === "--force") args.force = true;
     else if (arg === "--skip-health-check") args.skipHealthCheck = true;
     else if (arg === "--dir") {
       i += 1;
@@ -40,7 +46,7 @@ function parseArgs(argv: string[]): Args {
       args.dir = value;
     } else {
       throw new PushError(
-        `unknown option "${arg}" (options: --dry-run, --skip-health-check, --dir)`,
+        `unknown option "${arg}" (options: --dry-run, --force, --skip-health-check, --dir)`,
       );
     }
   }
@@ -72,6 +78,7 @@ async function main(): Promise<number> {
     apiUrl: env.FLEETSCOPE_API_URL,
     grafanaIsLocal: grafana.local,
     dryRun: args.dryRun,
+    force: args.force,
     canRead: Boolean(rawUrl && token),
     skipHealthCheck: args.skipHealthCheck,
     log: say,
@@ -80,6 +87,12 @@ async function main(): Promise<number> {
   if (result.health && !result.health.ok) {
     complain(
       "\nThe data source was saved but Grafana cannot query ClickHouse with it. Check that ClickHouse accepts connections from Grafana (on ClickHouse Cloud: the IP access list) and that the read-only user exists (pnpm db:grafana-user).",
+    );
+    return 1;
+  }
+  if (result.refused.length > 0) {
+    complain(
+      `\n${result.refused.length} dashboard(s) ${args.dryRun ? "would be refused" : "were NOT overwritten (everything else was pushed)"}: ${result.refused.map((r) => r.uid).join(", ")}. Keep the Grafana version with pnpm grafana:pull <uid>, or discard it with pnpm grafana:push --force.`,
     );
     return 1;
   }

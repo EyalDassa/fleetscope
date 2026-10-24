@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "push": "tsx --env-file-if-exists=../../.env src/cli/push.ts",
+    "pull": "tsx --env-file-if-exists=../../.env src/cli/pull.ts",
     "check": "tsx --env-file-if-exists=../../.env src/cli/check.ts",
     "reload": "tsx --env-file-if-exists=../../.env src/cli/reload.ts",
     "typecheck": "tsc --noEmit",
