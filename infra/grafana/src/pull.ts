@@ -167,7 +167,7 @@ export function pullReminder(pulled: PulledDashboard, uid: string): string[] {
   if (pulled.folderUid === FOLDER_UID) {
     return [
       `${uid} is an official dashboard. The file now holds the version saved in Grafana: review the diff,`,
-      "run pnpm grafana:check, commit it in a pull request, and then pnpm grafana:push stops refusing it.",
+      'run pnpm grafana:check and commit it in a pull request. At the next pnpm grafana:push the dashboard equals the repository, and push saves it once under its own account ("adopted"); after that, ordinary repository changes are pushed without --force.',
     ];
   }
   const where =

@@ -206,6 +206,6 @@ describe("pullReminder", () => {
     const official = fromGrafana({ folderUid: "fleetscope", folderTitle: "Fleetscope" });
     const text = pullReminder(normaliseDashboard(official), "fleetscope-overview").join("\n");
     expect(text).toContain("is an official dashboard");
-    expect(text).toContain("stops refusing it");
+    expect(text).toContain("adopted");
   });
 });

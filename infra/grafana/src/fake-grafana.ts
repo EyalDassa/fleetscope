@@ -2,7 +2,7 @@
 // dashboards (with the meta that Grafana reports: who saved it, when, in which folder) and the
 // organisation preferences. Not a test itself.
 import type { Fetch } from "./clickhouse-http";
-import type { JsonObject } from "./json";
+import { canonicalJson, type JsonObject } from "./json";
 
 export interface FakeState {
   folders: Map<string, JsonObject>;
@@ -21,6 +21,27 @@ export interface FakeState {
   meta: Map<string, JsonObject>;
   /** The account behind the token (GET /api/user). */
   user: JsonObject;
+  /** Who the version history says saved each dashboard last (GET .../versions, createdBy). */
+  authors: Map<string, string>;
+}
+
+/**
+ * Somebody else saves a dashboard in the UI: meta.updatedBy and the version history both say so.
+ * (A test that only sets `state.meta` leaves the history with the last push, as a stale fake.)
+ */
+export function editAs(
+  state: FakeState,
+  uid: string,
+  author: string,
+  extraMeta: JsonObject = {},
+): void {
+  state.authors.set(uid, author);
+  state.meta.set(uid, {
+    folderUid: "fleetscope",
+    updated: "2026-10-24T18:30:00Z",
+    ...extraMeta,
+    updatedBy: author,
+  });
 }
 
 export function fakeGrafana(): { fetchImpl: Fetch; state: FakeState } {
@@ -36,7 +57,9 @@ export function fakeGrafana(): { fetchImpl: Fetch; state: FakeState } {
     healthy: true,
     permissions: new Map(),
     meta: new Map(),
-    user: { login: "sa-fleetscope-push", name: "fleetscope-push" },
+    authors: new Map(),
+    // As Grafana reports a service account token (GET /api/user)
+    user: { uid: "service-account:2", login: "sa-1-fleetscope-push", name: "fleetscope-push" },
   };
   const json = (status: number, body: unknown): Response =>
     new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -114,6 +137,20 @@ export function fakeGrafana(): { fetchImpl: Fetch; state: FakeState } {
       state.sources.set(String(body.uid), body);
       return json(200, { message: "Datasource added" });
     }
+    const versionsUid = at(/^\/api\/dashboards\/uid\/([^/]+)\/versions$/);
+    if (versionsUid) {
+      if (!state.dashboards.has(versionsUid)) return notFound;
+      const meta = state.meta.get(versionsUid) ?? {};
+      return json(200, {
+        versions: [
+          {
+            version: 2,
+            createdBy: state.authors.get(versionsUid) ?? meta.updatedBy,
+            created: meta.updated,
+          },
+        ],
+      });
+    }
     const dashboardUid = at(/^\/api\/dashboards\/uid\/([^/]+)$/);
     if (dashboardUid) {
       const dashboard = state.dashboards.get(dashboardUid);
@@ -126,10 +163,21 @@ export function fakeGrafana(): { fetchImpl: Fetch; state: FakeState } {
     }
     if (path === "/api/dashboards/db" && method === "POST" && body) {
       const dashboard = body.dashboard as JsonObject;
+      const stored = state.dashboards.get(String(dashboard.uid));
+      // Real Grafana makes no new version (and records no new author) for an identical save.
+      if (stored && canonicalJson(stored) === canonicalJson(dashboard)) {
+        return json(200, { status: "success", uid: dashboard.uid, version: 1 });
+      }
+      const created = stored === undefined;
       state.dashboards.set(String(dashboard.uid), dashboard);
       state.dashboardFolders.set(String(dashboard.uid), body.folderUid);
+      const isServiceAccount = String(state.user.uid).startsWith("service-account:");
+      const author = String(isServiceAccount ? state.user.name : state.user.login);
+      state.authors.set(String(dashboard.uid), author);
       state.meta.set(String(dashboard.uid), {
-        updatedBy: state.user.login,
+        // Measured on Grafana 13.2.4: meta.updatedBy is the NAME of a service account, but a dashboard
+        // that the service account only created (version 1) reports "Anonymous" (the history is right).
+        updatedBy: created && isServiceAccount ? "Anonymous" : author,
         updated: "2026-10-24T20:00:00Z",
         folderUid: body.folderUid,
         folderTitle: String(state.folders.get(String(body.folderUid))?.title ?? ""),

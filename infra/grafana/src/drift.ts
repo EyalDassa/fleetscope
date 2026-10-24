@@ -1,10 +1,14 @@
 // The drift guard of `grafana:push`: a dashboard that someone changed in Grafana's UI is not
-// overwritten by accident. Grafana records who saved a dashboard last (meta.updatedBy, the login) and
-// when (meta.updated); `grafana:push` compares that with the login of its own token (GET /api/user).
+// overwritten by accident. Grafana records who saved a dashboard last (meta.updatedBy) and when
+// (meta.updated); `grafana:push` compares that with the account behind its own token (GET /api/user).
+//
+// What updatedBy holds (measured on Grafana 13.2.4 and on Grafana Cloud): for a person, the LOGIN; for
+// a service account, its NAME ("fleetscope-push"), not its login ("sa-1-fleetscope-push"). So a person
+// is compared by login only, and a service account by login or name.
 import { asString, isObject, type JsonObject } from "./json";
 
 export interface Identity {
-  /** Everything that names the push's own account: login, name, e-mail. */
+  /** Values of `meta.updatedBy` that mean "the push's own account". */
   names: ReadonlySet<string>;
   label: string;
 }
@@ -14,11 +18,17 @@ export function identityFrom(user: unknown): Identity {
   const names = new Set<string>();
   let label = "(unknown)";
   if (isObject(user)) {
-    for (const key of ["login", "name", "email"]) {
-      const value = asString(user[key]);
-      if (value) names.add(value);
+    const login = asString(user.login);
+    if (login) {
+      names.add(login);
+      label = login;
     }
-    label = asString(user.login) ?? asString(user.name) ?? label;
+    // A service account shows up in updatedBy with its name. A person's name or e-mail never counts:
+    // somebody whose login equals the service account's name must not be exempt.
+    const serviceAccount =
+      asString(user.uid)?.startsWith("service-account:") || login?.startsWith("sa-");
+    const name = asString(user.name);
+    if (serviceAccount && name) names.add(name);
   }
   return { names, label };
 }

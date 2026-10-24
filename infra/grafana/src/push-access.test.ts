@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DashboardFile } from "./dashboards";
-import { fakeGrafana } from "./fake-grafana";
+import { editAs, fakeGrafana } from "./fake-grafana";
 import { TEAM_FOLDER_UID } from "./folder-access";
 import type { JsonObject } from "./json";
 import { buildDataSource, GrafanaClient, pushToGrafana } from "./push";
@@ -197,7 +197,8 @@ describe("the drift guard", () => {
       "fleetscope-overview",
       dashboardJson({ uid: "fleetscope-overview", title: "Fleetscope / Overview (alice)" }),
     );
-    grafana.state.meta.set("fleetscope-overview", { folderUid: "fleetscope", ...meta });
+    const { updatedBy, ...rest } = meta;
+    editAs(grafana.state, "fleetscope-overview", String(updatedBy), rest);
     grafana.state.calls.length = 0;
     grafana.lines.length = 0;
     return grafana;
@@ -244,18 +245,122 @@ describe("the drift guard", () => {
 
   it("does not refuse what the push's own account saved last, or what equals the repository", async () => {
     const own = await driftedSetup({
-      updatedBy: "sa-fleetscope-push",
+      updatedBy: "fleetscope-push", // a service account is recorded by its name
       updated: "2026-10-24T18:30:00Z",
     });
     expect((await pushToGrafana(own.options)).refused).toEqual([]);
 
-    // alice saved it, but the content is the repo's: nothing to overwrite
+    // alice saved it, but the content is the repo's: nothing to refuse, and nothing to lose
     const same = setup();
     await pushToGrafana(same.options);
-    same.state.meta.set("fleetscope-overview", { updatedBy: "alice", folderUid: "fleetscope" });
+    editAs(same.state, "fleetscope-overview", "alice");
     const result = await pushToGrafana(same.options);
     expect(result.refused).toEqual([]);
+    expect(result.dashboards[0]).toEqual({ uid: "fleetscope-overview", action: "adopted" });
+  });
+
+  it("adopts a dashboard that equals the repository but was saved by somebody else, once", async () => {
+    // RV-RT-01: alice edits, push refuses, her version is pulled and merged, push adopts it,
+    // the next repository change goes through without --force.
+    const g = setup();
+    await pushToGrafana(g.options);
+    const aliceVersion = dashboardJson({
+      uid: "fleetscope-overview",
+      title: "Fleetscope / Overview (alice)",
+    });
+    g.state.dashboards.set("fleetscope-overview", aliceVersion);
+    editAs(g.state, "fleetscope-overview", "alice");
+    expect((await pushToGrafana(g.options)).refused).toHaveLength(1);
+
+    // the pull was merged: the repository now has alice's version
+    const files = [
+      file("fleetscope-overview.json", aliceVersion),
+      file("fleetscope-sessions.json", sessions),
+    ];
+    const merged = { ...g.options, dashboardFiles: files };
+
+    g.state.calls.length = 0;
+    g.lines.length = 0;
+    const dry = await pushToGrafana({ ...merged, dryRun: true });
+    expect(dry.dashboards[0]).toEqual({ uid: "fleetscope-overview", action: "adopted" });
+    expect(g.lines.join("\n")).toMatch(/fleetscope-overview\s+would be adopted/);
+    expect(g.state.calls.filter((c) => c === "POST /api/dashboards/db")).toEqual([]);
+
+    g.state.calls.length = 0;
+    const adopted = await pushToGrafana(merged);
+    // two saves: Grafana records no new author for a save that changes nothing
+    expect(g.state.calls.filter((c) => c === "POST /api/dashboards/db")).toHaveLength(2);
+    expect(adopted.dashboards[0]).toEqual({ uid: "fleetscope-overview", action: "adopted" });
+    expect(adopted.refused).toEqual([]);
+    expect(g.state.meta.get("fleetscope-overview")?.updatedBy).toBe("fleetscope-push");
+    expect(g.lines.join("\n")).toMatch(/fleetscope-overview\s+adopted/);
+
+    // adopted once: the next run has nothing to do
+    const again = await pushToGrafana(merged);
+    expect(again.dashboards[0]).toEqual({ uid: "fleetscope-overview", action: "unchanged" });
+
+    // an ordinary repository change is pushed, no --force needed
+    const changed = dashboardJson({
+      uid: "fleetscope-overview",
+      title: "Fleetscope / Overview v3",
+    });
+    const next = await pushToGrafana({
+      ...merged,
+      dashboardFiles: [
+        file("fleetscope-overview.json", changed),
+        file("fleetscope-sessions.json", sessions),
+      ],
+    });
+    expect(next.refused).toEqual([]);
+    expect(next.dashboards[0]).toEqual({ uid: "fleetscope-overview", action: "updated" });
+    expect((g.state.dashboards.get("fleetscope-overview") as JsonObject).title).toBe(
+      "Fleetscope / Overview v3",
+    );
+  });
+
+  it("trusts the version history over meta: a dashboard the push only created is not 'adopted'", async () => {
+    // Measured on Grafana 13.2.4: meta.updatedBy of a service account's first save says "Anonymous",
+    // the version history says the service account. The second push must find nothing to do.
+    const g = setup();
+    await pushToGrafana(g.options);
+    expect(g.state.meta.get("fleetscope-overview")?.updatedBy).toBe("Anonymous");
+    g.state.calls.length = 0;
+    const second = await pushToGrafana(g.options);
+    expect(second.dashboards.map((d) => d.action)).toEqual(["unchanged", "unchanged"]);
+    expect(g.state.calls.filter((c) => c === "POST /api/dashboards/db")).toEqual([]);
+  });
+
+  it("does not adopt a dashboard that is in the team folder", async () => {
+    const g = await driftedSetup({ updatedBy: "alice", folderUid: TEAM_FOLDER_UID });
+    g.state.dashboards.set("fleetscope-overview", overview); // equals the repository
+    const result = await pushToGrafana(g.options);
     expect(result.dashboards[0]).toEqual({ uid: "fleetscope-overview", action: "unchanged" });
+    expect(g.state.calls.filter((c) => c === "POST /api/dashboards/db")).toEqual([]);
+  });
+
+  it("--force <uid> discards only that dashboard", async () => {
+    const g = await driftedSetup();
+    g.state.dashboards.set(
+      "fleetscope-sessions",
+      dashboardJson({ uid: "fleetscope-sessions", title: "Fleetscope / Sessions (bob)" }),
+    );
+    editAs(g.state, "fleetscope-sessions", "bob");
+
+    const result = await pushToGrafana({ ...g.options, forceUids: ["fleetscope-overview"] });
+    expect(result.dashboards).toEqual([
+      { uid: "fleetscope-overview", action: "updated" },
+      { uid: "fleetscope-sessions", action: "refused" },
+    ]);
+    expect(result.refused.map((r) => r.uid)).toEqual(["fleetscope-sessions"]);
+    expect(g.lines.join("\n")).toContain("pnpm grafana:push --force fleetscope-sessions");
+  });
+
+  it("--force <uid> with a uid that is not in the repository stops before any write", async () => {
+    const g = await driftedSetup();
+    await expect(pushToGrafana({ ...g.options, forceUids: ["nope"] })).rejects.toThrow(
+      /--force nope: no dashboard file/,
+    );
+    expect(writes(g.state.calls)).toEqual([]);
   });
 
   it("does not refuse what Grafana's own file provisioning saved (local development)", async () => {

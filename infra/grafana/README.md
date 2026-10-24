@@ -216,7 +216,8 @@ folder that is not in the repo is reported (the team folder is never listed).
 ```bash
 pnpm grafana:push --dry-run     # reads Grafana, prints the plan, changes nothing
 pnpm grafana:push               # does it, then checks the data source health
-pnpm grafana:push --force       # also overwrites dashboards that somebody else saved in Grafana (see below)
+pnpm grafana:push --force       # also overwrites every dashboard that somebody else saved in Grafana (see below)
+pnpm grafana:push --force fleetscope-overview   # ... or only that one (repeat --force <uid> for more)
 pnpm grafana:pull <uid>         # keeps such a dashboard, or turns a team dashboard into a repository file
 ```
 
@@ -234,10 +235,28 @@ folder gets Viewer = View, Editor = Edit, Admin = Admin the same way.
 checks who saved it last (`meta.updatedBy`) against the account behind the token (`GET /api/user`). If it
 was somebody else, that dashboard is **refused**: the push prints its uid, who and when, finishes the
 other dashboards, and exits with code 1. `pnpm grafana:pull <uid>` keeps the Grafana version in the
-repository file (then review, `grafana:check`, pull request); `--force` discards it. Not refused: what the
-push's own account saved, what equals the repository, and (local development) what Grafana's file
-provisioning saved. A repository uid that exists in the team folder is always refused, even with
-`--force`. Use a service account (not a person's login) for the token, so "the push" is always the same name.
+repository file (then review, `grafana:check`, pull request); `--force <uid>` discards just that one
+(`--force` alone discards every refused one, including edits you have not looked at). Not refused: what the
+push's own account saved, and (local development) what Grafana's file provisioning saved. A repository uid
+that exists in the team folder is always refused, even with `--force`.
+
+**Adopted.** When the repository already equals the dashboard in Grafana but somebody else saved it last
+(typically after their change was pulled and merged), the push saves it again under its own account and prints
+`adopted` (two saves: Grafana makes no new version for a save that changes nothing, so the second one
+carries the real content). Without that, the next ordinary repository change would still look like their edit and be
+refused. Dry run: `would be adopted`.
+
+**Who is "the push".** `meta.updatedBy` holds the *login* of a person but the *name* of a service account
+(Grafana 13.2.4 and Grafana Cloud: login `sa-1-fleetscope-push`, saved dashboards show `fleetscope-push`). The push
+therefore accepts the token's login, and for a service account its name too; a person is compared by login
+only. `meta` can say `Anonymous` for a dashboard the service account only created (version 1), so when `meta`
+names somebody else the push confirms with the newest entry of the version history. Use a dedicated service
+account for the token, and do not give a person a login equal to its name.
+Evidence in `ACCESS-VERIFICATION.md`.
+
+**The push owns the role rows of both folders.** Every run sets Viewer/Editor/Admin on `fleetscope` and on
+`fleetscope-team` back to the values above, so narrowing them by hand (say, hiding drafts from Viewers) is
+undone at the next push. Use grants to single users or teams for exceptions: the push keeps those and lists them.
 
 **`pnpm grafana:pull <uid> [--out <file>] [--as <new-uid>]`** reads a dashboard from any folder and
 writes repository JSON, by default to `infra/grafana/dashboards/<uid>.json`: no `id`/`version`/`meta`,
