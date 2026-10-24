@@ -158,13 +158,16 @@ describe("pnpm fleet run: preflight", () => {
       const out = await runCli(["run", "--sessions", "2"], {
         FLEETSCOPE_API_URL: ok,
         DEMO_SITE_URL: ok,
-        FLEET_BROWSER_IMAGE: "fleetscope/qa-image-that-does-not-exist:0.0.0",
+        FLEET_BROWSER_IMAGE_CHROMIUM: "fleetscope/qa-image-that-does-not-exist:0.0.0",
       });
       expect(out.code).toBe(1);
       expect(out.stderr).toContain("browser image fleetscope/qa-image-that-does-not-exist:0.0.0");
       expect(out.stderr).toContain("pnpm browsers:build");
-      // exactly one problem: API and demo site were fine
-      expect(out.stderr.match(/^ {2}- /gm)).toHaveLength(1);
+      // API and demo site were fine, so every listed problem is a missing image (CI's unit job has
+      // no forwarder image either, so there can be more than one)
+      const problems = out.stderr.split(/\r?\n/).filter((line) => line.startsWith("  - "));
+      expect(problems.length).toBeGreaterThanOrEqual(1);
+      for (const problem of problems) expect(problem).toMatch(/image \S+ not found locally/);
     },
     CLI_TEST_TIMEOUT_MS,
   );

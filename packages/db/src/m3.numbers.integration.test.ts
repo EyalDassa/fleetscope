@@ -447,68 +447,38 @@ describe("Browsers: bar gauges read the same table", () => {
 });
 
 describe("Browsers: compatibility matrix (hand-computed)", () => {
-  // The panel pivots the README snippet: one row per scenario, three columns per engine.
-  const cell = (r: Row, prefix: string) => [
-    num(r[`${prefix}_n`]),
-    r[`${prefix}_rate`] === null ? null : Number(num(r[`${prefix}_rate`])?.toFixed(6)),
-    r[`${prefix}_cause`],
+  // The panel is the README snippet as is: one row per (scenario, engine) that ran, sorted.
+  const pick = (r: Row) => [
+    r.scenario,
+    r.engine,
+    num(r.sessions),
+    r.success_rate === null ? null : Number(num(r.success_rate)?.toFixed(6)),
+    r.top_cause,
   ];
-  const pick = (r: Row) => ({
-    scenario: r.scenario,
-    chromium: cell(r, "chromium"),
-    shell: cell(r, "chrome_headless_shell"),
-    panda: cell(r, "lightpanda"),
-  });
 
-  it("one row per scenario, a cell per engine: interrupted sessions left out, the top cause named, a missing cell is NULL not 0%", async () => {
+  it("one row per scenario and engine that ran: interrupted sessions left out, the top cause named, no row (not 0%) for a pair that never ran", async () => {
     const rows = (await dash.run("browsers", MATRIX, RANGE, REAL)).map(pick);
     expect(rows).toEqual([
-      {
-        scenario: "checkout-form",
-        chromium: [1, 0, "timeout"], // C3 (C4 interrupted is left out)
-        shell: [1, 0, "unsupported_feature"], // H3: an action code, no issue
-        panda: [0, null, null], // none ran
-      },
-      {
-        scenario: "heavy-page-crawl",
-        chromium: [0, null, null],
-        shell: [0, null, null],
-        panda: [2, 0, "unsupported_api"], // L2 L3
-      },
-      {
-        scenario: "login-and-search",
-        chromium: [2, 100, null], // C1 C2
-        shell: [3, 100, null], // H1 H2 H4
-        panda: [3, 66.666667, "unsupported_feature"], // L1 L5 ok, L4 failed
-      },
+      ["checkout-form", SHELL, 1, 0, "unsupported_feature"], // H3: an action code, no issue
+      ["checkout-form", CHROM, 1, 0, "timeout"], // C3 (C4 interrupted is left out)
+      ["heavy-page-crawl", PANDA, 2, 0, "unsupported_api"], // L2 L3
+      ["login-and-search", SHELL, 3, 100, null], // H1 H2 H4
+      ["login-and-search", CHROM, 2, 100, null], // C1 C2
+      ["login-and-search", PANDA, 3, 66.666667, "unsupported_feature"], // L1 L5 ok, L4 failed
     ]);
   });
 
   it("the matrix covers exactly the sessions of the comparison: 3 + 4 + 5 = 12", async () => {
     const rows = await dash.run("browsers", MATRIX, RANGE, REAL);
-    const total = rows.reduce(
-      (n, r) =>
-        n +
-        (num(r.chromium_n) ?? 0) +
-        (num(r.chrome_headless_shell_n) ?? 0) +
-        (num(r.lightpanda_n) ?? 0),
-      0,
-    );
-    expect(total).toBe(12);
+    expect(rows.reduce((n, r) => n + (num(r.sessions) ?? 0), 0)).toBe(12);
   });
 
-  it("a Lightpanda-only filter gives the Lightpanda cells of the full matrix and nothing for the others", async () => {
+  it("a Lightpanda-only filter gives the Lightpanda rows of the full matrix and nothing else", async () => {
     const full = (await dash.run("browsers", MATRIX, RANGE, REAL)).map(pick);
     const only = (await dash.run("browsers", MATRIX, RANGE, { ...REAL, engines: [PANDA] })).map(
       pick,
     );
-    expect(only.map((r) => [r.scenario, r.panda])).toEqual(
-      full.filter((r) => Number(r.panda[0]) > 0).map((r) => [r.scenario, r.panda]),
-    );
-    for (const r of only) {
-      expect(r.chromium).toEqual([0, null, null]);
-      expect(r.shell).toEqual([0, null, null]);
-    }
+    expect(only).toEqual(full.filter((r) => r[1] === PANDA));
   });
 });
 
