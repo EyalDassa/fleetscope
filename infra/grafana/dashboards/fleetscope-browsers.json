@@ -224,7 +224,7 @@
       "id": 11,
       "type": "stat",
       "title": "Routed sessions ↗",
-      "description": "Sessions that ran on another engine than the one first chosen (the fleet runner's --routing by-scenario, ADR 0005), as a count and a share of the sessions that ended in the range (interrupted left out); follows the engine and source filters. The engine filter applies to the engine that actually ran the session. Click to open the routed sessions.",
+      "description": "Sessions that ran on another engine than the one first chosen (the fleet runner's --routing by-scenario, ADR 0005), as a count and a share of the sessions that ended in the range (interrupted left out); follows the engine and source filters. The engine filter applies to the engine that actually ran the session. Click to open the routed sessions. The link also lists routed sessions that are still running or were interrupted, which this number leaves out.",
       "gridPos": {
         "x": 6,
         "y": 0,
@@ -244,7 +244,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "-- Routed sessions: ended sessions that ran on another engine than first chosen (routed_from set) as \"count · share\", the same sessions as the Engine comparison.\nSELECT if(count() = 0, NULL, concat(toString(countIf(routed_from IS NOT NULL)), ' · ', toString(round(100 * countIf(routed_from IS NOT NULL) / count())), '%')) AS routed\nFROM sessions FINAL\nWHERE engine IN (${engine:singlequote})\n  AND source IN (${source:singlequote})\n  AND started_at >= $__fromTime - INTERVAL 1 DAY\n  AND started_at <= $__toTime\n  AND ended_at IS NOT NULL AND $__timeFilter(ended_at)\n  AND NOT (status = 'failed' AND ifNull(reason, '') = 'interrupted')\n",
+          "rawSql": "-- Routed sessions: ended sessions that ran on another engine than first chosen (routed_from set) as \"count · share\", the same sessions as the Engine comparison.\n-- The share is a whole percent; \"<1\" when there are routed sessions but under 1% of the total (never 0% next to a non-zero count).\nSELECT if(count() = 0, NULL, concat(toString(countIf(routed_from IS NOT NULL)), ' · ', if(countIf(routed_from IS NOT NULL) > 0 AND 100 * countIf(routed_from IS NOT NULL) / count() < 1, '<1', toString(round(100 * countIf(routed_from IS NOT NULL) / count()))), '%')) AS routed\nFROM sessions FINAL\nWHERE engine IN (${engine:singlequote})\n  AND source IN (${source:singlequote})\n  AND started_at >= $__fromTime - INTERVAL 1 DAY\n  AND started_at <= $__toTime\n  AND ended_at IS NOT NULL AND $__timeFilter(ended_at)\n  AND NOT (status = 'failed' AND ifNull(reason, '') = 'interrupted')\n",
           "refId": "A",
           "pluginVersion": "4.23.2"
         }
