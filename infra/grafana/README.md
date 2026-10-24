@@ -33,7 +33,7 @@ Check the wiring (data source health needs the user to exist):
 
 ```bash
 curl http://127.0.0.1:3001/api/health
-curl -u admin:fleetscope_dev_admin http://127.0.0.1:3001/api/datasources/uid/fleetscope-clickhouse/health
+curl -u "admin:$GRAFANA_ADMIN_PASSWORD" http://127.0.0.1:3001/api/datasources/uid/fleetscope-clickhouse/health
 ```
 
 **First start.** Grafana downloads the ClickHouse plugin from grafana.com before it starts, so it
