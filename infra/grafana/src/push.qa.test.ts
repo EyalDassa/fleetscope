@@ -62,9 +62,18 @@ describe("the ClickHouse address for a remote Grafana", () => {
     );
   });
 
-  // QA-M2-07: the check is a list of five exact names, so other spellings of "this machine" pass.
-  it.fails("also refuses the other loopback spellings: 127.0.0.2, 0.0.0.0 and a trailing dot", () => {
-    for (const url of ["http://127.0.0.2:8123", "http://0.0.0.0:8123", "http://localhost.:8123"]) {
+  // QA-M2-07 (fixed): the check was a list of five exact names, so other spellings of "this machine" passed.
+  it("also refuses the other loopback spellings: 127.x.x.x, 0.0.0.0, a trailing dot, *.localhost, IPv6", () => {
+    for (const url of [
+      "http://127.0.0.2:8123",
+      "http://127.255.255.254:8123",
+      "http://0.0.0.0:8123",
+      "http://localhost.:8123",
+      "http://LOCALHOST:8123",
+      "http://db.localhost:8123",
+      "http://[::]:8123",
+      "http://[::ffff:127.0.0.1]:8123",
+    ]) {
       expect(() => buildDataSource(env(url), false), url).toThrow(/your own machine/);
     }
   });

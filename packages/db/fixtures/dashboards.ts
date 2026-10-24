@@ -14,11 +14,15 @@ import {
 } from "@fleetscope/schema";
 import { type ClickHouseConnection, runQuery } from "../../../infra/grafana/src/clickhouse-http";
 import {
+  collectPanels,
+  DASHBOARD_DATASOURCE_UID,
   extractQueries,
   loadDashboardFiles,
   type QueryItem,
 } from "../../../infra/grafana/src/dashboards";
 import { interpolate, type VariableState } from "../../../infra/grafana/src/interpolate";
+import { asArray, asString, isObject, type JsonObject } from "../../../infra/grafana/src/json";
+import { displayNames, parseFieldPattern } from "../../../infra/grafana/src/panel-fields";
 import { panelIntervalMs, parseIntervalMs } from "../../../infra/grafana/src/time";
 
 export const DASHBOARD_DIR = fileURLToPath(
@@ -53,10 +57,15 @@ export interface Filters {
 
 export type Row = Record<string, unknown>;
 
-export function queriesOf(name: DashboardName): QueryItem[] {
+function dashboardJson(name: DashboardName): JsonObject {
   const file = loadDashboardFiles(DASHBOARD_DIR).find((f) => f.file === FILES[name]);
   if (!file?.json) throw new Error(`dashboard ${FILES[name]} not found or not valid JSON`);
-  return extractQueries(file.json).queries;
+  return file.json;
+}
+
+/** The queries that hold SQL. A panel that reads another panel (R-M2-01) has none: see `resolveQuery`. */
+export function queriesOf(name: DashboardName): QueryItem[] {
+  return extractQueries(dashboardJson(name)).queries;
 }
 
 /** The query with this label. Titles can repeat (Session has an "Actions" stat and an "Actions" table): `nth` picks one. */
@@ -65,6 +74,54 @@ export function queryOf(name: DashboardName, where: string, nth = 0): QueryItem 
   const item = found[nth];
   if (!item) throw new Error(`no query "${where}" (#${nth}) in ${name}`);
   return item;
+}
+
+export interface ResolvedQuery {
+  /** The query that is run: the panel's own, or the one of the panel it reads. */
+  item: QueryItem;
+  /** Set when the panel only shows columns of another panel's query: which columns it keeps. */
+  reader?: { title: string; columns: (all: string[]) => string[] };
+}
+
+/**
+ * What Grafana runs for `panel "Title", query A`. Since R-M2-01 most single-number panels have no SQL:
+ * they read panel 1 through the "-- Dashboard --" data source (`targets[0].panelId`) and show the
+ * columns that `options.reduceOptions.fields` matches against the DISPLAY name (after the panel's
+ * displayName overrides). This follows that chain, so a test sees the columns the panel shows.
+ */
+export function resolveQuery(name: DashboardName, where: string, nth = 0): ResolvedQuery {
+  const own = queriesOf(name).filter((q) => q.where === where)[nth];
+  if (own) return { item: own };
+  const title = /^panel "(.*)", query \w+$/.exec(where)?.[1];
+  const panel = collectPanels(dashboardJson(name)).find((p) => p.title === title)?.panel;
+  const target = panel ? asArray(panel.targets).filter(isObject)[0] : undefined;
+  const dataSource = isObject(target?.datasource) ? asString(target.datasource.uid) : undefined;
+  if (!panel || !target || dataSource !== DASHBOARD_DATASOURCE_UID) {
+    throw new Error(`no query "${where}" (#${nth}) in ${name}`);
+  }
+  const source = queriesOf(name).find((q) => q.panelId === target.panelId);
+  if (!source) {
+    throw new Error(`"${title}" reads panel ${String(target.panelId)}, which has no SQL`);
+  }
+  const options = isObject(panel.options) ? panel.options : {};
+  const reduce = isObject(options.reduceOptions) ? options.reduceOptions : {};
+  const fields = asString(reduce.fields);
+  const pattern = fields ? parseFieldPattern(fields) : undefined;
+  if (fields && !pattern) {
+    throw new Error(`"${title}": reduceOptions.fields "${fields}" is not a valid pattern`);
+  }
+  return {
+    item: source,
+    reader: {
+      title: title as string,
+      columns: (all) => {
+        if (!pattern) return all;
+        const regex = new RegExp(pattern.source, pattern.flags);
+        const display = displayNames(panel, all);
+        return all.filter((column) => regex.test(display.get(column) ?? column));
+      },
+    },
+  };
 }
 
 function state(
@@ -137,10 +194,15 @@ export function expandedSql(
 export class DashboardRunner {
   constructor(private readonly connection: ClickHouseConnection) {}
 
-  async rows(sql: string): Promise<Row[]> {
+  async rows(sql: string, keep?: (columns: string[]) => string[]): Promise<Row[]> {
     const result = await runQuery(this.connection, sql);
+    const columns = keep ? keep(result.columns) : result.columns;
     return result.rows.map((cells) =>
-      Object.fromEntries(result.columns.map((name, i) => [name, cells[i]])),
+      Object.fromEntries(
+        result.columns
+          .map((name, i) => [name, cells[i]] as const)
+          .filter(([name]) => columns.includes(name)),
+      ),
     );
   }
 
@@ -152,7 +214,13 @@ export class DashboardRunner {
     filters: Filters = {},
     nth = 0,
   ): Promise<Row[]> {
-    return this.rows(expandedSql(queryOf(name, where, nth), range, filters));
+    const { item, reader } = resolveQuery(name, where, nth);
+    const rows = await this.rows(expandedSql(item, range, filters), reader?.columns);
+    if (reader && rows.length > 0 && Object.keys(rows[0] as Row).length === 0) {
+      // the real panel would show "No data": fail loudly, with the panel name
+      throw new Error(`panel "${reader.title}" matches no column of the query it reads`);
+    }
+    return rows;
   }
 
   /** Milliseconds one query takes, rows included. */
@@ -162,7 +230,7 @@ export class DashboardRunner {
     range: Range,
     filters: Filters = {},
   ): Promise<{ ms: number; rows: number }> {
-    const sql = expandedSql(queryOf(name, where), range, filters);
+    const sql = expandedSql(resolveQuery(name, where).item, range, filters);
     const start = performance.now();
     const result = await runQuery(this.connection, sql);
     return { ms: performance.now() - start, rows: result.rows.length };

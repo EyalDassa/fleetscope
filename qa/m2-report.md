@@ -1,10 +1,97 @@
 # QA report: M2 Grafana dashboards
 
-Branch `m2-grafana-dashboards`, first QA pass. Environment: Windows 11, Git Bash, Node 22.17, Docker Desktop, ClickHouse 26.8.34.13 (the pinned image), Grafana 13.2.4 with ClickHouse plugin 4.23.2, Chrome (system install) driven by `playwright-core` 1.64.1, Perfetto `trace_processor` from the pip package `perfetto` in a scratch venv.
+Branch `m2-grafana-dashboards`: first QA pass (kept below) and the re-test of fix round 1 (first section). Environment: Windows 11, Git Bash, Node 22.17, Docker Desktop, ClickHouse 26.8.34.13 (the pinned image), Grafana 13.2.4 with ClickHouse plugin 4.23.2, Chrome (system install) driven by `playwright-core` 1.64.1, Perfetto `trace_processor` from the pip package `perfetto` in a scratch venv.
 
 Tested against the PR description, ADR 0003, `design/DESIGN.md` (the Grafana spec), `packages/db/README.md` ("Grafana data rules") and `infra/grafana/README.md`, not against what the code happens to do. `reviews/` was not read or touched.
 
-## Verdict, first pass: READY TO MERGE (no open blocker or major bug)
+## Re-test pass (fix round 1): verdict NOT READY, one open major (QA-M2-18)
+
+Every finding of the first pass that was marked fixed is **verified**, on the real thing wherever the bug was visible there: a fresh Grafana 13.2.4 pushed with `grafana:push` and pointed at the known fleet, read in Chrome (rendered text and the SQL that Grafana's frontend sent), the real Perfetto UI, `trace_processor`, and the live API. The fix round also **introduced one regression that no SQL check can see** (QA-M2-18, major). Its fix is one setting in five panels (verified in the same Grafana), so this is "not ready" only until that lands. Four new findings, all minor or nit.
+
+Final state of the checks: `pnpm lint && pnpm typecheck && pnpm test` green; `pnpm test:integration` green; `pnpm grafana:check` green (3 dashboards, 54 query runs, as `grafana_ro` by default). Unit tests per package: schema 339, demo-site 106, collector 139 (+2 expected fail, M1), fleet-runner 199 (19 skipped), db 99, grafana-tools 206 (+2 expected fail), api 266 (+1 expected fail). Integration: api 74, db 239 (+1 expected fail). `gh pr checks 5`: Lint/typecheck/unit, Integration, Fleet smoke and gitleaks pass; **GitGuardian and Vercel fail** (QA-M2-14 and the known Vercel project).
+
+### Status of every finding
+
+| ID | Sev | Status | How I checked it |
+|---|---|---|---|
+| QA-M2-01 | minor | **verified** | Fresh Grafana with the repo's `provisioning/` (now `updateIntervalSeconds: 15`) and a copy of `dashboards/`: an edited title was served **16 s** later, version 2, without a restart (the same edit at 10 was ignored for 3 minutes in pass 1). `pnpm grafana:reload` on the dev Grafana: "in sync" for all 3 files. The engineer's cause (at 10 s or less Grafana uses fsnotify, and a Docker Desktop bind mount sends no events) fits what I saw |
+| QA-M2-02 | minor | **verified** | Sessions columns are now Status, Session, Started, **Source**, Engine, Scenario, Duration, **Cause**, Time to browser, ...: Source (4th) and Cause (8th) are inside the 9 columns that fit at 1440 px with Grafana's menu docked |
+| QA-M2-03 | minor | **verified** | `grafana:check` without any Grafana user in the environment runs as `grafana_ro` ("read-only Grafana user, development default"); `--admin` says "ADMIN ... a query that the read-only user refuses would pass here"; a wrong user fails; a dashboard with a `SETTINGS` clause is reported (the run as the read-only user refuses it) |
+| QA-M2-04 | minor | **verified**, but see QA-M2-18 | Unknown session in the real Grafana: Status "Session not found", What happened has the long text, every other stat prints "—"; Duration no longer says "running". All 12 header panels return no row for an unknown id (test updated) |
+| QA-M2-05 | minor | **verified** | 12 hostile values (`\' OR 1=1 --`, `\\'`, `%27`, `%5C%27`, `%`, `%ZZ`, a NUL, an emoji, a 5,000 character string, `'; DROP TABLE ...`) on four Session detail panels and the `cause` box: always no rows, no error, and the real id still works. In Grafana itself the frontend sent `decodeURLComponent('%27%20OR%201%3D1%20--')` for `\' OR 1=1 --`: the quote arrives as `%27`. `it.fails` flipped |
+| QA-M2-06 | minor | **verified** | The p95 KPI, Actions per minute and By engine p95 now include the actions after `from` in the minute that contains it (p95 = 830 = interpolated 100, 200, 900), and leave out a 5,000 ms action from the minute before. A range starting on a minute gives the same value. `it.fails` flipped; the check was moved to panel 1 because the p95 KPI now lives there |
+| QA-M2-07 | minor | **verified** | `127.0.0.2`, `127.255.255.254`, `0.0.0.0`, `localhost.`, `LOCALHOST`, `db.localhost`, `[::]` and `[::ffff:127.0.0.1]` are refused for a remote Grafana (unit test and the CLI). `it.fails` flipped |
+| QA-M2-08 | minor | **verified** | Sort ranges are 1000 / 2000 / 3000 / 4000 and unique; issues and session sort after every network lane (unit test, 30 overlapping requests) and in the real Perfetto UI |
+| QA-M2-09 | minor | **verified** | Events before the start are clamped to 0 and counted in `metadata.before_session_start`; none is lost (the same skewed trace that made `trace_processor` drop 4 events now loads with no stats error, 5 slices and both counters intact; 300 overlapping requests give 10 threads instead of 304). `it.fails` flipped |
+| QA-M2-10 | nit | **verified** | The demo's 112-request page now has **6 network threads** (9 tracks in all), the note "81 of 112 requests not drawn", `metadata.network` and a **"network in flight"** counter (max 40). `trace_processor` loads it with no errors; in Perfetto the whole timeline, with CPU, JS heap, memory and the in-flight counter, fits one screen. Residual cosmetic nit: Perfetto still shows a thread's name plus its id, so the first lane reads "network 2" and the second "network 2 201". 72% of this page's requests are not drawn, which the note and the counter say |
+| QA-M2-11 | nit | **verified** | The data source line now says "updated (the password cannot be compared, so it is always sent again)"; with `FLEETSCOPE_API_URL` unset a push to a remote Grafana warns that the Perfetto links keep `http://localhost:4000`; a localhost API URL warns as before |
+| QA-M2-12 | nit | **verified** | R6 reads "Failed at 1.10 s: action #0 goto demo.test, selector_not_found (cause: captcha)"; R9 reads "Blocked at 1.04 s: captcha; action #0 goto demo.test failed: http_403". Seen in the real Grafana and in the tests |
+| QA-M2-13 | nit | **verified** | The README now matches the dashboards in the four places, each compared with the dashboard on the known fleet: `estimated-cost-total` against the Estimated cost KPI for a priced set, an unpriced session (NULL), and an empty range (0); `browser-hours-and-cost` against By engine (NULL for the engine with an unpriced session); `top-cause-per-engine` against By engine (a three-way tie gives "captcha ×1"); `fleet-in-use-now` against Active now, CPU in use and Memory in use (0.75 cores, 140 MiB, 2 containers). The session-facts copies are still the README's text, and `grafana:check` now fails a changed copy (I mutated one: reported) |
+| QA-M2-14 | minor | **won't fix in repo** | GitGuardian cannot be configured from the repository; Eyal marks the 5 incidents as false positives in the GitGuardian dashboard. Still red on the PR |
+| R-M2-01 (reviewer) | | **verified** | Overview panels 2 to 11 and Session's What happened and Est. cost read panel 1 through the Dashboard data source. All the numbers are asserted again through the chain (my harness follows `panelId` and picks the field by the display-name regex), and they match the hand-computed values on screen. The Overview now sends 7 queries instead of 17 per refresh |
+| R-M2-03 | | **verified** | The Sessions list is every session that ran in the range: R14 (started 3 minutes before it) is listed, R15 and R16 are not. The two tests updated; one nit follows (QA-M2-15) |
+| R-M2-05, R-M2-13 | | **verified** | `grafana:check` fails a changed session-facts copy; Session detail now runs 36 queries (empty and a real session id) and the text-box branches run |
+| R-M2-06 | | **verified** | `grafana_ro` reads `join_use_nulls = 0`, `aggregate_functions_null_for_empty = 0`, an unmatched LEFT JOIN row is `0` / `''`, `sum()` of nothing is 0, and neither setting can be changed from a panel (`SETTINGS` clause or per-request) |
+| Ingest labels (`f648a4a`) | | **verified** | Every label field (`session_id`, `agent_id`, `provider`, `scenario`, `region`, `engine_version`, `error_code`) answers **400** for 16 values outside the pattern (space, quotes, `;`, `%`, newline, NUL, DEL, non-ASCII, an emoji, 129 characters, `{x:String}`), the whole batch is refused and nothing is stored; 128 characters and every allowed symbol are accepted. The trace and perfetto routes answer 400 for an id outside the pattern, never call the database, and never echo it; an id with `/ : @ +` works when percent-encoded. Tests updated: `events.edge.test.ts` (a whitespace-only id is rejected), `ingest.abuse.integration.test.ts` (the fuzz only varies free text; labels get 400) |
+
+### New findings of this pass
+
+#### QA-M2-18 (major, dashboard, a regression of the fix round): Session detail prints "—" where it must print "Not available" or "running"
+
+- **Steps.** Open Session detail for a session that has no CPU or memory samples, whose engine reports no JS heap, that is still running, or whose provider has no price. In the pass I used the known fleet's R13 (no samples), R12 (null heap), R8 (running) and S3 (no price), in a fresh Grafana 13.2.4.
+- **Expected** (DESIGN section 6, CLAUDE.md "Data honesty"): Peak CPU, Peak memory, Peak JS heap and Est. cost print **Not available**; Duration of a running session prints **running**. Before the fix round they did.
+- **Actual.** All five print **—**: R13 `Peak CPU=— Peak memory=— Peak JS heap=—`; R8 `Duration=—`; S3 `Est. cost=—`; R12 `Peak JS heap=—`. A metric the engine cannot report (lightpanda's JS heap) now looks like a ratio with no denominator.
+- **Cause.** The queries (QA-M2-04's fix) return `nan` for "no value" and the panels map `nan` to the text, but the stat reducer is `lastNotNull`, which skips the NaN. The stat then has no value and prints its No value text ("—", which unknown-session needs). A `null` mapping works with `lastNotNull` (the Overview's Estimated cost prints "Not available" for a NULL); `nan` does not.
+- **Fix, verified.** `options.reduceOptions.calcs = ["last"]` on the five panels (Duration, Peak CPU, Peak memory, Peak JS heap, Est. cost): the same sessions then print `running`, `Not available` ×3 and `Not available`, and the unknown session still prints "—". (Or return NULL instead of `nan` and map `null`.)
+- **Why nothing caught it.** `grafana:check` and every SQL test see the right data; only rendering shows it. Test: `it.fails` in `infra/grafana/src/mappings.qa.test.ts` (a stat that maps NaN to a text can reach the mapping). File: `infra/grafana/dashboards/fleetscope-session.json`.
+
+#### QA-M2-17 (minor, dashboard): a `+` in a session id breaks the Session links
+
+- **Steps.** Ingest a session `plain+plus` (valid: `+` is in the label pattern). Open Sessions, click its row.
+- **Expected.** Session detail for `plain+plus`.
+- **Actual.** The link is `var-session=plain+plus`; in a query string `+` is a space, so the page opens for "plain plus" and says "Session not found" (the same for `fleet/run:1@host+a-b_c.d`). The Perfetto link built from that variable is wrong too.
+- **Fix, verified.** In the Session data links (Sessions table, Recent failures) write `${__data.fields.session_id:percentencode}`: the href becomes `var-session=plain%2Bplus` and the page shows "Completed, no issues". Test: `it.fails` in `links.qa.test.ts`. Real ids are UUIDs, hence minor; the other fix is to drop `+` from `SAFE_LABEL_PATTERN`.
+
+#### QA-M2-15 (nit, dashboard): the agent and scenario boxes do not offer the values of sessions that started before the range
+
+The Sessions list now holds every session that ran in the range, but its agent and scenario variable queries still use `$__timeFilter(started_at)`. In a range where only R14 (started 3 minutes earlier) ran, the table lists it and the boxes offer nothing, so it cannot be picked by its own scenario. `it.fails` in `dashboards.numbers.integration.test.ts`. File: `fleetscope-sessions.json` (the two variable queries: use the same overlap condition).
+
+#### QA-M2-16 (nit, schema): `.` and `..` are valid session ids that no URL can reach
+
+`SAFE_LABEL_PATTERN` allows them, but a browser resolves `/v1/sessions/../perfetto` and `%2E%2E` to `/v1/perfetto` before sending it. Harmless (404), but such a session can never be opened. Reject `.` and `..` (or ids made only of dots) in `SessionId`. `it.fails` in `apps/api/src/routes/v1.qa.test.ts`.
+
+### Performance after R-M2-01 (10,000 sessions, last hour, SQL as the read-only user)
+
+| Query | Before (ms) | Now (ms) |
+|---|---|---|
+| Overview panel 1 (verdict plus the 10 KPIs; was 11 separate queries of 14 to 139 ms each) | 134 + 110 + 109 + 19 + 117 + 139 + 18 + 20 + 20 + 115 + 120 | **182** |
+| By engine | 452 | **212** |
+| Sessions table (1,000 rows, now every session that ran) | 275 | 168 |
+| Recent failures, Top failure causes | 142, 135 | 127, 125 |
+| Error rate, Active sessions, Actions per minute | 120, 20, 14 | 115, 17, 12 |
+
+### Tests changed in this pass
+
+- `packages/db/fixtures/dashboards.ts`: the harness follows `panelId` to the source panel and selects its fields by the display-name regex (`resolveQuery`), so the 22 lookup failures are gone and the numbers are asserted again through the chain.
+- `dashboards.numbers.integration.test.ts` (42 tests): the Sessions list is the overlap (R14 listed), the new sentences, an unpriced session's cost, three more README comparisons, the README `fleet-in-use-now` against the KPIs, and QA-M2-15.
+- `dashboards.edge.integration.test.ts` (17): the unknown-session panels, the hostile text (flipped, 12 values), the range edge (flipped, three panels, minute boundary).
+- `grafana-user.m2.integration.test.ts` (7): the pinned settings.
+- `infra/grafana/src/push.qa.test.ts`: the loopback spellings (flipped, 8 hosts). `links.qa.test.ts`: the percent-encoded Perfetto link and QA-M2-17. New `mappings.qa.test.ts`: QA-M2-18.
+- `apps/api/src/trace/build-trace.qa.test.ts`: the cap, the note and the in-flight counter, unique sort indexes, clamped early events (all three `it.fails` flipped). New `apps/api/src/routes/v1.qa.test.ts`: 400 for bad ids, ids with `/ : @ +`, QA-M2-16.
+- `packages/schema/src/events.edge.test.ts` and `apps/api/src/ingest.abuse.integration.test.ts`: as you listed (and 16 bad values, field by field, plus the accepted edge, over HTTP).
+- **Open `it.fails` left: 4, all genuinely open** (QA-M2-15, -16, -17, -18). The collector's 2 older `it.fails` (M1, QA-M1-03/04 areas) are not part of M2.
+
+### Cleanup
+
+Both throwaway Grafana containers, the render database and its user are removed. The dev Grafana (reloaded with `pnpm grafana:reload`), ClickHouse and the API are healthy. The `fleetscope_test_*` leftovers I listed in pass 1 are gone from ClickHouse.
+
+---
+
+# Pass 1 (kept for the record; statuses are in the table above)
+
+
+## Verdict, first pass (superseded by the re-test above): was READY TO MERGE
+
 
 The numbers are right. Every number I computed by hand matches what the dashboard SQL returns, and what the real Grafana (13.2.4 and the real ClickHouse plugin) prints on screen. The read-only user holds. The trace loads in Perfetto's `trace_processor` and in the Perfetto UI in a real Chrome. `grafana:push` is idempotent and its safety rules work. There are 13 findings, all minor or nit, none blocks the merge. Four deserve a decision before the demo:
 
@@ -39,7 +126,7 @@ Now it throws away 2 warm-up chunks, uses 36 chunks of 10,000 events, and assert
 
 The limit 8 is about 4× above the good code and 2.5× below the bug. A noisy neighbour would have to slow a quarter of all chunks to fail it. Run 20 times in a row: 20/20 passed. Run 18 times with 6 copies in parallel on one machine (CPU contention): 18/18 passed. `RecentIds` exposes nothing countable, so counting operations was not an option without product changes. Committed alone as `abcd69e` (`test(api): make the QA-M1-07 scale test robust on shared runners`), not pushed.
 
-## Tests added
+## Tests added (pass 1; the counts after the re-test are in "Tests changed in this pass")
 
 All files are mine; no product code, dashboard JSON or existing test was changed. The integration tests run against real ClickHouse as the read-only user, with the SQL taken **from the dashboard JSON** (expanded by `infra/grafana/src/interpolate.ts` and `macros.ts`, the same code `grafana:check` uses), not from the README snippets that the backend's test already covers.
 
@@ -245,7 +332,7 @@ Static (`links.qa.test.ts`, 6 tests): 21 links to dashboards, all point at exist
 ## Not tested
 
 - Grafana Cloud, ClickHouse Cloud and Grafana Assistant (B5, needs Eyal's accounts).
-- The exact `singlequote` escaping in a real browser (QA-M2-05 used the check's implementation of it).
+- (Pass 1 only: the `singlequote` escaping in a real browser. Done in the re-test: Grafana's frontend sends `percentencode`d text.)
 - A real Ctrl+C fleet run (the interrupted rule is covered with data: R7 in the tests, the 100 sessions of the 10k run).
 - 10,000 sessions through the plugin and the browser (the SQL timings are over HTTP; the dev database through Grafana has 54 sessions).
 - Memory-heavy or runaway queries on the shared ClickHouse (I did not run any, on purpose).
@@ -254,7 +341,7 @@ Static (`links.qa.test.ts`, 6 tests): 21 links to dashboards, all point at exist
 - Duplicate `event_id`s at dashboard level (an M1 ingest concern, tested there).
 - `pnpm grafana:push` against the local Grafana that has provisioned dashboards.
 
-## Run log (end of the pass)
+## Run log (end of pass 1; the re-test run log is in the first section)
 
 - `pnpm lint && pnpm typecheck && pnpm test`: green. Per package: schema 135, demo-site 106, collector 129 (+2 expected fail), fleet-runner 190 (19 skipped), db 99, **grafana-tools 125 (+1 expected fail, 15 new)**, api 231 (+3 expected fail, 4 new).
 - `pnpm test:integration`: green. api 71, db 216 (+2 expected fail), including my 60 new integration tests.

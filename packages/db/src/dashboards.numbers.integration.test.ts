@@ -116,7 +116,9 @@ describe("Overview: verdict, outcomes, KPIs (source = real)", () => {
       num((await one("overview", 'panel "Success rate ↗", query A', REAL)).success_rate),
     ).toBeCloseTo(50, 9);
     // started in range: R1-R13 = 13 (R14 started before, R15 after, R16 before)
-    expect(num((await one("overview", 'panel "Sessions ↗", query A', REAL)).sessions)).toBe(13);
+    expect(num((await one("overview", 'panel "Sessions ↗", query A', REAL)).session_count)).toBe(
+      13,
+    );
     expect(num((await one("overview", 'panel "Interrupted ↗", query A', REAL)).interrupted)).toBe(
       1,
     );
@@ -128,7 +130,7 @@ describe("Overview: verdict, outcomes, KPIs (source = real)", () => {
     const verdict = await one("overview", 'panel "Fleet verdict ↗", query A', REAL, onlyEdge);
     expect([num(verdict.ended), verdict.verdict]).toEqual([1, "failed"]);
     expect(
-      num((await one("overview", 'panel "Sessions ↗", query A', REAL, onlyEdge)).sessions),
+      num((await one("overview", 'panel "Sessions ↗", query A', REAL, onlyEdge)).session_count),
     ).toBe(0);
     expect(
       num(
@@ -338,7 +340,7 @@ describe("Overview: By engine, Recent failures, Top failure causes", () => {
     expect(num(l.cpu_pct)).toBeCloseTo(10, 6);
     expect(num(l.avg_peak_mib)).toBeCloseTo(90, 6);
     expect(num(l.estimated_cost_usd)).toBeCloseTo(cost(129_200), 9);
-    expect(String(l.top_cause)).toMatch(/^(captcha|crashed|timeout) ×1$/);
+    expect(l.top_cause).toBe("captcha ×1"); // a three-way tie: the first name alphabetically (README)
 
     const h = by["chrome-headless-shell"] as Row;
     expect(num(h.success_rate)).toBe(100);
@@ -456,10 +458,27 @@ describe("Sessions dashboard", () => {
   const SESSIONS = 'panel "Sessions ↗", query A';
   const ids = (rows: Row[]) => col(rows, "session_id").sort();
 
-  it("lists the 13 real sessions that started in range with their display status", async () => {
+  it("lists every real session that ran in the range (R-M2-03), with its display status", async () => {
     const rows = await dash.run("sessions", SESSIONS, RANGE, REAL);
+    // R1-R13 started in the range; R14 started 3 minutes BEFORE it and ended inside; R15 (after) and
+    // R16 (ended before) are not listed
     expect(ids(rows)).toEqual(
-      [R5_ID, "R1", "R10", "R11", "R12", "R13", "R2", "R3", "R4", "R6", "R7", "R8", "R9"].sort(),
+      [
+        R5_ID,
+        "R1",
+        "R10",
+        "R11",
+        "R12",
+        "R13",
+        "R14",
+        "R2",
+        "R3",
+        "R4",
+        "R6",
+        "R7",
+        "R8",
+        "R9",
+      ].sort(),
     );
     const status = Object.fromEntries(rows.map((r) => [r.session_id as string, r.status]));
     expect(status).toMatchObject({
@@ -476,6 +495,7 @@ describe("Sessions dashboard", () => {
       R11: "failed",
       R12: "healthy",
       R13: "healthy",
+      R14: "failed",
     });
     // newest first
     expect(col(rows, "started")[0]).toBe(toClickHouse(m(30)).concat(".000"));
@@ -515,7 +535,7 @@ describe("Sessions dashboard", () => {
   it("the status, engine, scenario and cause filters narrow the table", async () => {
     expect(
       ids(await dash.run("sessions", SESSIONS, RANGE, { ...REAL, status: ["failed", "blocked"] })),
-    ).toEqual([R5_ID, "R10", "R11", "R6", "R9"].sort());
+    ).toEqual([R5_ID, "R10", "R11", "R14", "R6", "R9"].sort());
     expect(
       ids(await dash.run("sessions", SESSIONS, RANGE, { ...REAL, status: ["running"] })),
     ).toEqual(["R8"]);
@@ -533,7 +553,7 @@ describe("Sessions dashboard", () => {
     );
     // all sources: sim rows are labelled
     const all = await dash.run("sessions", SESSIONS, RANGE);
-    expect(all).toHaveLength(16);
+    expect(all).toHaveLength(17); // 14 real + 3 sim
     expect(
       all
         .filter((r) => r.source === "sim")
@@ -549,6 +569,21 @@ describe("Sessions dashboard", () => {
     expect(col(await dash.run("sessions", 'variable "agent"', RANGE), "agent_id")).toEqual([
       "qa-agent",
     ]);
+  });
+});
+
+describe("Sessions dashboard: the filter boxes and the list", () => {
+  // QA-M2-15 (nit, open): the Sessions list holds every session that RAN in the range (R-M2-03), but the
+  // agent and scenario boxes offer only the values of sessions that STARTED in it. A session that
+  // started before the range cannot be picked by its own scenario or agent.
+  it.fails("the agent and scenario boxes offer the values of every session the list shows", async () => {
+    const edge: Range = { from: m(1), to: m(3) }; // only R14 (started at -3 min, ended at +2 min) ran here
+    const listed = await dash.run("sessions", 'panel "Sessions ↗", query A', edge, REAL);
+    expect(listed.map((r) => r.session_id)).toEqual(["R14"]);
+    const scenarios = col(await dash.run("sessions", 'variable "scenario"', edge), "scenario");
+    const agents = col(await dash.run("sessions", 'variable "agent"', edge), "agent_id");
+    expect(scenarios).toContain(listed[0]?.scenario);
+    expect(agents).toContain(listed[0]?.agent);
   });
 });
 
@@ -578,17 +613,22 @@ describe("Session detail", () => {
     expect(await what(R5_ID)).toBe(
       "Failed at 1.60 s: action #1 click button.buy, selector_not_found",
     );
-    expect(await what("R9")).toBe("Blocked at 1.04 s: captcha");
+    // blocked by an issue (captcha) after an action failed with another code (http_403): both are named
+    expect(await what("R9")).toBe(
+      "Blocked at 1.04 s: captcha; action #0 goto demo.test failed: http_403",
+    );
     expect(await what("R10")).toBe("Failed at 1.06 s: action #0 goto demo.test, timeout");
     expect(await what("R11")).toBe("Failed: oom");
     expect(await what("R7")).toBe("Interrupted by the runner (not counted as a failure)");
     expect(await what("R8")).toBe("Running");
   });
 
-  it("What happened names the failed action even when an issue gives the session another cause (R6)", async () => {
-    // The tables say the cause is "captcha" (the issue wins); the sentence says selector_not_found.
-    // Recorded as an inconsistency in the report (QA-M2-NN), not asserted as a rule.
-    expect(await what("R6")).toBe("Failed at 1.10 s: action #0 goto demo.test, selector_not_found");
+  it("What happened gives the cause of the tables when it differs from the failed action (QA-M2-12)", async () => {
+    // The tables say the cause is "captcha" (the issue wins over the failed action); the sentence
+    // names the failed action and, since the two differ, the cause as well.
+    expect(await what("R6")).toBe(
+      "Failed at 1.10 s: action #0 goto demo.test, selector_not_found (cause: captcha)",
+    );
     const table = await dash.run("sessions", 'panel "Sessions ↗", query A', RANGE, REAL);
     expect(table.find((r) => r.session_id === "R6")?.cause).toBe("captcha: boom");
   });
@@ -617,6 +657,11 @@ describe("Session detail", () => {
     expect(
       num((await one("session", 'panel "Est. cost", query A', s)).estimated_cost_usd),
     ).toBeCloseTo(cost(61_500), 12);
+  });
+
+  it("Est. cost of a session whose provider has no price is NULL (nan printed as Not available), never 0", async () => {
+    const row = await one("session", 'panel "Est. cost", query A', { session: "S3" });
+    expect(row.estimated_cost_usd).toBeNull();
   });
 
   it("a metric the engine does not report is NULL, never 0", async () => {
@@ -762,6 +807,67 @@ describe("the dashboards against the README", () => {
     );
   });
 
+  /** Runs a README snippet (with session-facts pasted in) the way a panel would. */
+  async function readmeRows(name: string, range: Range, filters = {}): Promise<Row[]> {
+    const readme = await snippets();
+    const sql = (readme.get(name) as string).replace(
+      "/* session-facts */",
+      readme.get("session-facts") as string,
+    );
+    return dash.rows(
+      expandedSql({ sql, maxDataPoints: undefined, minInterval: undefined }, range, filters),
+    );
+  }
+
+  it("estimated-cost-total (README) and the Estimated cost KPI agree: a price, an unpriced session (NULL), nothing at all (0) (QA-M2-13)", async () => {
+    const empty: Range = { from: m(100), to: m(110) };
+    const cases: Array<[string, Range, Parameters<typeof one>[2]]> = [
+      ["priced only", RANGE, { ...REAL, engines: ["lightpanda", "chrome-headless-shell"] }],
+      ["one session has no price", RANGE, { source: "sim", engines: ["chromium"] }],
+      ["sim lightpanda only", RANGE, { source: "sim", engines: ["lightpanda"] }],
+      ["nothing ran", empty, {}],
+    ];
+    const seen: Array<number | null> = [];
+    for (const [label, range, filters] of cases) {
+      const [readme] = await readmeRows("estimated-cost-total", range, filters);
+      const kpi = await one("overview", 'panel "Estimated cost ↗", query A', filters, range);
+      const expected = num(readme?.estimated_cost_usd);
+      if (expected === null) expect(num(kpi.estimated_cost_usd), label).toBeNull();
+      else expect(num(kpi.estimated_cost_usd), label).toBeCloseTo(expected, 12);
+      seen.push(num(kpi.estimated_cost_usd));
+    }
+    expect(seen[0]).toBeCloseTo(cost(149_950), 9);
+    expect(seen[1]).toBeNull();
+    expect(seen[2]).toBeCloseTo(cost(5000), 12);
+    expect(seen[3]).toBe(0);
+  });
+
+  it("browser-hours-and-cost (README) and By engine give the same cost per engine, NULL where a session is unpriced", async () => {
+    const filters = { source: "sim" as const };
+    const readme = await readmeRows("browser-hours-and-cost", RANGE, filters);
+    const byEngine = await dash.run("overview", 'panel "By engine ↗", query A', RANGE, filters);
+    expect(readme.map((r) => r.engine)).toEqual(byEngine.map((r) => r.engine));
+    for (const r of readme) {
+      const d = byEngine.find((x) => x.engine === r.engine) as Row;
+      const want = num(r.estimated_cost_usd);
+      if (want === null) expect(num(d.estimated_cost_usd), String(r.engine)).toBeNull();
+      else expect(num(d.estimated_cost_usd), String(r.engine)).toBeCloseTo(want, 12);
+    }
+    expect(byEngine.find((r) => r.engine === "chromium")?.estimated_cost_usd).toBeNull(); // S3 has no price
+  });
+
+  it("top-cause-per-engine (README) and By engine pick the same cause, and a tie goes to the first name alphabetically", async () => {
+    const readme = await readmeRows("top-cause-per-engine", RANGE, REAL);
+    const byEngine = await dash.run("overview", 'panel "By engine ↗", query A', RANGE, REAL);
+    for (const r of readme) {
+      const d = byEngine.find((x) => x.engine === r.engine) as Row;
+      expect(d.top_cause, String(r.engine)).toBe(`${r.top_cause} ×${num(r.top_n)}`);
+    }
+    // lightpanda: captcha, crashed and timeout once each -> "captcha" (a before c before t)
+    expect(byEngine.find((r) => r.engine === "lightpanda")?.top_cause).toBe("captcha ×1");
+    expect(byEngine.find((r) => r.engine === "chromium")?.top_cause).toBe("selector_not_found ×2");
+  });
+
   it("every session-facts copy in the Overview and Sessions dashboards is the README's text", async () => {
     const readme = await snippets();
     const norm = (s: string) => s.replace(/\s+/g, " ").trim();
@@ -830,15 +936,26 @@ describe("Overview: right now (Active now, CPU, Memory)", () => {
     const kpi = async (title: string, f = {}) =>
       one("overview", `panel "${title} ↗", query A`, f, range);
 
-    expect(num((await kpi("Active now", REAL)).active_sessions)).toBe(2); // L1, L2
-    expect(num((await kpi("Active now")).active_sessions)).toBe(3); // + L5 (sim)
-    expect(
-      num((await kpi("Active now", { ...REAL, engines: ["lightpanda"] })).active_sessions),
-    ).toBe(1);
+    expect(num((await kpi("Active now", REAL)).active_now)).toBe(2); // L1, L2
+    expect(num((await kpi("Active now")).active_now)).toBe(3); // + L5 (sim)
+    expect(num((await kpi("Active now", { ...REAL, engines: ["lightpanda"] })).active_now)).toBe(1);
 
     expect(num((await kpi("CPU in use", REAL)).cpu_cores)).toBeCloseTo(0.75, 6); // (50 + 25) / 100, not (150 + 50 + 25) / 100
     expect(num((await kpi("Memory in use", REAL)).memory_mib)).toBeCloseTo(140, 6);
     expect(num((await kpi("CPU in use")).cpu_cores)).toBeCloseTo(0.85, 6);
+
+    // the README snippet gives the same numbers as the three KPIs (it uses the same 30 s window)
+    const readme = (await readFile(new URL("../README.md", import.meta.url), "utf8")).replace(
+      /\r\n/g,
+      "\n",
+    );
+    const snippet = /```sql name=fleet-in-use-now\n([\s\S]*?)\n```/.exec(readme)?.[1] as string;
+    const [inUse] = await dash.rows(
+      expandedSql({ sql: snippet, maxDataPoints: undefined, minInterval: undefined }, range, REAL),
+    );
+    expect(num(inUse?.cores_in_use)).toBeCloseTo(0.75, 6);
+    expect(num(inUse?.memory_mib_in_use)).toBeCloseTo(140, 6);
+    expect(num(inUse?.containers)).toBe(2);
 
     const rows = await dash.run("overview", 'panel "By engine ↗", query A', range, REAL);
     const active = Object.fromEntries(rows.map((r) => [r.engine as string, num(r.active_now)]));
@@ -863,7 +980,7 @@ describe("Overview: right now (Active now, CPU, Memory)", () => {
             { engines: ["chrome-headless-shell"] },
             quiet,
           )
-        ).active_sessions,
+        ).active_now,
       ),
     ).toBe(0);
   });

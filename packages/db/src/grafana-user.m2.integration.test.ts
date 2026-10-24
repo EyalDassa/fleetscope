@@ -138,6 +138,25 @@ describe("the read-only Grafana user", () => {
     await expect(attempt("SELECT * FROM schema_migrations")).resolves.toBeTypeOf("string"); // same database: allowed, only file names and checksums
   });
 
+  it("has join_use_nulls and aggregate_functions_null_for_empty pinned to 0, and no panel can change them (R-M2-06)", async () => {
+    const pinned = await attempt(
+      "SELECT getSetting('join_use_nulls') AS j, getSetting('aggregate_functions_null_for_empty') AS a, getSetting('readonly') AS r",
+    );
+    expect(JSON.parse(pinned)).toEqual({ j: false, a: false, r: 1 });
+    // the two things the dashboards rely on: an unmatched LEFT JOIN row is 0 / '' and sum() of nothing is 0
+    const joined = await attempt(
+      "SELECT b.n AS n, b.s AS s FROM (SELECT 1 AS k) AS a LEFT JOIN (SELECT 2 AS k, toUInt8(7) AS n, 'x' AS s) AS b ON a.k = b.k",
+    );
+    expect(JSON.parse(joined)).toEqual({ n: 0, s: "" });
+    expect(JSON.parse(await attempt("SELECT sum(number) AS s FROM numbers(0)"))).toEqual({ s: 0 });
+    for (const setting of ["join_use_nulls", "aggregate_functions_null_for_empty"]) {
+      await expect(attempt(`SELECT 1 SETTINGS ${setting} = 1`), setting).rejects.toThrow(
+        /readonly/i,
+      );
+      await expect(attempt("SELECT 1", { [setting]: 1 }), setting).rejects.toThrow(/readonly/i);
+    }
+  });
+
   it("cannot reach out of the server or read its files (url, file, remote, s3)", async () => {
     for (const sql of [
       "SELECT * FROM url('http://127.0.0.1:8123/ping', 'LineAsString')",

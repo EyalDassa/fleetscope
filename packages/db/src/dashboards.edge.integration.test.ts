@@ -12,6 +12,7 @@ import {
   type Range,
   type Row,
   type SessionSpec,
+  toClickHouse,
 } from "../fixtures/dashboards";
 import type { ClickHouseClient } from "./client";
 import { ensureGrafanaUser } from "./grafana-user";
@@ -118,9 +119,9 @@ describe("an empty database", () => {
     expect((await run("Simulated share ↗"))[0]?.simulated_share).toBeNull();
     expect((await run("Success rate ↗"))[0]?.success_rate).toBeNull();
     expect((await run("p95 action latency ↗"))[0]?.p95_ms).toBeNull();
-    expect(num((await run("Sessions ↗"))[0]?.sessions)).toBe(0);
+    expect(num((await run("Sessions ↗"))[0]?.session_count)).toBe(0);
     expect(num((await run("Interrupted ↗"))[0]?.interrupted)).toBe(0);
-    expect(num((await run("Active now ↗"))[0]?.active_sessions)).toBe(0);
+    expect(num((await run("Active now ↗"))[0]?.active_now)).toBe(0);
     expect(num((await run("Estimated cost ↗"))[0]?.estimated_cost_usd)).toBe(0);
     for (const chart of [
       "Error rate by engine ↗",
@@ -134,7 +135,7 @@ describe("an empty database", () => {
     }
   });
 
-  it("Session detail for an id that does not exist: no session rows; the aggregate stats still answer", async () => {
+  it("Session detail for an id that does not exist: no row in any panel, so each shows its own No value text (QA-M2-04)", async () => {
     const detail = (title: string, nth = 0) =>
       h.dash.run(
         "session",
@@ -149,15 +150,16 @@ describe("an empty database", () => {
       "Engine",
       "Source",
       "Duration",
+      "Actions",
       "Time to browser",
+      "Peak CPU",
+      "Peak memory",
+      "Peak JS heap",
+      "Requests",
       "Est. cost",
     ]) {
       expect(await detail(title), title).toEqual([]);
     }
-    // These always return one row, so the panel cannot show its "No value" text (see QA-M2-04).
-    expect((await detail("Actions"))[0]).toEqual({ actions: "0 ok · 0 failed" });
-    expect((await detail("Peak CPU"))[0]).toEqual({ peak: null });
-    expect(num((await detail("Requests"))[0]?.requests)).toBe(0);
     for (const [title, nth] of [
       ["Actions", 1],
       ["Issues", 0],
@@ -235,7 +237,7 @@ describe("one session", () => {
   it("a range that ends before the session started shows nothing for it", async () => {
     const before: Range = { from: start - 30 * MIN, to: start - 10 * MIN };
     expect(
-      num((await h.dash.run("overview", 'panel "Sessions ↗", query A', before))[0]?.sessions),
+      num((await h.dash.run("overview", 'panel "Sessions ↗", query A', before))[0]?.session_count),
     ).toBe(0);
     expect(
       (await h.dash.run("overview", 'panel "Fleet verdict ↗", query A', before))[0]?.verdict,
@@ -256,13 +258,50 @@ describe("one session", () => {
     }
   });
 
-  // QA-M2-05: the "singlequote" format escapes the quote with a backslash and not the backslash, and
-  // ClickHouse reads a backslash as an escape, so the text `\' OR 1=1 --` leaves the string literal.
-  it.fails("hostile text in the session box cannot leave the string (backslash then quote)", async () => {
-    const rows = await h.dash.run("session", 'panel "Status", query A', range(), {
-      session: "\\' OR 1=1 --",
+  // QA-M2-05 (fixed): `${session:singlequote}` escaped the quote but not the backslash, and ClickHouse reads a
+  // backslash as an escape, so `\' OR 1=1 --` left the string literal. The box now uses
+  // decodeURLComponent('${session:percentencode}'), which has no quote or backslash to escape.
+  it("hostile text in the session box cannot leave the string (backslash then quote, and more)", async () => {
+    for (const session of [
+      "\\' OR 1=1 --",
+      "\\\\' OR 1=1 --",
+      "\\",
+      "'",
+      "%27 OR 1=1 --",
+      "%5C%27 OR 1=1 --",
+      "%",
+      "%ZZ",
+      "only-one'; DROP TABLE sessions; --",
+      "only-one\u0000",
+      "\u{1F600} \u00e9",
+      "a".repeat(5000),
+    ]) {
+      for (const [panel, nth] of [
+        ["Status", 0],
+        ["Engine", 0],
+        ["Actions", 1],
+        ["Network", 0],
+      ] as const) {
+        const rows = await h.dash.run(
+          "session",
+          `panel "${panel}", query A`,
+          range(),
+          { session },
+          nth,
+        );
+        expect(rows, `${panel}: ${session.slice(0, 20)}`).toEqual([]);
+      }
+    }
+    // the same text in the cause box of the Sessions dashboard matches nothing and breaks nothing
+    for (const cause of ["\\' OR 1=1 --", "'", "%27"]) {
+      const rows = await h.dash.run("sessions", 'panel "Sessions ↗", query A', range(), { cause });
+      expect(rows, cause).toEqual([]);
+    }
+    // and the real id still works through the same path
+    const real = await h.dash.run("session", 'panel "Status", query A', range(), {
+      session: "only-one",
     });
-    expect(rows).toEqual([]);
+    expect(real[0]?.display_status).toBe("healthy");
   });
 });
 
@@ -361,6 +400,15 @@ describe("the rollup at the edge of the time range", () => {
             [900, null],
           ],
         }),
+        // one slow action two minutes before `from`: it must stay OUT of the range
+        spec({
+          id: "before",
+          engine: "chromium",
+          status: "success",
+          startedAt: minute - 90_000,
+          durationMs: 5000,
+          actions: [[5000, null]],
+        }),
       ],
     );
   });
@@ -368,17 +416,35 @@ describe("the rollup at the edge of the time range", () => {
     await h.close();
   });
 
-  // QA-M2-06: Grafana ranges such as "Last 1 hour" almost never start on a minute, and `$__timeFilter(minute)`
+  // QA-M2-06 (fixed, R-M2-01 moved the KPI into panel 1): Grafana ranges such as "Last 1 hour" almost never start on a minute, and `$__timeFilter(minute)`
   // drops the whole minute that contains `from`, so the actions between `from` and the next minute vanish
   // from p95 / actions per minute although the session table (exact) still shows them.
-  it.fails("the p95 KPI counts actions that happened after `from`, in the minute that contains `from`", async () => {
+  it("the p95 KPI and the actions per minute count actions that happened after `from`, in the minute that contains `from`", async () => {
     const range: Range = { from: minute + 30_000, to: minute + 10 * MIN };
     const raw = await h.dash.rows(
       `SELECT count() AS n FROM actions WHERE ts >= fromUnixTimestamp64Milli(${range.from}) AND ts <= fromUnixTimestamp64Milli(${range.to})`,
     );
     expect(num(raw[0]?.n)).toBe(3);
     const kpi = await h.dash.run("overview", 'panel "p95 action latency ↗", query A', range);
-    expect(kpi[0]?.p95_ms).not.toBeNull();
+    // 100, 200, 900: position 1.9 -> 200 + 0.9 * 700 = 830. The 5000 ms action of the minute before is out.
+    expect(num(kpi[0]?.p95_ms)).toBeCloseTo(830, 6);
+    const chart = await h.dash.run(
+      "overview",
+      'panel "Actions per minute by engine ↗", query A',
+      range,
+    );
+    expect(chart.map((r) => [r.time, num(r.actions_per_min)])).toEqual([
+      [toClickHouse(minute), 3], // the minute that contains `from`, whole
+    ]);
+    const byEngine = await h.dash.run("overview", 'panel "By engine ↗", query A', range);
+    expect(byEngine.map((r) => r.engine)).toEqual(["chromium"]);
+    expect(num(byEngine[0]?.p95_ms)).toBeCloseTo(830, 6);
+  });
+
+  it("a range that starts on a minute boundary gives the same answer", async () => {
+    const range: Range = { from: minute, to: minute + 10 * MIN };
+    const kpi = await h.dash.run("overview", 'panel "p95 action latency ↗", query A', range);
+    expect(num(kpi[0]?.p95_ms)).toBeCloseTo(830, 6);
   });
 });
 
@@ -453,9 +519,9 @@ describe("10,000 sessions", () => {
     expect(
       [outcomes?.healthy, outcomes?.degraded, outcomes?.failed, outcomes?.blocked].map(num),
     ).toEqual([9200, 0, 500, 200]);
-    expect(num((await h.dash.run("overview", 'panel "Sessions ↗", query A', r))[0]?.sessions)).toBe(
-      10_000,
-    );
+    expect(
+      num((await h.dash.run("overview", 'panel "Sessions ↗", query A', r))[0]?.session_count),
+    ).toBe(10_000);
     expect(
       num((await h.dash.run("overview", 'panel "Interrupted ↗", query A', r))[0]?.interrupted),
     ).toBe(100);

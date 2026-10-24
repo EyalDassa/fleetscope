@@ -1,6 +1,6 @@
 import type { SessionTimeline } from "@fleetscope/db";
 import { describe, expect, it } from "vitest";
-import { buildTrace } from "./build-trace";
+import { buildTrace, MAX_NETWORK_LANES } from "./build-trace";
 
 /**
  * QA M2: the trace of a heavy page and of events stamped before the session started. Both were also
@@ -36,7 +36,7 @@ const timeline = (extra: Partial<SessionTimeline>): SessionTimeline => ({
   ...extra,
 });
 
-describe("a heavy page", () => {
+describe("a heavy page (QA-M2-08 and QA-M2-10, fixed)", () => {
   // 30 requests in flight at once, like the demo site's /heavy page (112 sampled requests used 40 lanes).
   const requests = Array.from({ length: 30 }, (_, i) => ({
     ts_ms: START + 5000 + i,
@@ -50,45 +50,64 @@ describe("a heavy page", () => {
     timeline({
       requests,
       issues: [{ ts_ms: START + 2000, kind: "captcha", message: "x" }],
+      samples: [
+        { ts_ms: START + 1000, origin: "container", cpu_pct: 5, mem_mb: 50, js_heap_mb: null },
+      ],
     }),
   );
   const threads = trace.traceEvents.filter((e) => e.ph === "M" && e.name === "thread_name");
+  const nameOf = (e: { args?: unknown }) => (e.args as { name: string }).name;
+  const networkThreads = threads.filter((e) => /^network/.test(nameOf(e)));
   const sortIndex = (name: string): number => {
-    const tid = threads.find((e) => (e.args as { name: string }).name === name)?.tid;
+    const tid = threads.find((e) => nameOf(e) === name)?.tid;
     const meta = trace.traceEvents.find(
       (e) => e.ph === "M" && e.name === "thread_sort_index" && e.tid === tid,
     );
     return ((meta?.args ?? {}) as { sort_index: number }).sort_index;
   };
 
-  it("gives every overlapping request its own track, as the design says", () => {
-    expect(threads.filter((e) => /^network/.test((e.args as { name: string }).name))).toHaveLength(
+  it("caps the network lanes at MAX_NETWORK_LANES instead of one track per overlapping request", () => {
+    expect(MAX_NETWORK_LANES).toBeLessThanOrEqual(6);
+    expect(networkThreads).toHaveLength(MAX_NETWORK_LANES);
+    const drawn = trace.traceEvents.filter((e) => e.ph === "X" && e.cat === "network");
+    expect(drawn).toHaveLength(MAX_NETWORK_LANES); // all 30 overlap, so only 6 fit
+  });
+
+  it("says what was left out: a note on the track, the metadata, and the real concurrency as a counter", () => {
+    const note = trace.traceEvents.find((e) => e.ph === "i" && /not drawn/.test(e.name ?? ""));
+    expect(note?.name).toBe("note: 24 of 30 requests not drawn");
+    expect(trace.metadata?.network).toMatchObject({
+      requests: 30,
+      drawn: MAX_NETWORK_LANES,
+      not_drawn: 24,
+      max_in_flight: 30,
+    });
+    const inFlight = trace.traceEvents.filter((e) => e.ph === "C" && e.name === "network");
+    expect(inFlight.length).toBeGreaterThan(0);
+    expect(Math.max(...inFlight.map((e) => (e.args as { "in flight": number })["in flight"]))).toBe(
       30,
     );
   });
 
-  // part of QA-M2-08: 30 lanes use sort indexes 20..49, which run into issues (30) and session (40)
-  it.fails("keeps every track's sort index unique", () => {
-    const indexes = threads.map((e) => sortIndex((e.args as { name: string }).name));
+  it("keeps every track's sort index unique, and orders actions, network, issues, session", () => {
+    const indexes = threads.map((e) => sortIndex(nameOf(e)));
     expect(new Set(indexes).size).toBe(indexes.length);
-  });
-
-  // QA-M2-08: network lane k sorts at 20 + k, but `issues` sorts at 30 and `session` at 40, so from
-  // the 10th lane on the issues and session tracks sit in the middle of the network lanes
-  // (seen in Perfetto: "network 21" below "session").
-  it.fails("lists the issues and session tracks after every network lane", () => {
-    const lastNetwork = Math.max(
-      ...threads
-        .map((e) => (e.args as { name: string }).name)
-        .filter((n) => /^network/.test(n))
-        .map(sortIndex),
+    const lastNetwork = Math.max(...networkThreads.map((e) => sortIndex(nameOf(e))));
+    expect(sortIndex("actions")).toBeLessThan(
+      Math.min(...networkThreads.map((e) => sortIndex(nameOf(e)))),
     );
     expect(sortIndex("issues")).toBeGreaterThan(lastNetwork);
     expect(sortIndex("session")).toBeGreaterThan(sortIndex("issues"));
   });
+
+  it("does not note anything for a page whose requests all fit", () => {
+    const light = buildTrace(timeline({ requests: requests.slice(0, MAX_NETWORK_LANES) }));
+    expect(light.traceEvents.some((e) => /not drawn/.test(e.name ?? ""))).toBe(false);
+    expect(light.traceEvents.some((e) => e.ph === "C" && e.name === "network")).toBe(false);
+  });
 });
 
-describe("events stamped before the session started", () => {
+describe("events stamped before the session started (QA-M2-09, fixed)", () => {
   const trace = buildTrace(
     timeline({
       requests: [
@@ -108,12 +127,23 @@ describe("events stamped before the session started", () => {
     }),
   );
 
-  // QA-M2-09: a negative `ts` is silently DROPPED by Perfetto's trace_processor
-  // (stats trace_sorter_negative_timestamp_dropped = 4 for this timeline), so the request, the issue
-  // and the sample vanish from the timeline without a word. Real sessions did not produce one in the
-  // 54 sessions checked, but a request that began before session.started is possible.
-  it.fails("never writes a negative timestamp", () => {
+  it("never writes a negative timestamp", () => {
     const negative = trace.traceEvents.filter((e) => "ts" in e && (e.ts as number) < 0);
     expect(negative).toEqual([]);
+  });
+
+  it("keeps the early request, issue and sample (at 0) instead of losing them, and counts them", () => {
+    const timed = trace.traceEvents as Array<{
+      ph: string;
+      name: string;
+      cat?: string;
+      ts?: number;
+      dur?: number;
+    }>;
+    const request = timed.find((e) => e.ph === "X" && e.cat === "network");
+    expect([request?.ts, request?.dur]).toEqual([0, 100_000]); // started 400 ms early, drawn from 0 to 100 ms
+    expect(timed.find((e) => e.ph === "i" && e.name === "captcha")?.ts).toBe(0);
+    expect(timed.find((e) => e.ph === "C" && e.name === "CPU")?.ts).toBe(0);
+    expect(trace.metadata?.before_session_start).toMatchObject({ events: 3 });
   });
 });

@@ -40,7 +40,7 @@ const variablesOf = (uid: string): Set<string> =>
 
 const toDashboard = found.filter((l) => l.url.startsWith("/d/"));
 const SESSION_LINK =
-  "/d/fleetscope-session?var-session=${__data.fields.session_id}&from=${__data.fields.from_ms}&to=${__data.fields.to_ms}";
+  /^\/d\/fleetscope-session\?var-session=\$\{__data\.fields\.session_id(:percentencode)?\}&from=\$\{__data\.fields\.from_ms\}&to=\$\{__data\.fields\.to_ms\}$/;
 
 describe("dashboard links", () => {
   it("there are links to check", () => {
@@ -74,15 +74,29 @@ describe("dashboard links", () => {
   it("a link to Session detail carries the session id and its own time range, nothing else", () => {
     const links = toDashboard.filter((l) => l.url.startsWith("/d/fleetscope-session?"));
     expect(links.length).toBeGreaterThanOrEqual(2);
-    for (const { from, url } of links) expect(url, from).toBe(SESSION_LINK);
+    for (const { from, url } of links) expect(url, from).toMatch(SESSION_LINK);
+  });
+
+  // QA-M2-17: SAFE_LABEL_PATTERN allows `+`, and in a query string `+` is a space. The Session link
+  // puts the raw id into `var-session=`, so the page opens for "plain plus" and says "Session not found"
+  // (seen in Grafana 13.2.4 with the ids `plain+plus` and `fleet/run:1@host+a-b_c.d`). Writing the id
+  // as ${__data.fields.session_id:percentencode} works (verified in the same Grafana: `%2B`).
+  it.fails("the Session link writes the id percent-encoded, because an id may contain a plus", () => {
+    const links = toDashboard.filter((l) => l.url.startsWith("/d/fleetscope-session?"));
+    expect(links.length).toBeGreaterThanOrEqual(2);
+    for (const { from, url } of links) {
+      expect(url, from).toContain("var-session=${__data.fields.session_id:percentencode}");
+    }
   });
 
   it("the Perfetto link uses the api_url constant and opens a new tab, also in the Timeline text", () => {
     const perfetto = found.filter((l) => l.url.includes("/perfetto"));
-    expect(perfetto.map((l) => l.url)).toEqual(["${api_url}/v1/sessions/${session}/perfetto"]);
+    expect(perfetto.map((l) => l.url)).toEqual([
+      "${api_url}/v1/sessions/${session:percentencode}/perfetto",
+    ]);
     const text = JSON.stringify(dashboards.get("fleetscope-session"));
     expect(text).toContain(
-      'href=\\"${api_url}/v1/sessions/${session}/perfetto\\" target=\\"_blank\\"',
+      'href=\\"${api_url}/v1/sessions/${session:percentencode}/perfetto\\" target=\\"_blank\\"',
     );
     expect(variablesOf("fleetscope-session").has("api_url")).toBe(true);
   });
