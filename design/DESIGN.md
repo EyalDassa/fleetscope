@@ -2,7 +2,7 @@
 
 Status: Grafana spec derived from the design approved by Eyal on 2026-10-22; adjustments for Grafana by the design lead on 2026-10-24.
 
-The UI is Grafana (ADR 0003). This spec is for the engineer who builds `infra/grafana/dashboards/*.json`: colours, units, thresholds, panel order and drill-down links. The earlier shadcn/Recharts spec is in git history, and `design/DECISIONS.md` and `design/proposals/` record how it was decided; where they disagree with this file, this file wins. Every panel uses the ClickHouse data source with UID `fleetscope-clickhouse`. Browsers, Usage and Insights (M3/M4) follow the same rules.
+The UI is Grafana (ADR 0003). This spec is for the engineer who builds `infra/grafana/dashboards/*.json`: colours, units, thresholds, panel order and drill-down links. The earlier shadcn/Recharts spec is in git history, and `design/DECISIONS.md` and `design/proposals/` record how it was decided; where they disagree with this file, this file wins. Every query runs on the ClickHouse data source with UID `fleetscope-clickhouse`; a panel that only shows one value of another panel's result reads it through `-- Dashboard --` instead of running the query again. Browsers, Usage and Insights (M3/M4) follow the same rules.
 
 ## 1. Principles that survive
 
@@ -90,7 +90,7 @@ Other colours (dark / light): gauge cells in tables use the approved neutral `--
 ### 4.1 Shared settings
 
 - **Navigation:** tag all three dashboards `fleetscope`. Add dashboard links by tag that keep the time range and the variables. Set `graphTooltip: 1` (shared crosshair) and timezone browser.
-- **Time series:** line width 2, `spanNulls: false`, fill 0 (15 on session charts), points never (always, size 4, on session charts), legend as a list at the bottom, tooltip with all series sorted descending, min interval 1m.
+- **Time series:** line width 2, `spanNulls: false`, fill 0 (15 on session charts), points `auto` (Grafana draws a point only where a line can't, so a single sparse bucket stays visible; always, size 4, on session charts), legend as a list at the bottom, tooltip with all series sorted descending, min interval 1m.
 - **Stats:** graph mode none (no sparklines), text mode value, KPI value size 22. Verdicts use auto size, so they are the largest text on the page. A string stat needs Value options > Fields set to its column, because "Numeric fields" hides strings.
 - **Descriptions:** every panel has a one-sentence description with its definition from section 3. People see it under (i), and Grafana Assistant can read it.
 
@@ -257,5 +257,5 @@ Variables `session` and `api_url`, refresh off.
 ## 9. Checks
 
 - **SQL:** CI already runs every panel's SQL against seeded data (ADR 0003).
-- **Dashboard JSON:** add a check that parses `infra/grafana/dashboards/*.json` and asserts that every colour is a Dark hex from section 2 (or `text` / `transparent` as a threshold base), every panel uses UID `fleetscope-clickhouse`, every stat and table sets `noValue`, every time series has `spanNulls: false` and the three engine overrides, and no `rawSql` contains `ifNull(` or `coalesce(` with a `0` default.
+- **Dashboard JSON:** add a check that parses `infra/grafana/dashboards/*.json` and asserts that every colour is a Dark hex from section 2 (or `text` / `transparent` as a threshold base), every query panel uses UID `fleetscope-clickhouse` (single-number panels may instead read another panel's query through `-- Dashboard --`, which the check follows to its source panel and fields), every stat and table sets `noValue`, every time series has `spanNulls: false` and the three engine overrides, and no `rawSql` contains `ifNull(` or `coalesce(` with a `0` default.
 - **QA:** open Overview and Session detail at 1440 and 1024 px in dark. Check that no panel shows the bare "No data", every `↗` panel opens a filtered Sessions view, a Sessions row opens Session detail with data in its charts, and Perfetto shows the tracks and counters from section 5.

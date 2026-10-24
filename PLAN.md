@@ -112,7 +112,7 @@ Verify current image names, ports and Playwright compatibility in each project's
 
 ## 5. Event schema (`packages/schema`, version 1)
 
-All events share: `v`, `type` (the event name below, used as the discriminator), `event_id` (uuid, used to drop duplicates), `ts` (ms), `session_id`, `source` ("real"|"sim"), `agent_id`, `engine` (`chromium`/`chrome-headless-shell`/`lightpanda`), `provider`.
+All events share: `v`, `type` (the event name below, used as the discriminator), `event_id` (uuid, used to drop duplicates), `ts` (ms), `session_id`, `source` ("real"|"sim"), `agent_id`, `engine` (`chromium`/`chrome-headless-shell`/`lightpanda`), `provider`. Since M2 the identifiers and labels that dashboards put into SQL (`session_id`, `agent_id`, `provider`, `scenario`, `region`, `engine_version`, `error_code`) accept only `A-Z a-z 0-9 . _ : @ / + -`, 1–128 characters (`SAFE_LABEL_PATTERN`); other values are rejected at ingest with 400.
 
 | Event | Extra fields |
 |---|---|
