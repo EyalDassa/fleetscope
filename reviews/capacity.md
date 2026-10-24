@@ -92,3 +92,25 @@ Every Grafana user who may query the data source can make Grafana send any reque
 - Billing lags about a day.
 - The per-minute alert queries keep the Cloud service from idling.
 - The trial dates and the $300 are constants that must change when the plan changes.
+
+# Round 2 (re-review of the fixes)
+
+Scope, as cut by the lead: the fix diffs for RV-CAP-01..05 (`8c05104`, `933cce9`, `870efc0`, plus `31b45c4` for QA-CAP-01). HEAD `31b45c4`.
+Run: `pnpm lint` and `pnpm typecheck` pass. `pnpm test`: everything passes except 2 api tests that timed out under the parallel turbo run. This branch does not touch `apps/api`, and both files pass when re-run alone (39/39). Integration: capacity, capacity.qa, grafana-user and dashboard-sql pass (83/83). `pnpm grafana:check`: 84 queries, 2 alert groups, OK. No secret was read or printed.
+
+| Finding | Status | Notes |
+|---|---|---|
+| RV-CAP-01 billing alerts never get the org | **resolved** | The org is in the data source base URL (`billing.ts`, provisioning yaml). Panels and rules use `/usageCost?...`. `alertStructureProblems` rejects `${` and `$__` anywhere in a rule. `infinityQueryProblems` requires `/usageCost` with no variable. `execErrState: Error` on both billing rules. Evidence in the README: the credit rule was evaluated through Grafana against the real API (HTTP 200, 281.975 left). The run-out now uses the same projection as the panel (start of today, `floor(left/avg) - days_to_end`), which also resolves nit RV-CAP-07. |
+| RV-CAP-02 keyless push empties the billing group | **resolved** | `pushAlertGroups` sends nothing when every rule of a group is skipped. The skip is decided by the target Grafana (`GET /api/datasources/uid/clickhouse-cloud-api`), not by the local env. A unit test covers it, and the README records a real keyless push that left the 2-rule group and the data source alone. |
+| RV-CAP-03 memory `for` on a 10-minute peak | **resolved** | New block `capacity-alerts-mem-pct-1m`: the average of the last whole minute per host, max over hosts. With it, `for: 10m` / `5m` is the real duration, and the summaries now say so. The 10-minute peak block stays for the stat panel. The check that "every alert block is used" was dropped for that reason, which is acceptable. The metric is now `CGroupMemoryUsedWithoutPageCache`, and the thresholds are 75 / 85 against ClickHouse's own ~90% refusal point (resolves nit RV-CAP-08). |
+| RV-CAP-04 whole-table system grants | **resolved** | `CAPACITY_SYSTEM_COLUMNS` grants only the columns the snippets use (`part_log`: database, error, event_time, event_type, rows, table; metric log: event_time, hostname, metric, value). A `REVOKE` of the whole-table grant comes first, so a re-run converges. The comment is corrected and notes `count()` needs a granted column. The integration tests pass on a real ClickHouse. |
+| RV-CAP-05 key role not recorded | **resolved** (Eyal) | The role is "Organization API Reader". The lead verified a read returns 200 and a write probe (PATCH organization) returns 403. The README documents both the role and the probe. `allowedHosts` is now pinned to `.../v1/organizations/<org>/usageCost`; per the README this was measured on 4.1.3: prefix match, `evil.example` and `/services` refused (resolves nit RV-CAP-06). |
+| QA-CAP-01 annotation copy check | **resolved** | `check.ts`: `requireCopy` now covers everything on the Capacity dashboard except variables, with a test in `snippet-copies.test.ts` (resolves nit RV-CAP-11). |
+
+New nit (not blocking): the "Cost note" in `infra/grafana/README.md` says idling can be helped by "pause the group with a silence". A silence only mutes notifications; the rules keep querying every minute, so the service still can't idle. Drop that option, or say "lengthen the interval, or set `isPaused: true` and push".
+
+Nits not re-checked under the scope cut: RV-CAP-09, 10 (README now has silence and cost notes), 12, 13, 14 (README now records the cleanup), 15.
+
+## Verdict (round 2)
+
+**Approve.** All five must-fix items are resolved. Nothing is disputed. One new docs nit (the silence and idling sentence) is left for the lead to forward.
