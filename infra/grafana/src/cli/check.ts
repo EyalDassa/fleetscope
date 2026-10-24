@@ -2,8 +2,10 @@
 //
 // Checks every infra/grafana/dashboards/*.json and runs every SQL query in it against ClickHouse.
 // Connection: CLICKHOUSE_URL, CLICKHOUSE_DATABASE and the read-only user CLICKHOUSE_GRAFANA_USER /
-// CLICKHOUSE_GRAFANA_PASSWORD (the user Grafana itself uses, so a missing GRANT shows up here).
-// --admin uses CLICKHOUSE_USER / CLICKHOUSE_PASSWORD instead. --static-only skips ClickHouse.
+// CLICKHOUSE_GRAFANA_PASSWORD (the user Grafana itself uses, so a missing GRANT or a SETTINGS clause
+// shows up here). For a ClickHouse on this machine they default to the development values of
+// docker-compose. --admin (explicit) uses CLICKHOUSE_USER / CLICKHOUSE_PASSWORD instead, and the
+// output says so. --static-only skips ClickHouse.
 // --allow-dangling-links turns "links to a dashboard that is not in the folder" into a warning, for
 // the time while the three dashboards are still being written. CI never passes it.
 import { fileURLToPath } from "node:url";

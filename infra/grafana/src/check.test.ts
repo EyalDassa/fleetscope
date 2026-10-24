@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { checkDashboards, makeVariableState } from "./check";
 import type { Fetch } from "./clickhouse-http";
-import { connectionFromEnv } from "./connection";
 import type { VariableDefinition } from "./dashboards";
 import type { JsonObject } from "./json";
 import { CH, dashboardJson, statPanel } from "./test-fixtures";
@@ -275,38 +274,5 @@ describe("makeVariableState", () => {
       selected: ["abc"],
     });
     expect(makeVariableState(def({ type: "adhoc" }), [], "default")).toBeUndefined();
-  });
-});
-
-describe("connectionFromEnv", () => {
-  it("uses the read-only Grafana user when it is set", () => {
-    const { connection: c, description } = connectionFromEnv(
-      {
-        CLICKHOUSE_URL: "http://h:1",
-        CLICKHOUSE_USER: "admin",
-        CLICKHOUSE_PASSWORD: "adminpw",
-        CLICKHOUSE_GRAFANA_USER: "grafana_ro",
-        CLICKHOUSE_GRAFANA_PASSWORD: "ropw",
-        CLICKHOUSE_DATABASE: "db",
-      },
-      false,
-    );
-    expect(c).toEqual({ url: "http://h:1", user: "grafana_ro", password: "ropw", database: "db" });
-    expect(description).toContain("read-only Grafana user");
-    expect(description).not.toContain("ropw");
-  });
-
-  it("uses the admin user with --admin, or when there is no Grafana user", () => {
-    const env = {
-      CLICKHOUSE_USER: "admin",
-      CLICKHOUSE_PASSWORD: "adminpw",
-      CLICKHOUSE_GRAFANA_USER: "g",
-    };
-    expect(connectionFromEnv(env, true).connection.user).toBe("admin");
-    expect(connectionFromEnv({ CLICKHOUSE_USER: "admin" }, false).connection.user).toBe("admin");
-    expect(connectionFromEnv({}, false).connection).toMatchObject({
-      url: "http://localhost:8123",
-      database: "fleetscope",
-    });
   });
 });

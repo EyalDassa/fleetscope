@@ -135,8 +135,9 @@ The expansion was compared with the real plugin (Grafana 13.2.4 + plugin 4.23.2,
 `executedQueryString` of `/api/ds/query`) for 18 macro calls, and all were identical.
 
 ```bash
-pnpm grafana:check                          # as the read-only user (CLICKHOUSE_GRAFANA_USER)
-pnpm grafana:check --admin                  # as CLICKHOUSE_USER, e.g. before the read-only user exists
+pnpm grafana:check                          # as the read-only user (CLICKHOUSE_GRAFANA_USER; for a local ClickHouse
+                                            #   the dev defaults of docker-compose, never the admin)
+pnpm grafana:check --admin                  # on purpose as CLICKHOUSE_USER, e.g. before the read-only user exists
 pnpm grafana:check --static-only            # no ClickHouse: structure and design rules only
 pnpm grafana:check --verbose                # list every query with its row count
 pnpm grafana:check --allow-dangling-links   # link targets that are not written yet become warnings

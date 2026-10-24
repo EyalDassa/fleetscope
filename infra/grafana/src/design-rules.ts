@@ -146,11 +146,40 @@ export function zeroDefaults(sql: string): string[] {
   return found;
 }
 
+/**
+ * The only settings the read-only Grafana user may change (packages/db/src/grafana-user.ts:
+ * CHANGEABLE_IN_READONLY). Anything else in a SETTINGS clause is refused by ClickHouse for that user.
+ */
+const SETTINGS_GRAFANA_MAY_CHANGE = new Set(["max_execution_time", "additional_table_filters"]);
+
+/** Names of the settings in SETTINGS clauses that the read-only Grafana user is not allowed to change. */
+export function disallowedSettings(sql: string): string[] {
+  const found: string[] = [];
+  // codeOnly blanks strings and comments, so the word inside a string or comment does not count.
+  for (const match of codeOnly(sql).matchAll(/\bSETTINGS\b([^)]*)/gi)) {
+    for (const part of splitArgs(match[1] ?? "")) {
+      const name = /^\s*(\w+)\s*=/.exec(part)?.[1];
+      if (name && !SETTINGS_GRAFANA_MAY_CHANGE.has(name.toLowerCase())) found.push(name);
+    }
+  }
+  return found;
+}
+
 export function sqlRuleProblems(sql: string, where: string): Problem[] {
-  return zeroDefaults(sql).map((snippet) => ({
+  const problems: Problem[] = zeroDefaults(sql).map((snippet) => ({
     where,
     message: `${snippet} turns a missing value into 0. Return NULL and let the panel's noValue or mapping show "Not available" or "-" (DESIGN.md section 3, Honest SQL)`,
   }));
+  // Checked here as well as by running the query as the read-only user (grafana:check does that by
+  // default), so that --admin and --static-only cannot hide it.
+  const settings = disallowedSettings(sql);
+  if (settings.length > 0) {
+    problems.push({
+      where,
+      message: `has a SETTINGS clause for ${[...new Set(settings)].join(", ")}. The read-only Grafana user may not change that setting, so Grafana would refuse the query; dashboard SQL must not need one (packages/db/README.md)`,
+    });
+  }
+  return problems;
 }
 
 export function designProblems(dashboard: JsonObject): Problem[] {
