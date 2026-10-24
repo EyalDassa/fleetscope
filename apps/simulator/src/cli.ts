@@ -161,7 +161,8 @@ async function live(argv: string[]): Promise<number> {
   say(
     `sim live: stopped after ${index} sessions (${open} ended early as interrupted), ${stream.sent} events sent, ${stream.dropped} dropped.`,
   );
-  return stream.dropped > 0 ? 1 : 0;
+  // `sim live` only ever stops on Ctrl+C, so it exits like `fleet run` does when interrupted.
+  return stream.dropped > 0 ? 1 : 130;
 }
 
 async function calibrate(argv: string[]): Promise<number> {

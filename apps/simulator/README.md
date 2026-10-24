@@ -17,7 +17,7 @@ pnpm sim calibrate [--days 14]    # rewrite src/profile.json from the real sessi
   `running` for a few seconds and the Active sessions chart moves. Ctrl+C ends every session in
   flight at "now" as `failed` / `interrupted` (nothing is sent with a future timestamp), retries
   batches that failed for a network or 5xx reason, and stops (a second Ctrl+C quits at once and
-  leaves them `running`).
+  leaves them `running`). It exits 130 like `fleet run` after Ctrl+C, or 1 if any events were dropped.
 - `--stretch X` multiplies the session duration. Real sessions on the demo site last 1 to 5 s, which
   gives one or two 2 s container samples; `--stretch 10` shows memory rising page by page.
 - `--seed` makes the content repeatable (same engines, scenarios, timings, failures). Session and
