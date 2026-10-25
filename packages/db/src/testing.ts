@@ -84,3 +84,26 @@ export function createReaderClient(config: DbConfig, username: string, password:
 export function testPassword(): string {
   return randomBytes(12).toString("hex");
 }
+
+/**
+ * Grafana's `$__conditionalAll(condition, $var)` macro for the tests that run the README snippets:
+ * the condition (with `${var:singlequote}` filled in from `selected[var]`) when the variable is a
+ * selection, and `1=1` (no filter) when `selected[var]` is undefined, which stands for "All".
+ * One macro per line, as in the README.
+ */
+export function conditionalAll(
+  sql: string,
+  selected: Record<string, string[] | undefined>,
+): string {
+  return sql.replace(
+    /\$__conditionalAll\((.+), \$(\w+)\)/g,
+    (_match, condition: string, name: string) => {
+      const values = selected[name];
+      if (values === undefined) return "1=1";
+      return condition.replaceAll(
+        `\${${name}:singlequote}`,
+        values.map((value) => `'${value}'`).join(","),
+      );
+    },
+  );
+}

@@ -32,6 +32,7 @@ describe("loadMigrationFiles", () => {
       "0007_fleet_minute.sql",
       "0008_pricing.sql",
       "0009_sessions_routed_from.sql",
+      "0010_sessions_target_site.sql",
     ]);
     for (const file of files) expect(file.checksum).toMatch(/^[0-9a-f]{64}$/);
     expect(new Set(files.map((f) => f.checksum)).size).toBe(files.length);
@@ -103,10 +104,10 @@ describe("splitStatements", () => {
   // tables (MODIFY SETTING just sets the value again).
   it("gives every real migration one statement, or only statements that are safe to repeat", async () => {
     // A file that fails halfway is run again from its first statement, so each statement must be
-    // harmless the second time: IF NOT EXISTS, MODIFY SETTING, or a seed INSERT that skips the
+    // harmless the second time: IF NOT EXISTS (also ADD COLUMN IF NOT EXISTS, 0010), MODIFY SETTING, or a seed INSERT that skips the
     // rows it already wrote (0008).
     const repeatable =
-      /^(CREATE (MATERIALIZED )?(TABLE|VIEW) IF NOT EXISTS|ALTER TABLE \w+\s+MODIFY SETTING|INSERT INTO pricing\b[\s\S]*\bNOT IN \(SELECT)/i;
+      /^(CREATE (MATERIALIZED )?(TABLE|VIEW) IF NOT EXISTS|ALTER TABLE \w+\s+MODIFY SETTING|ALTER TABLE \w+ ADD COLUMN IF NOT EXISTS|INSERT INTO pricing\b[\s\S]*\bNOT IN \(SELECT)/i;
     for (const file of await loadMigrationFiles()) {
       const statements = splitStatements(file.sql);
       if (statements.length === 1) continue;

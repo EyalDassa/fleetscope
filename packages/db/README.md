@@ -437,6 +437,8 @@ WITH
         FROM sessions FINAL
         WHERE engine IN (${engine:singlequote})
           AND source IN (${source:singlequote})
+          AND $__conditionalAll(target IN (${target:singlequote}), $target)
+          AND $__conditionalAll(site IN (${site:singlequote}), $site)
           AND started_at >= $__fromTime - INTERVAL 1 DAY
           AND started_at <= $__toTime
           AND (ended_at IS NULL OR ended_at >= $__fromTime)
@@ -471,6 +473,8 @@ SELECT
     p.source AS source,
     p.engine AS engine,
     p.routed_from AS routed_from,
+    p.target AS target,
+    p.site AS site,
     p.engine_version AS engine_version,
     p.provider AS provider,
     p.scenario AS scenario,
@@ -511,6 +515,30 @@ sent the session to an engine that can run its scenario (docs/adr/0005). `engine
 `routed_from` is NULL for a session that was not routed and for every session written before the column
 existed; a non-NULL value means "this session ran on `engine` instead of `routed_from`". Show it next to the
 engine (`chrome-headless-shell (from lightpanda)`), never fold it into `engine`.
+
+**`target` and `site` (migration 0010, docs/adr/0007).** What the session visited: `target` is `demo`
+(the Fleetscope demo site) or `public` (a real public site, read-only journeys); `site` is `demo-site`,
+`wikipedia`, `mdn`, `govuk`, `hackernews` or `python-docs`. They are independent of `source`
+(`real` | `sim`; a `sim` session is always `demo` / `demo-site`). Rows from before the migration read
+`demo` / `demo-site`, which is what they were. A dashboard shows a `target` and a `site` variable
+next to `source` and never merges demo and public numbers silently: a public site changes on its own
+(a `site_layout` failure is the site's change, not the browser's), so its rates are not comparable with
+the demo site's.
+
+- **The two variables are optional filters, and All must not filter.** They use the same
+  `$__conditionalAll(<column> IN (${var:singlequote}), $var)` as the `agent` and `scenario` variables of
+  the Sessions dashboard, not the plain `IN` of `engine` and `source`. Why: `engine` and `source` have a fixed
+  list and every session has a value in it; `site` is a free label (a new site needs no schema release), so
+  with a plain `IN` a session of a site the variable does not list would vanish from "All". Make both
+  variables multi-value with "Include All option" and, for `site`, a query variable
+  (`SELECT DISTINCT site FROM sessions FINAL ...`) like `agent`.
+- **The filter sits in `picked` only.** `issues` and `actions` have no `target` or `site` column; they are
+  already limited to `picked`'s sessions by `session_id IN (SELECT session_id FROM picked)`, so nothing
+  is repeated in `issue_facts` and `action_facts` (unlike `engine` and `source`). On Session detail, whose
+  `picked` is replaced by the session id, the two lines are simply gone with the rest of `picked`'s
+  `WHERE`.
+- **`site_layout`** is an `error_code` (so a failure `cause`) with no issue: a public page answered 200
+  but its landmark element is missing. `http_403` also covers a public site's 429.
 
 **Bounds that keep the lookups cheap (M3).**
 

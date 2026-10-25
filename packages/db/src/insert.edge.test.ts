@@ -141,6 +141,18 @@ describe("session snapshots", () => {
     expect(endedSessionRow(routed, ended).routed_from).toBe("lightpanda");
   });
 
+  it("carries target and site from the start onto the ended row; absent means demo / demo-site", () => {
+    if (started.type !== "session.started" || ended.type !== "session.ended") {
+      throw new Error("unreachable");
+    }
+    const plain = runningSessionRow(started);
+    expect([plain.target, plain.site]).toEqual(["demo", "demo-site"]);
+    const pub = runningSessionRow({ ...started, target: "public", site: "mdn" });
+    expect([pub.target, pub.site]).toEqual(["public", "mdn"]);
+    const done = endedSessionRow(pub, ended);
+    expect([done.target, done.site]).toEqual(["public", "mdn"]);
+  });
+
   it("the ended snapshot has a higher version than the running one and keeps the start fields", () => {
     if (started.type !== "session.started" || ended.type !== "session.ended") {
       throw new Error("unreachable");

@@ -184,6 +184,8 @@ describe("getSessionTimeline", () => {
       startup_ms: 900,
       connect_ms: 400,
       routed_from: null,
+      target: "demo",
+      site: "demo-site",
       status: "failed",
       started_at_ms: T0,
       ended_at_ms: T0 + 3000,

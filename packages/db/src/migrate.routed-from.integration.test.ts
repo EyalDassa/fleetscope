@@ -68,7 +68,10 @@ describe("migration 0009: sessions.routed_from", () => {
       await insertEvents(client, [started("old-running"), started("old-done"), ended("old-done")]);
 
       const second = await runMigrations(config);
-      expect(second.applied).toEqual(["0009_sessions_routed_from.sql"]);
+      expect(second.applied).toEqual([
+        "0009_sessions_routed_from.sql",
+        "0010_sessions_target_site.sql",
+      ]);
       expect(second.alreadyApplied).toHaveLength(8);
 
       // old rows read NULL, nothing lost
@@ -99,7 +102,7 @@ describe("migration 0009: sessions.routed_from", () => {
 
       const third = await runMigrations(config);
       expect(third.applied).toEqual([]);
-      expect(third.alreadyApplied).toHaveLength(9);
+      expect(third.alreadyApplied).toHaveLength(10);
       const column = await client.query({
         query:
           "SELECT type FROM system.columns WHERE database = currentDatabase() AND table = 'sessions' AND name = 'routed_from'",

@@ -47,6 +47,7 @@ const AFTER_M0 = [
   "0007_fleet_minute.sql",
   "0008_pricing.sql",
   "0009_sessions_routed_from.sql",
+  "0010_sessions_target_site.sql",
 ];
 
 const ctx = (session_id: string): EventEnvelope => ({
