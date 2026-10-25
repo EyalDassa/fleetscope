@@ -643,6 +643,11 @@ describe("ClickHouse fails at the TCP level", () => {
 
     await post([started(id), action(id, 0)]);
     await expect.poll(() => count("actions", id), { timeout: 5000, interval: 50 }).toBe(1);
+    // The flush writes one table after another: the action can be stored while the session row is
+    // still on its way. Wait for the whole first batch, or the outage catches it and `queued` is 9.
+    await expect
+      .poll(async () => (await health()).body.ingest.queued, { timeout: 5000, interval: 50 })
+      .toBe(0);
 
     proxy.outage(true);
     const batches = [
