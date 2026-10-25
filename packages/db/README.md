@@ -538,7 +538,7 @@ the demo site's.
   `picked` is replaced by the session id, the two lines are simply gone with the rest of `picked`'s
   `WHERE`.
 - **`site_layout`** is an `error_code` (so a failure `cause`) with no issue: a public page answered 200
-  but its landmark element is missing. `http_403` also covers a public site's 429.
+  but its landmark element is missing. A public site's 429 is its own `error_code`, `http_429` (a `blocked` issue, like `http_403`).
 
 **Bounds that keep the lookups cheap (M3).**
 

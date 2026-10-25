@@ -415,12 +415,12 @@ export class CollectedPage {
   }
 }
 
-/** What an HTTP status of a page we loaded means for the action: 403 blocked, 5xx server error, other 4xx. */
+/** What an HTTP status of a page we loaded means for the action: 403 and 429 blocked, 5xx server error, other 4xx. */
 function statusError(status: number, url: string): CollectedError | null {
   if (status === 403) return new BlockedError("http_403", `HTTP 403 for ${url}`);
-  // 429 is a site pushing back as well; it is recorded as http_403 ("refused"), the message names it.
+  // 429 is a site pushing back as well: its own code, so it is not counted as a 403
   if (status === 429)
-    return new BlockedError("http_403", `HTTP 429 (too many requests) for ${url}`);
+    return new BlockedError("http_429", `HTTP 429 (too many requests) for ${url}`);
   if (status >= 500) return new CollectedError("http_5xx", `HTTP ${status} for ${url}`);
   if (status >= 400) return new CollectedError("nav_error", `HTTP ${status} for ${url}`);
   return null;

@@ -21,3 +21,11 @@ describe("site_layout (docs/adr/0007)", () => {
     expect(ISSUE_FOR_CODE.site_layout).toBeNull();
   });
 });
+
+describe("http_429", () => {
+  it("is its own code and raises a blocked issue, like http_403", () => {
+    expect(ERROR_CODES).toContain("http_429");
+    expect(ISSUE_FOR_CODE.http_429).toBe("blocked");
+    expect(ISSUE_FOR_CODE.http_429).toBe(ISSUE_FOR_CODE.http_403);
+  });
+});

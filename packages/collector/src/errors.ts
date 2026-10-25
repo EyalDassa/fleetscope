@@ -18,9 +18,9 @@ export class CollectedError extends Error {
   }
 }
 
-/** The site refused us: a 403 on the main document or a captcha page. The session is `blocked`. */
+/** The site refused us: a 403 or 429 on the main document or a captcha page. The session is `blocked`. */
 export class BlockedError extends CollectedError {
-  constructor(code: "http_403" | "captcha", message: string) {
+  constructor(code: "http_403" | "http_429" | "captcha", message: string) {
     super(code, message);
     this.name = "BlockedError";
   }

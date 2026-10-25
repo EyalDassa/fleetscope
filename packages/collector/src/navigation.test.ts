@@ -211,14 +211,27 @@ describe("container samples carry the time the reading was taken", () => {
 });
 
 describe("429 and the landmark check (docs/adr/0007)", () => {
-  it("a goto answered 429 is a block: BlockedError, http_403, a blocked issue, the message names 429", async () => {
+  it("a goto answered 429 is a block: BlockedError, http_429 (not http_403), a blocked issue", async () => {
     const { session, fake, page } = await setup();
     fake.gotoStatus = 429;
     const error = await rejection(page.goto("https://news.test/"));
     expect(error).toBeInstanceOf(BlockedError);
-    expect(error.code).toBe("http_403");
+    expect(error.code).toBe("http_429");
     expect(error.message).toContain("429");
     expect(session.issueKinds.has("blocked")).toBe(true);
+  });
+
+  it("a click that lands on a 429 page fails with http_429 and a blocked issue", async () => {
+    const { session, fake, page, events } = await setup();
+    fake.clickNavigations = [429];
+    const error = await rejection(page.click("#go"));
+    expect(error).toBeInstanceOf(BlockedError);
+    expect(error.code).toBe("http_429");
+    expect(session.issueKinds.has("blocked")).toBe(true);
+    expect(ofType(await events(), "action")[0]).toMatchObject({
+      ok: false,
+      error_code: "http_429",
+    });
   });
 
   it("landmark: the first selector that matches is returned", async () => {

@@ -315,7 +315,7 @@ second over one connection), one sample every 2 s, plus a last one when the sess
   others 2 s, measured between the starts of two navigations of a session. The wait is not an
   `action` (it would pollute the latency numbers); the gap shows in the session's timeline.
 - **Push-back pauses the site.** A 403, 429 or CAPTCHA ends the session `blocked` (429 is recorded as
-  `http_403`, its message says 429), the site is written to `--state-file` as
+  `http_429`), the site is written to `--state-file` as
   `{"<site>": <pausedUntil epoch ms>}` for an hour, and paused sites are skipped by the next
   sessions, also by other fleet processes that use the same file (it is read on every check). Without
   `--state-file` the pause lives only in this process. If no site is available the public sessions

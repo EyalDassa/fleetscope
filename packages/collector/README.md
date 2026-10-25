@@ -57,6 +57,7 @@ and repaired so a lone surrogate (half an emoji) can never reach ClickHouse, whi
 | `selector_not_found` | the selector matched nothing before the timeout | none |
 | `nav_error` | DNS / refused / TLS failure, or the page answered another HTTP 4xx | `nav_error` |
 | `http_403` | a page the action loaded (a goto, or a click that navigated) answered 403 | `blocked` |
+| `http_429` | ... answered 429 Too Many Requests (a site pushing back) | `blocked` |
 | `http_5xx` | ... answered a server error | `nav_error` |
 | `captcha` | the page has `[data-testid=captcha]` | `captcha` |
 | `unsupported_api` | the page used a Web API the engine lacks: a `ReferenceError` / "X is not defined", or a `TypeError` that names a known API (see below) | `unsupported_api` |
