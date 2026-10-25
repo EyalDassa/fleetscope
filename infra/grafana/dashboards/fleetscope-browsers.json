@@ -2110,7 +2110,7 @@
       "id": 12,
       "type": "table",
       "title": "Public sites ↗",
-      "description": "One row per real public site (Target = public), from the sessions that ended in the range (interrupted left out). Health is the Chromium success rate through the thresholds (95 and 90): Chromium is the reference browser, so a site that fails for it has changed or is blocking us. Chromium rate and Other engines are the success rates of Chromium and of the other two engines; a gap between the two points at the engine. Top cause counts all engines; site_layout means the page loaded but its landmark element was missing, so the site changed, not the browser. A rate is — when no session of that kind ran. Click a site to open its sessions with the same range and filters.",
+      "description": "One row per real public site (Target = public), from the sessions that ended in the range (interrupted left out). Health is the Chromium success rate through the thresholds (95 and 90): Chromium is the reference browser, so a site that fails for it has changed or is blocking us. Health is Blocked when most Chromium sessions were blocked (blocked, http_403, http_429 or captcha) and Not enough data below 3 Chromium sessions. Chromium rate and Other engines are the success rates of Chromium and of the other two engines; a gap between the two points at the engine. Top cause counts all engines; site_layout means the page loaded but its landmark element was missing: it reads site changed only when Chromium itself had it, otherwise (not Chromium), which is likely an engine gap. A rate is — when no session of that kind ran. Click a site to open its sessions with the same range and filters.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "fleetscope-clickhouse"
@@ -2159,14 +2159,14 @@
               },
               {
                 "id": "custom.width",
-                "value": 105
+                "value": 100
               },
               {
                 "id": "links",
                 "value": [
                   {
                     "title": "Sessions of this site",
-                    "url": "/d/fleetscope-sessions?${__url_time_range}&${target:queryparam}&${site:queryparam}&${engine:queryparam}&${source:queryparam}&var-target=public&var-site=${__data.fields.site}",
+                    "url": "/d/fleetscope-sessions?${__url_time_range}&${engine:queryparam}&${source:queryparam}&var-target=public&var-site=${__data.fields.site}",
                     "targetBlank": false
                   }
                 ]
@@ -2222,6 +2222,11 @@
                         "index": 5,
                         "text": "■ Interrupted",
                         "color": "#7D8DA1"
+                      },
+                      "not_enough_data": {
+                        "index": 6,
+                        "text": "Not enough data",
+                        "color": "#9AA9BB"
                       }
                     }
                   },
@@ -2231,7 +2236,7 @@
                       "match": "null",
                       "result": {
                         "text": "—",
-                        "index": 6
+                        "index": 7
                       }
                     }
                   },
@@ -2241,7 +2246,7 @@
                       "match": "nan",
                       "result": {
                         "text": "—",
-                        "index": 7
+                        "index": 8
                       }
                     }
                   }
@@ -2267,7 +2272,7 @@
               },
               {
                 "id": "custom.width",
-                "value": 80
+                "value": 75
               },
               {
                 "id": "unit",
@@ -2291,7 +2296,7 @@
               },
               {
                 "id": "custom.width",
-                "value": 145
+                "value": 140
               },
               {
                 "id": "unit",
@@ -2481,7 +2486,7 @@
               },
               {
                 "id": "custom.width",
-                "value": 205
+                "value": 225
               },
               {
                 "id": "mappings",
@@ -2554,7 +2559,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "-- Public sites: one row per public site, from the sessions that ENDED in the range (interrupted left out). Only target = 'public';\n-- the Target filter still applies, so Target = Demo site shows no rows. Health = the Chromium success rate (a site that fails for\n-- Chromium itself has changed or is blocking us); Other engines = the same rate for the CDP engines, so a gap between the two is\n-- the engine, not the site. Top cause is over all engines; site_layout means the page loaded but its landmark was missing (the site changed).\n-- A rate with no session of that kind is NULL (shown as —), never 0.\nWITH\n    facts AS (\n        WITH\n            picked AS\n            (\n                SELECT *\n                FROM sessions FINAL\n                WHERE engine IN (${engine:singlequote})\n                  AND source IN (${source:singlequote})\n                  AND $__conditionalAll(target IN (${target:singlequote}), $target)\n                  AND $__conditionalAll(site IN (${site:singlequote}), $site)\n                  AND started_at >= $__fromTime - INTERVAL 1 DAY\n                  AND started_at <= $__toTime\n                  AND (ended_at IS NULL OR ended_at >= $__fromTime)\n            ),\n            issue_facts AS\n            (\n                SELECT session_id, count() AS issue_count, toString(argMin(kind, ts)) AS first_issue\n                FROM issues\n                WHERE session_id IN (SELECT session_id FROM picked)\n                  AND ts >= (SELECT min(started_at) FROM picked)\n                  AND engine IN (${engine:singlequote})\n                  AND source IN (${source:singlequote})\n                GROUP BY session_id\n            ),\n            action_facts AS\n            (\n                SELECT\n                    session_id,\n                    count() AS actions,\n                    countIf(NOT ok) AS failed_actions,\n                    ifNull(argMinIf(error_code, seq, NOT ok), '') AS first_failed_code\n                FROM actions\n                WHERE session_id IN (SELECT session_id FROM picked)\n                  AND ts >= (SELECT min(started_at) FROM picked)\n                  AND engine IN (${engine:singlequote})\n                  AND source IN (${source:singlequote})\n                GROUP BY session_id\n            )\n        SELECT\n            p.session_id AS session_id,\n            p.agent_id AS agent_id,\n            p.source AS source,\n            p.engine AS engine,\n            p.routed_from AS routed_from,\n            p.target AS target,\n            p.site AS site,\n            p.engine_version AS engine_version,\n            p.provider AS provider,\n            p.scenario AS scenario,\n            p.started_at AS started_at,\n            p.ended_at AS ended_at,\n            p.status AS status,\n            p.reason AS reason,\n            p.duration_ms AS duration_ms,\n            p.startup_ms + p.connect_ms AS time_to_browser_ms,\n            (p.status = 'failed' AND ifNull(p.reason, '') = 'interrupted') AS is_interrupted,\n            a.actions AS actions,\n            a.failed_actions AS failed_actions,\n            i.issue_count AS issue_count,\n            multiIf(\n                p.status = 'running', 'running',\n                is_interrupted, 'interrupted',\n                p.status = 'success' AND a.failed_actions = 0 AND i.issue_count = 0, 'healthy',\n                p.status = 'success', 'degraded',\n                p.status = 'blocked', 'blocked',\n                'failed') AS display_status,\n            if(p.status NOT IN ('running', 'success') AND NOT is_interrupted,\n                multiIf(i.first_issue != '', i.first_issue, a.first_failed_code != '', a.first_failed_code, p.status),\n                NULL) AS cause,\n            if(cause IS NULL, NULL,\n                multiIf(i.first_issue != '', 'issue', a.first_failed_code != '', 'action', 'status')) AS cause_from,\n            (toUInt64(p.startup_ms) + p.connect_ms\n                + ifNull(p.duration_ms, dateDiff('millisecond', p.started_at, now64(3)))) / 3.6e6 AS browser_hours,\n            if(price.provider = '', NULL, browser_hours * price.usd_per_browser_hour) AS est_cost_usd\n        FROM picked AS p\n        LEFT JOIN issue_facts AS i ON i.session_id = p.session_id\n        LEFT JOIN action_facts AS a ON a.session_id = p.session_id\n        LEFT JOIN pricing_current AS price ON price.engine = p.engine AND price.provider = p.provider\n    ),\n    done AS\n    (\n        SELECT *\n        FROM facts\n        WHERE target = 'public' AND ended_at IS NOT NULL AND $__timeFilter(ended_at) AND NOT is_interrupted\n    ),\n    per_site AS\n    (\n        SELECT\n            site,\n            count() AS sessions,\n            countIf(engine = 'chromium') AS chromium_sessions,\n            if(chromium_sessions = 0, NULL, 100 * countIf(engine = 'chromium' AND status = 'success') / chromium_sessions) AS chromium_success_rate,\n            countIf(engine != 'chromium') AS other_sessions,\n            if(other_sessions = 0, NULL, 100 * countIf(engine != 'chromium' AND status = 'success') / other_sessions) AS other_success_rate,\n            groupArrayIf(assumeNotNull(cause), cause IS NOT NULL) AS causes,\n            arraySort(x -> (-countEqual(causes, x), x), arrayDistinct(causes))[1] AS top_cause,\n            countEqual(causes, top_cause) AS top_n,\n            max(ended_at) AS last_visit\n        FROM done\n        GROUP BY site\n    )\nSELECT\n    site,\n    multiIf(chromium_success_rate IS NULL, NULL, chromium_success_rate >= 95, 'healthy', chromium_success_rate >= 90, 'degraded', 'failed') AS health,\n    sessions,\n    chromium_sessions,\n    chromium_success_rate,\n    other_success_rate,\n    if(top_n = 0, NULL, if(top_cause = 'site_layout', concat('site_layout ×', toString(top_n), ' · site changed'), concat(top_cause, ' ×', toString(top_n)))) AS top_cause,\n    last_visit\nFROM per_site\nORDER BY site\n",
+          "rawSql": "-- Public sites: one row per public site, from the sessions that ENDED in the range (interrupted left out). Only target = 'public';\n-- the Target filter still applies, so Target = Demo site shows no rows. Health = the Chromium success rate (a site that fails for\n-- Chromium itself has changed or is blocking us; fewer than 3 Chromium sessions: \"Not enough data\"; most of them blocked (blocked, http_403, http_429, captcha): Blocked); Other engines = the same rate for the CDP engines, so a gap between the two is\n-- the engine, not the site. Top cause is over all engines; site_layout reads \"site changed\" only when Chromium itself has it, else \"(not Chromium)\" (likely the engine).\n-- A rate with no session of that kind is NULL (shown as —), never 0.\nWITH\n    facts AS (\n        WITH\n            picked AS\n            (\n                SELECT *\n                FROM sessions FINAL\n                WHERE engine IN (${engine:singlequote})\n                  AND source IN (${source:singlequote})\n                  AND $__conditionalAll(target IN (${target:singlequote}), $target)\n                  AND $__conditionalAll(site IN (${site:singlequote}), $site)\n                  AND started_at >= $__fromTime - INTERVAL 1 DAY\n                  AND started_at <= $__toTime\n                  AND (ended_at IS NULL OR ended_at >= $__fromTime)\n            ),\n            issue_facts AS\n            (\n                SELECT session_id, count() AS issue_count, toString(argMin(kind, ts)) AS first_issue\n                FROM issues\n                WHERE session_id IN (SELECT session_id FROM picked)\n                  AND ts >= (SELECT min(started_at) FROM picked)\n                  AND engine IN (${engine:singlequote})\n                  AND source IN (${source:singlequote})\n                GROUP BY session_id\n            ),\n            action_facts AS\n            (\n                SELECT\n                    session_id,\n                    count() AS actions,\n                    countIf(NOT ok) AS failed_actions,\n                    ifNull(argMinIf(error_code, seq, NOT ok), '') AS first_failed_code\n                FROM actions\n                WHERE session_id IN (SELECT session_id FROM picked)\n                  AND ts >= (SELECT min(started_at) FROM picked)\n                  AND engine IN (${engine:singlequote})\n                  AND source IN (${source:singlequote})\n                GROUP BY session_id\n            )\n        SELECT\n            p.session_id AS session_id,\n            p.agent_id AS agent_id,\n            p.source AS source,\n            p.engine AS engine,\n            p.routed_from AS routed_from,\n            p.target AS target,\n            p.site AS site,\n            p.engine_version AS engine_version,\n            p.provider AS provider,\n            p.scenario AS scenario,\n            p.started_at AS started_at,\n            p.ended_at AS ended_at,\n            p.status AS status,\n            p.reason AS reason,\n            p.duration_ms AS duration_ms,\n            p.startup_ms + p.connect_ms AS time_to_browser_ms,\n            (p.status = 'failed' AND ifNull(p.reason, '') = 'interrupted') AS is_interrupted,\n            a.actions AS actions,\n            a.failed_actions AS failed_actions,\n            i.issue_count AS issue_count,\n            multiIf(\n                p.status = 'running', 'running',\n                is_interrupted, 'interrupted',\n                p.status = 'success' AND a.failed_actions = 0 AND i.issue_count = 0, 'healthy',\n                p.status = 'success', 'degraded',\n                p.status = 'blocked', 'blocked',\n                'failed') AS display_status,\n            if(p.status NOT IN ('running', 'success') AND NOT is_interrupted,\n                multiIf(i.first_issue != '', i.first_issue, a.first_failed_code != '', a.first_failed_code, p.status),\n                NULL) AS cause,\n            if(cause IS NULL, NULL,\n                multiIf(i.first_issue != '', 'issue', a.first_failed_code != '', 'action', 'status')) AS cause_from,\n            (toUInt64(p.startup_ms) + p.connect_ms\n                + ifNull(p.duration_ms, dateDiff('millisecond', p.started_at, now64(3)))) / 3.6e6 AS browser_hours,\n            if(price.provider = '', NULL, browser_hours * price.usd_per_browser_hour) AS est_cost_usd\n        FROM picked AS p\n        LEFT JOIN issue_facts AS i ON i.session_id = p.session_id\n        LEFT JOIN action_facts AS a ON a.session_id = p.session_id\n        LEFT JOIN pricing_current AS price ON price.engine = p.engine AND price.provider = p.provider\n    ),\n    done AS\n    (\n        SELECT *\n        FROM facts\n        WHERE target = 'public' AND ended_at IS NOT NULL AND $__timeFilter(ended_at) AND NOT is_interrupted\n    ),\n    per_site AS\n    (\n        SELECT\n            site,\n            count() AS sessions,\n            countIf(engine = 'chromium') AS chromium_sessions,\n            countIf(engine = 'chromium' AND (display_status = 'blocked' OR cause IN ('http_403', 'http_429', 'captcha'))) AS chromium_blocked,\n            countIf(engine = 'chromium' AND cause = 'site_layout') AS chromium_layout,\n            if(chromium_sessions = 0, NULL, 100 * countIf(engine = 'chromium' AND status = 'success') / chromium_sessions) AS chromium_success_rate,\n            countIf(engine != 'chromium') AS other_sessions,\n            if(other_sessions = 0, NULL, 100 * countIf(engine != 'chromium' AND status = 'success') / other_sessions) AS other_success_rate,\n            groupArrayIf(assumeNotNull(cause), cause IS NOT NULL) AS causes,\n            arraySort(x -> (-countEqual(causes, x), x), arrayDistinct(causes))[1] AS top_cause,\n            countEqual(causes, top_cause) AS top_n,\n            max(ended_at) AS last_visit\n        FROM done\n        GROUP BY site\n    )\nSELECT\n    site,\n    multiIf(chromium_sessions < 3, 'not_enough_data', 2 * chromium_blocked > chromium_sessions, 'blocked', chromium_success_rate >= 95, 'healthy', chromium_success_rate >= 90, 'degraded', 'failed') AS health,\n    sessions,\n    chromium_sessions,\n    chromium_success_rate,\n    other_success_rate,\n    if(top_n = 0, NULL, if(top_cause = 'site_layout', concat('site_layout ×', toString(top_n), if(chromium_layout > 0, ' · site changed', ' (not Chromium)')), concat(top_cause, ' ×', toString(top_n)))) AS top_cause,\n    last_visit\nFROM per_site\nORDER BY site\n",
           "refId": "A",
           "pluginVersion": "4.23.2"
         }
