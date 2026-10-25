@@ -41,7 +41,7 @@ export function parseRobots(text: string): RobotsRules {
   let inStar = false; // are the lines we are reading in a group that names "*"?
   let sawRuleSinceAgent = true; // a User-agent line after rules starts a new group
   // a UTF-8 byte order mark would hide the field name of the first line
-  for (const rawLine of text.replace(/^﻿/, "").split(/\r?\n/)) {
+  for (const rawLine of text.replace(/^\uFEFF/, "").split(/\r?\n/)) {
     const line = rawLine.replace(/#.*$/, "").trim();
     if (line === "") continue;
     const colon = line.indexOf(":");
