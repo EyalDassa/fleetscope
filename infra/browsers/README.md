@@ -250,14 +250,17 @@ The job fails if any site did not end in `success`.
 Scheduled runs only start from the default branch, and GitHub switches schedules off after 60 days
 without repository activity (re-enable them in the Actions tab).
 
-**What an issue means.** For each failing site the canary opens (or comments on, if it is still open) an
+**What an issue means.** For each site that fails **two runs in a row** the canary opens (or comments on, if it is still open) an
 issue titled `public-site canary: <site> failing` with the status, error code, reason and run link, and
-closes it with a comment when the site passes again. The error code tells you what to do:
+closes it with a comment after a single pass. The job itself is red on every failing run; waiting for
+the second failure only keeps one bad day (a 5xx, a slow network) from opening an issue. The failing
+sites of the last run travel in the Actions cache, so after a cache miss (first run, 7 days idle, a run
+from another branch) a failure counts as the first one. The error code tells you what to do:
 
 | Code / status | Meaning | Action |
 |---|---|---|
 | `site_layout` | The page loaded but its landmark selector is gone: the site changed. | Update the site's descriptor (landmark selector and fallback) and its saved HTML fixture in the fleet runner. |
-| `blocked` (403, 429, CAPTCHA) | The site pushed back. | Do not work around it. Decide whether to drop the site. |
+| `http_403`, `http_429`, `captcha` (status `blocked`) | The site pushed back. | Do not work around it. Decide whether to drop the site. |
 | `timeout`, `nav_error` | Slow or unreachable site, or a changed crawl delay. | Re-run once; if it repeats, check the site and its robots.txt. |
 | no session | The site never ran (skipped or paused). | Read the run log. |
 

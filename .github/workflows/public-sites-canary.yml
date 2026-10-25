@@ -107,15 +107,39 @@ jobs:
         # A fresh state file on every run, so no site starts paused by an earlier push-back.
         run: pnpm fleet run --engines chromium --sessions 5 --public 5 --concurrency 5 --seed 1 --state-file "$RUNNER_TEMP/public-sites-state.json"
 
+      # An issue is opened only when a site fails two runs in a row (one bad day is not a site change).
+      # The sites that failed last time travel in the Actions cache: restore the newest file, save this
+      # run's under a new key. With no cache (first run, evicted after 7 days, a run from another
+      # branch) every failure counts as the first one.
+      - name: Restore the previous run's failing sites
+        uses: actions/cache/restore@v6
+        with:
+          path: canary-state/previous.txt
+          key: public-canary-state-${{ github.run_id }}
+          restore-keys: public-canary-state-
       - name: Report per site, open or close issues
         if: always()
         env:
+          CANARY_PREV_FILE: canary-state/previous.txt
+          CANARY_STATE_FILE: canary-state/current.txt
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           CANARY_ISSUES: "1"
           CANARY_FLEET_OUTCOME: ${{ steps.fleet.outcome }}
           CANARY_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: bash .github/scripts/public-canary-report.sh
+      - name: Remember this run's failing sites for the next run
+        if: always()
+        run: |
+          # No current.txt means the report itself failed (ClickHouse down): keep the old streaks.
+          if [ -f canary-state/current.txt ]; then cp canary-state/current.txt canary-state/previous.txt; fi
+          mkdir -p canary-state && touch canary-state/previous.txt
+      - name: Save the failing sites
+        if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: canary-state/previous.txt
+          key: public-canary-state-${{ github.run_id }}
 
       - name: Collect diagnostics
         if: failure()

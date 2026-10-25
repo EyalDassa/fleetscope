@@ -11,9 +11,14 @@
 # sessions.reason.
 #
 # Issues (only when CANARY_ISSUES=1, otherwise the script just says what it would do):
-#   failing site, no open issue "public-site canary: <site> failing"  -> open one
+#   failing site, no open issue, failed in the previous run too       -> open one
+#   failing site, no open issue, first failure (or no previous run)   -> wait: one transient failure
+#                                                                        (a 5xx, a slow day) opens nothing
 #   failing site, open issue exists                                   -> comment on it
-#   passing site, open issue exists                                   -> comment and close it
+#   passing site, open issue exists                                   -> comment and close it (1 pass is enough)
+# "Previous run" = the file CANARY_PREV_FILE (the sites that failed last time, one per line). The script
+# writes this run's list to CANARY_STATE_FILE; the workflow carries it from run to run in the Actions
+# cache. A job is red on every failing run, whether or not an issue is opened.
 # A site with NO session in the window gets an issue too (it never ran, or was paused), unless the
 # fleet runner itself failed (CANARY_FLEET_OUTCOME != success): then it is an infrastructure problem,
 # not a site problem, and the job fails without blaming the sites.
@@ -24,6 +29,8 @@
 #   CANARY_WINDOW_MINUTES=120      only sessions that started this recently count
 #   CANARY_FLEET_OUTCOME=success   outcome of the `fleet run` step (success | failure | cancelled | ...)
 #   CANARY_ISSUES=0                1 = really call gh (needs GH_TOKEN, and GH_REPO outside a checkout)
+#   CANARY_PREV_FILE               sites that failed in the previous run (missing or empty = none)
+#   CANARY_STATE_FILE              where to write the sites that fail in this run (default: nowhere)
 #   CANARY_RUN_URL                 link to the workflow run, put into every issue
 #   CANARY_GH=gh                   the gh command (the test replaces it)
 #   CANARY_TSV_FILE                test hook: read the report from this file instead of ClickHouse
@@ -40,6 +47,9 @@ fleet_outcome="${CANARY_FLEET_OUTCOME:-success}"
 issues_on="${CANARY_ISSUES:-0}"
 run_url="${CANARY_RUN_URL:-(no run link)}"
 gh_cmd="${CANARY_GH:-gh}"
+prev_file="${CANARY_PREV_FILE:-}"
+state_file="${CANARY_STATE_FILE:-}"
+failed_now=""  # sites failing in this run, one per line (becomes the next run's CANARY_PREV_FILE)
 
 # Latest public session per site in the window (`sessions FINAL`: one row per session, the ended
 # one). The error code is the first failed action's. Real sessions only: `sim` data never has target
@@ -96,6 +106,10 @@ if [ "$issues_on" = "1" ]; then
   fi
 fi
 
+in_previous() { # did this site fail in the previous run?
+  [ -n "$prev_file" ] && [ -f "$prev_file" ] && grep -qxF -- "$1" "$prev_file"
+}
+
 issue_number_for() { # exact title match, first number or nothing
   printf '%s\n' "$open_issues" | awk -F'\t' -v t="$1" '$2 == t { print $1; exit }'
 }
@@ -106,10 +120,11 @@ gh_or_warn() {
   "$gh_cmd" "$@" || echo "::warning::gh $1 $2 failed" >&2
 }
 
-hint_for() { # what the status / error code means and what to do about it
-  case "$1" in
+hint_for() { # <status> <error code or empty>: what it means and what to do about it
+  # A blocked session carries http_403, http_429 or captcha as its error code, so the code decides first.
+  case "${2:-$1}" in
     site_layout) echo "The page loaded but its landmark selector is missing: the site changed its markup. Update the site's descriptor in apps/fleet-runner (landmark selector and fallback) and its saved HTML fixture." ;;
-    blocked) echo "The site pushed back (403, 429 or a CAPTCHA). The site is paused for an hour on a real fleet. Do not work around it: decide whether to drop the site (ADR 0007)." ;;
+    blocked|http_403|http_429|captcha) echo "The site pushed back (403, 429 or a CAPTCHA). The site is paused for an hour on a real fleet. Do not work around it: decide whether to drop the site (ADR 0007)." ;;
     timeout) echo "The session hit its time limit. Check whether the site is slow or the crawl delay changed in its robots.txt." ;;
     missing) echo "No session was recorded in the canary window. The site may have been skipped (paused after push-back or robots.txt) or the runner never reached it. Read the run log." ;;
     *) echo "See the run log for the details. If the page changed, update the site's descriptor in apps/fleet-runner." ;;
@@ -156,12 +171,26 @@ for site in $sites; do
 
   if [ "$status" = "missing" ] && [ "$fleet_outcome" != "success" ]; then
     echo "     the fleet runner step ended with '${fleet_outcome}': no issue for ${site}, that is not the site's fault" >&2
+    # We learned nothing about the site, so its streak stays as it was.
+    ! in_previous "$site" || failed_now+="${site}"$'
+'
+    continue
+  fi
+  failed_now+="${site}"$'
+'
+
+  # One failure can be a bad day of the site or the network. Open an issue only when the site also
+  # failed in the previous run. (An already open issue is commented on every time.)
+  if [ -z "$number" ] && ! in_previous "$site"; then
+    echo "     first failure in a row: no issue yet, one more failing run opens it" >&2
     continue
   fi
 
   # Reason text comes from the site's pages and the browser: keep it short and in a code block.
-  short_reason="$(printf '%s' "${reason:-none}" | cut -c1-500)"
-  hint="$(hint_for "${code:-$status}")"
+  # (backticks removed: a fence in the reason would end our code block)
+  short_reason="$(printf '%s' "${reason:-none}" | tr -d '`' | cut -c1-500)"
+  code="$(printf '%s' "$code" | tr -d '`')"
+  hint="$(hint_for "$status" "$code")"
   body="$(cat <<EOF
 The daily public-sites canary could not complete the journey of \`${site}\` with Chromium.
 
@@ -189,6 +218,11 @@ EOF
     [ "$issues_on" != "1" ] || gh_or_warn issue create --title "$title" --body "$body"
   fi
 done
+
+if [ -n "$state_file" ]; then
+  mkdir -p "$(dirname "$state_file")"
+  printf '%s' "$failed_now" > "$state_file"
+fi
 
 if [ "$fleet_outcome" != "success" ]; then
   echo "FAIL: the fleet runner step ended with '${fleet_outcome}'" >&2

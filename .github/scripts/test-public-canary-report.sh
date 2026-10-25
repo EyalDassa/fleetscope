@@ -30,6 +30,16 @@ $(row mdn success - -)
 $(row python-docs success - -)
 $(row wikipedia success - -)"
 
+# The sites that failed in the previous run (CANARY_PREV_FILE). By default every site did, so a failure
+# now is a second one in a row and opens an issue; single tests set prev_list to something else.
+default_prev=$'wikipedia
+mdn
+govuk
+hackernews
+python-docs
+'
+prev_list="$default_prev"
+
 # run <name> <want: pass|fail> <report> <open issues> <fleet outcome> <issues on> <grep pattern, one per
 # remaining arg, that must appear in calls.log; a pattern starting with ! must NOT appear>
 run() {
@@ -38,11 +48,18 @@ run() {
   printf '%s\n' "$report" > "$tmp/report.tsv"
   printf '%s' "$open" > "$tmp/open.tsv"
   : > "$tmp/calls.log"
-  if ! CANARY_TSV_FILE="$tmp/report.tsv" CANARY_GH="$tmp/gh" CANARY_ISSUES="$on" \
+  printf '%s' "$prev_list" > "$tmp/prev.txt"
+  rm -f "$tmp/state.txt"
+  if ! CANARY_PREV_FILE="$tmp/prev.txt" CANARY_STATE_FILE="$tmp/state.txt" CANARY_TSV_FILE="$tmp/report.tsv" CANARY_GH="$tmp/gh" CANARY_ISSUES="$on" \
       CANARY_FLEET_OUTCOME="$outcome" CANARY_RUN_URL="https://example.test/runs/42" \
       bash "$here/public-canary-report.sh" > "$tmp/out.txt" 2>&1; then
     got=fail
   fi
+  # the sites recorded as failing for the next run, joined by spaces, appended as "state|..."
+  printf 'state|%s
+' "$(tr '
+' ' ' < "$tmp/state.txt" | sed 's/ $//')" >> "$tmp/calls.log"
+  prev_list="$default_prev"
   local problem=""
   [ "$got" = "$want" ] || problem="wanted exit $want, got $got"
   local pat
@@ -105,6 +122,42 @@ $(row mdn success - -)
 $(row python-docs success - -)
 $(row wikipedia success - -)" "" success 1 \
   "create|public-site canary: govuk failing|" "blocked" "HTTP 403"
+
+# --- two failures in a row ---------------------------------------------------------------------------
+prev_list=""
+run "first failure: no issue yet, but the site is remembered and the job is red" fail "$bad_layout" "" success 1   "!^create|" "!^comment|" "^state|hackernews$"
+
+prev_list=$'mdn
+'   # mdn failed last time, hackernews did not
+run "a different site failed last time: still the first failure for this one" fail "$bad_layout" "" success 1   "!^create|" "^state|hackernews$"
+
+prev_list=""
+run "first failure but an issue is already open: comment right away" fail "$bad_layout"   $'7	public-site canary: hackernews failing
+' success 1 "^comment|7|" "!^create|"
+
+prev_list=$'hackernews
+'
+run "a pass clears the streak" pass "$all_ok" "" success 1 "^state|$"
+
+prev_list=$'hackernews
+'
+run "the runner failed and the site has no session: its streak is kept, nothing is opened" fail "" "" failure 1   "!^create|" "^state|hackernews$"
+
+# --- hints and the reason text -------------------------------------------------------------------------
+for code in http_403 http_429 captcha; do
+  run "$code gets the blocked hint" fail "$(row govuk blocked "$code" 'HTTP 4xx')
+$(row hackernews success - -)
+$(row mdn success - -)
+$(row python-docs success - -)
+$(row wikipedia success - -)" "" success 1 "^create|public-site canary: govuk failing|" "Do not work around it"
+done
+
+fence='```'
+run "backticks in the reason cannot close the code block" fail "$(row govuk failed nav_error "x${fence} @everyone")
+$(row hackernews success - -)
+$(row mdn success - -)
+$(row python-docs success - -)
+$(row wikipedia success - -)" "" success 1 "^create|" "x @everyone" "!x\`"
 
 run "issues off: decides, calls nothing" fail "$bad_layout" "" success 0 "!^create|" "!^comment|" "!^close|"
 
