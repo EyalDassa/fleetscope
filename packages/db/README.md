@@ -839,6 +839,50 @@ GROUP BY scenario, engine
 ORDER BY scenario, engine
 ```
 
+The site by engine grid (Browsers dashboard): one row per real public site and engine, built on the
+same sessions as above (ended, not interrupted) and on `session-facts`, so the Engine, Source, Target
+and Site filters apply. Only `target = 'public'` sessions are in it; the demo site is not a site to
+compare. The columns are a contract with the dashboard: `site, engine, sessions, success_rate,
+top_cause, last_visit`. `success_rate` is `100 * success / ended`, NULL (never 0) when there are no
+ended sessions. A pair with no session has no row at all, so the panel shows "not available" for the
+missing cell. `top_cause` is as in `compatibility-matrix`, NULL when the pair has no failure.
+`last_visit` is the latest `ended_at` of the pair.
+
+```sql name=site-engine-matrix
+WITH
+    facts AS (/* session-facts */),
+    done AS
+    (
+        SELECT *
+        FROM facts
+        WHERE ended_at IS NOT NULL AND $__timeFilter(ended_at) AND NOT is_interrupted
+          AND target = 'public'
+    ),
+    causes AS
+    (
+        SELECT site, engine, argMin(cause, (-toInt64(n), cause)) AS top_cause
+        FROM
+        (
+            SELECT site, engine, cause, count() AS n
+            FROM done
+            WHERE cause IS NOT NULL
+            GROUP BY site, engine, cause
+        )
+        GROUP BY site, engine
+    )
+SELECT
+    d.site AS site,
+    d.engine AS engine,
+    count() AS sessions,
+    100 * countIf(d.status = 'success') / nullIf(count(), 0) AS success_rate,
+    nullIf(any(c.top_cause), '') AS top_cause,
+    max(d.ended_at) AS last_visit
+FROM done AS d
+LEFT JOIN causes AS c ON c.site = d.site AND c.engine = d.engine
+GROUP BY site, engine
+ORDER BY site, engine
+```
+
 #### How the dashboards relate to these snippets
 
 - The `session-facts` block is embedded unchanged in every panel that needs it. The one allowed
