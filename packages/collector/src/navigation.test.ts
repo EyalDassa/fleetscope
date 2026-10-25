@@ -209,3 +209,53 @@ describe("container samples carry the time the reading was taken", () => {
     expect(samples[2]?.ts).toBeLessThanOrEqual(Date.now());
   });
 });
+
+describe("429 and the landmark check (docs/adr/0007)", () => {
+  it("a goto answered 429 is a block: BlockedError, http_403, a blocked issue, the message names 429", async () => {
+    const { session, fake, page } = await setup();
+    fake.gotoStatus = 429;
+    const error = await rejection(page.goto("https://news.test/"));
+    expect(error).toBeInstanceOf(BlockedError);
+    expect(error.code).toBe("http_403");
+    expect(error.message).toContain("429");
+    expect(session.issueKinds.has("blocked")).toBe(true);
+  });
+
+  it("landmark: the first selector that matches is returned", async () => {
+    const { fake, page } = await setup();
+    fake.counts = { "#main": 1 };
+    await expect(page.landmark(["#main"], { timeoutMs: 20 })).resolves.toBe("#main");
+  });
+
+  it("landmark: falls back to the second selector", async () => {
+    const { fake, page, events } = await setup();
+    fake.counts = { "#new": 0, "#old": 2 };
+    await expect(page.landmark(["#new", "#old"], { timeoutMs: 20 })).resolves.toBe("#old");
+    expect(ofType(await events(), "action")[0]).toMatchObject({ ok: true, action_type: "extract" });
+  });
+
+  it("landmark: no landmark but a challenge page -> captcha (blocked), not site_layout", async () => {
+    const { session, fake, page, events } = await setup();
+    fake.counts = { "#main": 0, "iframe.captcha": 1 };
+    const error = await rejection(
+      page.landmark(["#main"], { timeoutMs: 20, challengeSelector: "iframe.captcha" }),
+    );
+    expect(error).toBeInstanceOf(BlockedError);
+    expect(error.code).toBe("captcha");
+    expect(session.issueKinds.has("captcha")).toBe(true);
+    expect(ofType(await events(), "action")[0]).toMatchObject({ ok: false, error_code: "captcha" });
+  });
+
+  it("landmark: none matches -> site_layout, no issue, the session is not blamed on the browser", async () => {
+    const { session, fake, page, events } = await setup();
+    fake.counts = { "#new": 0, "#old": 0 };
+    const error = await rejection(page.landmark(["#new", "#old"], { timeoutMs: 20 }));
+    expect(error.code).toBe("site_layout");
+    expect(error).not.toBeInstanceOf(BlockedError);
+    expect(session.issueKinds.size).toBe(0);
+    const all = await events();
+    expect(ofType(all, "action")[0]).toMatchObject({ ok: false, error_code: "site_layout" });
+    expect(ofType(all, "issue")).toHaveLength(0);
+    expect(EventBatch.safeParse(all).success).toBe(true);
+  });
+});
