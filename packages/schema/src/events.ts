@@ -37,6 +37,30 @@ export const SOURCES = ["real", "sim"] as const;
 export const Source = z.enum(SOURCES);
 export type Source = z.infer<typeof Source>;
 
+/**
+ * What a session visits (docs/adr/0007). `demo`: the Fleetscope demo site, whose failures are
+ * controlled. `public`: a real public site, visited read-only. Independent of `source`
+ * (`real` | `sim`): a `sim` session is always `demo`.
+ */
+export const TARGETS = ["demo", "public"] as const;
+export const Target = z.enum(TARGETS);
+export type Target = z.infer<typeof Target>;
+
+/** `site` of a session on the demo site. */
+export const DEMO_SITE = "demo-site" as const;
+/**
+ * The sites the fleet knows. `site` itself is a free safe label, so a new site needs no schema
+ * release; this list is for producers and dashboards that want the current names.
+ */
+export const KNOWN_SITES = [
+  DEMO_SITE,
+  "wikipedia",
+  "mdn",
+  "govuk",
+  "hackernews",
+  "python-docs",
+] as const;
+
 export const SESSION_STATUSES = ["success", "failed", "blocked", "timeout", "crashed"] as const;
 export const SessionStatus = z.enum(SESSION_STATUSES);
 export type SessionStatus = z.infer<typeof SessionStatus>;
@@ -194,6 +218,17 @@ export const SessionStartedEvent = z
      * is the engine that actually ran. `null` or absent: the session was not routed.
      */
     routed_from: Engine.nullish(),
+    /**
+     * `demo` or `public` (docs/adr/0007). Absent means `demo`: events written before the field
+     * existed, and producers that only know the demo site. Storage applies the default.
+     */
+    target: Target.optional(),
+    /**
+     * Which site the session visits: `demo-site` or a public site (`wikipedia`, `mdn`, `govuk`,
+     * `hackernews`, `python-docs`). A safe label because dashboards put it into SQL through the
+     * `site` variable. Absent means `demo-site`.
+     */
+    site: safeLabel.optional(),
   })
   .refine((event) => event.routed_from == null || event.routed_from !== event.engine, {
     message: "routed_from must name another engine than engine (routed means moved)",

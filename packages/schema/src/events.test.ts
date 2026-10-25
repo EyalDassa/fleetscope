@@ -6,6 +6,7 @@ import {
   EventBatch,
   FleetEvent,
   IssueEvent,
+  KNOWN_SITES,
   NetworkRequestEvent,
   ResourceSampleEvent,
   SCHEMA_VERSION,
@@ -243,5 +244,36 @@ describe("EventBatch", () => {
 
   it("accepts a mixed batch", () => {
     expect(EventBatch.safeParse(Object.values(valid)).success).toBe(true);
+  });
+});
+
+describe("session.started target and site (docs/adr/0007)", () => {
+  it("both are optional: an event without them is a demo-site session", () => {
+    const event = SessionStartedEvent.parse(valid["session.started"]);
+    expect(event.target).toBeUndefined();
+    expect(event.site).toBeUndefined();
+  });
+
+  it("accepts demo and public, and the known site names", () => {
+    for (const site of KNOWN_SITES) {
+      expect(
+        SessionStartedEvent.safeParse({ ...valid["session.started"], target: "public", site })
+          .success,
+      ).toBe(true);
+    }
+    expect(
+      SessionStartedEvent.parse({ ...valid["session.started"], target: "demo", site: "demo-site" }),
+    ).toMatchObject({ target: "demo", site: "demo-site" });
+  });
+
+  it("rejects an unknown target and a site that is not a safe label (dashboards put it into SQL)", () => {
+    const bad = (extra: object) =>
+      SessionStartedEvent.safeParse({ ...valid["session.started"], ...extra }).success;
+    expect(bad({ target: "private" })).toBe(false);
+    expect(bad({ target: "" })).toBe(false);
+    expect(bad({ site: "" })).toBe(false);
+    expect(bad({ site: "it's" })).toBe(false);
+    expect(bad({ site: "a b" })).toBe(false);
+    expect(bad({ site: "x".repeat(129) })).toBe(false);
   });
 });
