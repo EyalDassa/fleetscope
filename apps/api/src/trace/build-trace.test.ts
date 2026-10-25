@@ -26,6 +26,8 @@ function session(overrides: Partial<TimelineSession> = {}): TimelineSession {
     startup_ms: 900,
     connect_ms: 400,
     routed_from: null,
+    target: "demo",
+    site: "demo-site",
     status: "success",
     started_at_ms: START,
     ended_at_ms: START + 5000,
