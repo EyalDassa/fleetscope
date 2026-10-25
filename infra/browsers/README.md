@@ -231,3 +231,36 @@ The Chromium image's `HEALTHCHECK` opens a TCP connection to port 3000 with bash
 every 30 s. It is for `docker ps`; it is deliberately slow and cheap so it does not disturb the
 per-container CPU samples. The runner does its own, faster readiness check, so `startup_ms` is not
 rounded up to the health interval. The upstream images are used unmodified, with no health check of ours.
+
+## Public sites canary
+
+The fleet also visits real public sites (Wikipedia, MDN, GOV.UK, Hacker News, Python docs; ADR 0007). A
+real site can change its markup at any time, so a daily GitHub Actions workflow,
+`.github/workflows/public-sites-canary.yml`, visits each one once with Chromium and tells us when a
+journey broke. It runs on a schedule (05:17 UTC) and by hand, never on a pull request or a push, and it
+is **not** a required check: a site we do not control must not block a merge.
+
+How it works: it starts ClickHouse and the api like the fleet smoke job, then runs
+`pnpm fleet run --engines chromium --sessions 5 --public 5 --seed 1 --state-file ...` (one session per
+site, a fresh state file so no site starts paused). `.github/scripts/public-canary-report.sh` then reads
+the latest `public` session per site from `sessions FINAL` and the first failed action's error code.
+The job fails if any site did not end in `success`.
+
+**Run it by hand:** Actions tab, "Public sites canary", "Run workflow", or `gh workflow run public-sites-canary.yml`.
+Scheduled runs only start from the default branch, and GitHub switches schedules off after 60 days
+without repository activity (re-enable them in the Actions tab).
+
+**What an issue means.** For each failing site the canary opens (or comments on, if it is still open) an
+issue titled `public-site canary: <site> failing` with the status, error code, reason and run link, and
+closes it with a comment when the site passes again. The error code tells you what to do:
+
+| Code / status | Meaning | Action |
+|---|---|---|
+| `site_layout` | The page loaded but its landmark selector is gone: the site changed. | Update the site's descriptor (landmark selector and fallback) and its saved HTML fixture in the fleet runner. |
+| `blocked` (403, 429, CAPTCHA) | The site pushed back. | Do not work around it. Decide whether to drop the site. |
+| `timeout`, `nav_error` | Slow or unreachable site, or a changed crawl delay. | Re-run once; if it repeats, check the site and its robots.txt. |
+| no session | The site never ran (skipped or paused). | Read the run log. |
+
+If the fleet runner itself fails (Docker, image pull, ClickHouse), the job is red but no issue is opened:
+that is our infrastructure, not the site. To test the reporting logic offline, run
+`bash .github/scripts/test-public-canary-report.sh` (a fake `gh`, no ClickHouse; also run in CI).

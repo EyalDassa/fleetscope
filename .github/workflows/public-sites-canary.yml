@@ -1,0 +1,135 @@
+name: Public sites canary
+
+# Visits the real public sites of ADR 0007 once each with Chromium and opens a GitHub issue per site
+# whose journey broke, so a site change never fails silently. NOT a required check and never run on
+# pull requests or pushes: real sites are outside our control and must not block a merge.
+# Run it by hand: Actions tab -> "Public sites canary" -> Run workflow (or `gh workflow run`).
+# Scheduled runs only happen on the default branch.
+
+on:
+  schedule:
+    - cron: "17 5 * * *" # daily, 05:17 UTC (off the hour, when GitHub's queue is busiest)
+  workflow_dispatch:
+
+concurrency:
+  group: public-sites-canary
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write # open, comment on and close the "public-site canary: <site> failing" issues
+
+jobs:
+  canary:
+    name: Public sites (Chromium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      clickhouse:
+        # Keep the tag and env in sync with infra/docker-compose.yml.
+        image: clickhouse/clickhouse-server:26.8.34.13
+        env:
+          CLICKHOUSE_USER: fleetscope
+          CLICKHOUSE_PASSWORD: fleetscope_dev_password
+          CLICKHOUSE_DB: fleetscope
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+        ports:
+          - 8123:8123
+        options: >-
+          --ulimit nofile=262144:262144
+          --health-cmd "wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+          --health-start-period 10s
+    env:
+      # Same values as .env.example. These are throwaway credentials for the CI container only.
+      CLICKHOUSE_URL: http://localhost:8123
+      CLICKHOUSE_USER: fleetscope
+      CLICKHOUSE_PASSWORD: fleetscope_dev_password
+      CLICKHOUSE_DATABASE: fleetscope
+      LOG_LEVEL: info
+      API_PORT: "4000"
+      API_HOST: 127.0.0.1
+      FLEETSCOPE_API_URL: http://localhost:4000
+      # Chromium only. The tag must equal the one built below and the Playwright version pinned in the
+      # runner (check-playwright-version.sh, in the "check" job of ci.yml).
+      FLEET_BROWSER_IMAGE_CHROMIUM: fleetscope/playwright-chromium:1.64.1-2
+      FLEET_FORWARDER_IMAGE: fleetscope/forwarder:1-1
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+
+      # Same pinned Docker actions and layer caches as the "Fleet smoke" job in ci.yml.
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build the Chromium browser image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: infra/browsers
+          file: infra/browsers/chromium/Dockerfile
+          load: true
+          push: false
+          tags: fleetscope/playwright-chromium:1.64.1-2
+          cache-from: type=gha,scope=browser-chromium
+          cache-to: type=gha,mode=max,scope=browser-chromium,ignore-error=true
+          provenance: false
+          sbom: false
+      - name: Build the forwarder sidecar image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: infra/browsers
+          file: infra/browsers/forwarder/Dockerfile
+          load: true
+          push: false
+          tags: fleetscope/forwarder:1-1
+          cache-from: type=gha,scope=browser-forwarder
+          cache-to: type=gha,mode=max,scope=browser-forwarder,ignore-error=true
+          provenance: false
+          sbom: false
+
+      - run: pnpm db:migrate
+      - name: Build the api
+        run: pnpm --filter @fleetscope/api build
+      - name: Start the api
+        run: |
+          mkdir -p canary-logs
+          nohup pnpm --filter @fleetscope/api start > canary-logs/api.log 2>&1 &
+          bash .github/scripts/wait-for-url.sh "$FLEETSCOPE_API_URL/healthz" 60 canary-logs/api.log
+
+      # 5 public sessions, one per site (wiki-read, mdn-read, govuk-read, hn-read, pydocs-read). The
+      # sites are different hosts, so all five run at once; each keeps its own crawl delay (GOV.UK 10 s,
+      # Hacker News 30 s). continue-on-error: the next step decides what a failure means (a broken
+      # site opens an issue, a broken runner does not) and fails the job.
+      - name: Run one session per public site
+        id: fleet
+        continue-on-error: true
+        timeout-minutes: 15
+        # A fresh state file on every run, so no site starts paused by an earlier push-back.
+        run: pnpm fleet run --engines chromium --sessions 5 --public 5 --concurrency 5 --seed 1 --state-file "$RUNNER_TEMP/public-sites-state.json"
+
+      - name: Report per site, open or close issues
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          CANARY_ISSUES: "1"
+          CANARY_FLEET_OUTCOME: ${{ steps.fleet.outcome }}
+          CANARY_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash .github/scripts/public-canary-report.sh
+
+      - name: Collect diagnostics
+        if: failure()
+        run: |
+          mkdir -p canary-logs
+          docker ps --all > canary-logs/docker-ps.txt 2>&1 || true
+          for id in $(docker ps --all --quiet --filter label=fleetscope.session); do
+            docker logs "$id" > "canary-logs/container-$id.log" 2>&1 || true
+          done
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: public-sites-canary-logs
+          path: canary-logs/
+          retention-days: 7
+          if-no-files-found: ignore
