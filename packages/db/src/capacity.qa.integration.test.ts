@@ -95,10 +95,13 @@ describe("capacity-load, QA edge cases", () => {
     await insertEvents(db.client, events, { dedupTokens: dedupTokensFor("qa-backfill") });
     await db.client.command({ query: "SYSTEM FLUSH LOGS part_log" });
 
-    const rows = await load(old - 2 * MIN, now + 30_000);
+    // End the range mid-minute (and after now). The macros cut it to whole seconds and the fill stops
+    // before its end, so an end in the first second of a minute would drop that minute (1 run in ~60).
+    const to = startOfMinute(now + 30_000) + 30_000;
+    const rows = await load(old - 2 * MIN, to);
     // 3 hours + 2 minutes + the current minute: every minute of the range has a row
     const first = startOfMinute(old - 2 * MIN);
-    const last = startOfMinute(now + 30_000);
+    const last = startOfMinute(to);
     expect(rows).toHaveLength((last - first) / MIN + 1);
     // 3 actions + 1 issue: sent in the old minute, nothing written there
     const oldMinute = rows.find(

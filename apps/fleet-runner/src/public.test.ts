@@ -110,6 +110,37 @@ describe("assignPublic", () => {
     expect(seen.size).toBe(9);
   });
 
+  it("any block of sites x engines ordinals visits every pair exactly once (5 sites, 3 engines)", () => {
+    for (const start of [0, 7, 1_000_003]) {
+      const pairs = Array.from({ length: 15 }, (_, i) => {
+        const p = assignPublic([...ENGINES], [...PUBLIC_SITES], start + i);
+        return `${p.site}/${p.engine}`;
+      });
+      expect(new Set(pairs).size).toBe(15);
+    }
+  });
+
+  it("one public session per run with a random seed reaches every site on every engine (the live loop)", () => {
+    // The old formula pinned each site to one engine here: (5q + r + q) mod 3 = r mod 3.
+    const seen = new Set<string>();
+    for (let seed = 0; seed < 2000; seed += 7) {
+      const p = assignPublic([...ENGINES], [...PUBLIC_SITES], seed);
+      seen.add(`${p.site}/${p.engine}`);
+    }
+    expect(seen.size).toBe(15);
+    for (const site of PUBLIC_SITES) {
+      const engines = new Set(
+        Array.from(
+          { length: 30 },
+          (_, k) =>
+            assignPublic([...ENGINES], [...PUBLIC_SITES], k * 5 + PUBLIC_SITES.indexOf(site))
+              .engine,
+        ),
+      );
+      expect(engines.size).toBe(3);
+    }
+  });
+
   it("each site has its own journey, and routing leaves a public session where it is (no capability needed)", () => {
     for (const site of PUBLIC_SITES) {
       const pick = assignPublic([...ENGINES], [site], 0);
