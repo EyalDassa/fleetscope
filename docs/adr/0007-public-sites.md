@@ -28,6 +28,16 @@ The demo site gives controlled, reproducible failures, but it can't show how the
 - **Kept apart in the data.** Every session carries `target` (`demo` | `public`) and `site`. `source` (`real` | `sim`) keeps its meaning. Every dashboard can filter on target and site.
 - **Site changes are not blamed on the browser.** When a page loads but its landmark selector is missing, the error is `site_layout`. A daily canary (GitHub Actions, Chromium only, never a required check) opens an issue when a site's journey breaks.
 
+### Implementation choices (2026-10-25)
+
+- **Optional fields, default at storage.** `target` and `site` are optional in `session.started`; absent means `demo` / `demo-site`, applied at storage. Old events and the simulator therefore stay valid.
+- **robots.txt:**
+  - one that cannot be read (5xx or a network error) means the site is **skipped**, never visited blind;
+  - a 4xx robots.txt means "allow all", per the robots standard;
+  - it is re-read every 6 hours in `fleet traffic`.
+- **No site available.** When every site is paused or skipped, public sessions fall back to the demo site, with one warning, so a batch still runs.
+- **Error codes.** A 429 is recorded as its own code, `http_429`, not folded into `http_403`.
+
 ## Adding a site: checklist
 
 1. Its robots.txt allows `*` for the planned paths, and its terms don't forbid automated access.

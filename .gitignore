@@ -36,3 +36,6 @@ Thumbs.db
 .idea/
 .vscode/*
 !.vscode/extensions.json
+
+# Runner pause state for public sites (--state-file)
+.fleet-state.json
