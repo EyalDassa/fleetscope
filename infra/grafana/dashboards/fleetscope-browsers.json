@@ -2566,12 +2566,254 @@
       ]
     },
     {
+      "id": 13,
+      "type": "table",
+      "title": "Real sites × engines ↗",
+      "description": "Does a real site work in each browser? One row per public site (Target = public), one column per engine, from the sessions that ended in the range (interrupted left out). A cell reads success rate · sessions · top failure cause, e.g. 92% · n=12 · site_layout. The rate is rounded down and coloured like the compatibility matrix: green from 95, amber from 90, red below. — means that engine ran no session of that site in the range (never 0%). Click a cell to open its sessions with the same range and source.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "fleetscope-clickhouse"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 42
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "color-text"
+            },
+            "inspect": false,
+            "filterable": false
+          },
+          "mappings": [
+            {
+              "type": "regex",
+              "options": {
+                "pattern": "^((100|9[5-9])%.*)$",
+                "result": {
+                  "text": "$1",
+                  "color": "#6EE7A8",
+                  "index": 0
+                }
+              }
+            },
+            {
+              "type": "regex",
+              "options": {
+                "pattern": "^(9[0-4]%.*)$",
+                "result": {
+                  "text": "$1",
+                  "color": "#FFD95A",
+                  "index": 1
+                }
+              }
+            },
+            {
+              "type": "regex",
+              "options": {
+                "pattern": "^(([0-9]|[1-8][0-9])%.*)$",
+                "result": {
+                  "text": "$1",
+                  "color": "#FF7B7B",
+                  "index": 2
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "—",
+                  "index": 3,
+                  "color": "#9AA9BB"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "—",
+                  "index": 4,
+                  "color": "#9AA9BB"
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "No public-site sessions ended in this range"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "site"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Site"
+              },
+              {
+                "id": "custom.width",
+                "value": 130
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "auto"
+                }
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Sessions of this site",
+                    "url": "/d/fleetscope-sessions?${__url_time_range}&${engine:queryparam}&${source:queryparam}&var-target=public&var-site=${__data.fields.site}",
+                    "targetBlank": false
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "chromium"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Sessions of this site on chromium",
+                    "url": "/d/fleetscope-sessions?${__url_time_range}&${source:queryparam}&var-target=public&var-site=${__data.fields.site}&var-engine=chromium",
+                    "targetBlank": false
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "chrome-headless-shell"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Sessions of this site on chrome-headless-shell",
+                    "url": "/d/fleetscope-sessions?${__url_time_range}&${source:queryparam}&var-target=public&var-site=${__data.fields.site}&var-engine=chrome-headless-shell",
+                    "targetBlank": false
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "lightpanda"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Sessions of this site on lightpanda",
+                    "url": "/d/fleetscope-sessions?${__url_time_range}&${source:queryparam}&var-target=public&var-site=${__data.fields.site}&var-engine=lightpanda",
+                    "targetBlank": false
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "enablePagination": false,
+        "footer": {
+          "show": false,
+          "reducer": [
+            "count"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      },
+      "transformations": [
+        {
+          "id": "groupingToMatrix",
+          "options": {
+            "columnField": "engine",
+            "rowField": "site",
+            "valueField": "label",
+            "emptyValue": "null"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "^site.engine$",
+            "renamePattern": "site"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "site": 0,
+              "chromium": 1,
+              "chrome-headless-shell": 2,
+              "lightpanda": 3
+            }
+          }
+        }
+      ],
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "fleetscope-clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "refId": "A",
+          "pluginVersion": "4.23.2",
+          "rawSql": "-- Real sites x engines (README snippet site-engine-matrix, wrapped in 'matrix'): one row per public site and engine, sessions that ended in the range (interrupted left out).\n-- The label is the success rate rounded DOWN (94.9% never reads as a green 95%) and the session count, then the top cause: \"92% · n=12 · site_layout\". A pair with no session has no row, so it is never 0%.\nWITH\n    facts AS (\n        WITH\n            picked AS\n            (\n                SELECT *\n                FROM sessions FINAL\n                WHERE engine IN (${engine:singlequote})\n                  AND source IN (${source:singlequote})\n                  AND $__conditionalAll(target IN (${target:singlequote}), $target)\n                  AND $__conditionalAll(site IN (${site:singlequote}), $site)\n                  AND started_at >= $__fromTime - INTERVAL 1 DAY\n                  AND started_at <= $__toTime\n                  AND (ended_at IS NULL OR ended_at >= $__fromTime)\n            ),\n            issue_facts AS\n            (\n                SELECT session_id, count() AS issue_count, toString(argMin(kind, ts)) AS first_issue\n                FROM issues\n                WHERE session_id IN (SELECT session_id FROM picked)\n                  AND ts >= (SELECT min(started_at) FROM picked)\n                  AND engine IN (${engine:singlequote})\n                  AND source IN (${source:singlequote})\n                GROUP BY session_id\n            ),\n            action_facts AS\n            (\n                SELECT\n                    session_id,\n                    count() AS actions,\n                    countIf(NOT ok) AS failed_actions,\n                    ifNull(argMinIf(error_code, seq, NOT ok), '') AS first_failed_code\n                FROM actions\n                WHERE session_id IN (SELECT session_id FROM picked)\n                  AND ts >= (SELECT min(started_at) FROM picked)\n                  AND engine IN (${engine:singlequote})\n                  AND source IN (${source:singlequote})\n                GROUP BY session_id\n            )\n        SELECT\n            p.session_id AS session_id,\n            p.agent_id AS agent_id,\n            p.source AS source,\n            p.engine AS engine,\n            p.routed_from AS routed_from,\n            p.target AS target,\n            p.site AS site,\n            p.engine_version AS engine_version,\n            p.provider AS provider,\n            p.scenario AS scenario,\n            p.started_at AS started_at,\n            p.ended_at AS ended_at,\n            p.status AS status,\n            p.reason AS reason,\n            p.duration_ms AS duration_ms,\n            p.startup_ms + p.connect_ms AS time_to_browser_ms,\n            (p.status = 'failed' AND ifNull(p.reason, '') = 'interrupted') AS is_interrupted,\n            a.actions AS actions,\n            a.failed_actions AS failed_actions,\n            i.issue_count AS issue_count,\n            multiIf(\n                p.status = 'running', 'running',\n                is_interrupted, 'interrupted',\n                p.status = 'success' AND a.failed_actions = 0 AND i.issue_count = 0, 'healthy',\n                p.status = 'success', 'degraded',\n                p.status = 'blocked', 'blocked',\n                'failed') AS display_status,\n            if(p.status NOT IN ('running', 'success') AND NOT is_interrupted,\n                multiIf(i.first_issue != '', i.first_issue, a.first_failed_code != '', a.first_failed_code, p.status),\n                NULL) AS cause,\n            if(cause IS NULL, NULL,\n                multiIf(i.first_issue != '', 'issue', a.first_failed_code != '', 'action', 'status')) AS cause_from,\n            (toUInt64(p.startup_ms) + p.connect_ms\n                + ifNull(p.duration_ms, dateDiff('millisecond', p.started_at, now64(3)))) / 3.6e6 AS browser_hours,\n            if(price.provider = '', NULL, browser_hours * price.usd_per_browser_hour) AS est_cost_usd\n        FROM picked AS p\n        LEFT JOIN issue_facts AS i ON i.session_id = p.session_id\n        LEFT JOIN action_facts AS a ON a.session_id = p.session_id\n        LEFT JOIN pricing_current AS price ON price.engine = p.engine AND price.provider = p.provider\n    ),\n    done AS\n    (\n        SELECT *\n        FROM facts\n        WHERE ended_at IS NOT NULL AND $__timeFilter(ended_at) AND NOT is_interrupted\n          AND target = 'public'\n    ),\n    causes AS\n    (\n        SELECT site, engine, argMin(cause, (-toInt64(n), cause)) AS top_cause\n        FROM\n        (\n            SELECT site, engine, cause, count() AS n\n            FROM done\n            WHERE cause IS NOT NULL\n            GROUP BY site, engine, cause\n        )\n        GROUP BY site, engine\n    ),\n    matrix AS\n    (\n        SELECT\n            d.site AS site,\n            d.engine AS engine,\n            count() AS sessions,\n            100 * countIf(d.status = 'success') / nullIf(count(), 0) AS success_rate,\n            nullIf(any(c.top_cause), '') AS top_cause,\n            max(d.ended_at) AS last_visit\n        FROM done AS d\n        LEFT JOIN causes AS c ON c.site = d.site AND c.engine = d.engine\n        GROUP BY site, engine\n        ORDER BY site, engine\n    )\nSELECT\n    site,\n    engine,\n    if(success_rate IS NULL, '—', concat(toString(toUInt8(floor(success_rate))), '% · n=', toString(sessions), if(top_cause IS NULL, '', concat(' · ', top_cause)))) AS label\nFROM matrix\nORDER BY site, engine"
+        }
+      ]
+    },
+    {
       "id": 6,
       "type": "text",
       "title": "How to read this",
       "gridPos": {
         "x": 0,
-        "y": 42,
+        "y": 49,
         "w": 24,
         "h": 13
       },
