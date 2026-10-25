@@ -37,6 +37,7 @@ The demo site gives controlled, reproducible failures, but it can't show how the
   - it is re-read every 6 hours in `fleet traffic`.
 - **No site available.** When every site is paused or skipped, public sessions fall back to the demo site, with one warning, so a batch still runs.
 - **Error codes.** A 429 is recorded as its own code, `http_429`, not folded into `http_403`.
+- **Pacing.** The crawl delay is kept per site across all sessions of one fleet process, with at most one session per site at a time. Pacing is per process: two fleet processes running at once can each visit a site. Only the pause file (`--state-file`) is shared between processes, so run one public-site process at a time (the live loop is that one).
 
 ## Adding a site: checklist
 
