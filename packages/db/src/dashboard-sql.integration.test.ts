@@ -413,6 +413,7 @@ describe("README snippets", () => {
         "session-error-rate-over-time",
         "session-facts",
         "session-rates",
+        "site-engine-matrix",
         "sessions-by-cause",
         "top-cause-per-engine",
         "top-failure-causes",
