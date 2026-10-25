@@ -89,3 +89,32 @@ The Public sites section stops mid-sentence ("`*` and `# @fleetscope/fleet-runne
 ## Verdict
 
 **Request changes:** RV-PS-01 (politeness: per-site pacing and concurrency), RV-PS-02 (drill-down link), RV-PS-03 (honesty of Top cause), RV-PS-04 (corrupted README). The nits can follow.
+
+## Round 2
+
+Re-checked only the round-1 items, at `15f165c` (fixes in `15f165c`, `0d22081`, `475df0e`, `ff1bebd`, `e350346`). Fleet-runner unit tests: 312 passed / 26 skipped.
+
+- **RV-PS-01: resolved.**
+  - `pacer.ts` holds one pacer per site, created by `prepareSites` and kept on `SiteRun`. Callers form a promise queue. Each waits for the previous caller's real start plus `minDelayMs`. A caller that was cut off hands the last real start on.
+  - `traffic` passes one `pacers` map across robots refreshes, so the gap also holds between batches.
+  - `busySites` in `runFleet` allows one session per site at a time and is released in `finally`. When no site is free, the session falls back to the demo site with one warning.
+  - Tests cover queued callers, the gap from one session to the next, two concurrent sessions on one site, and the "4 of 5 paused" case.
+- **RV-PS-02: resolved.** The link no longer carries `${target:queryparam}&${site:queryparam}`.
+- **RV-PS-03: resolved.** "· site changed" appears only when `chromium_layout > 0`; otherwise the cell reads "(not Chromium)".
+- **RV-PS-04: resolved.** The README has a single set of sections and the Public sites section is whole.
+- **N1: resolved.** The pause store keeps its state in memory, merged with the file (the later pause end wins). A failed write only logs a warning.
+- **N2: resolved.** `--state-file` defaults to `.fleet-state.json`.
+- **N3: not addressed.** It errs on the safe side; fine to leave.
+- **N4: resolved.**
+  - The hint is chosen from the error code first, so blocked sessions get the "don't work around it" hint.
+  - Backticks are stripped from the reason and the code.
+  - An issue opens after 2 failing runs in a row. The streak is carried in the Actions cache: a unique key per run, `restore-keys` by prefix, and the old streak is kept if the report itself failed.
+- **N5: resolved.** Health shows Blocked when most Chromium sessions were blocked, and "Not enough data" below 3 Chromium sessions.
+- **N6: resolved.** One remaining nit: the BOM in the regex is a literal invisible character (`/^<U+FEFF>/` as raw bytes). Write it as `/^﻿/` so a reader can see it.
+- **N7: resolved.** The ADR now says pacing is per process and to run one public-site process at a time.
+- **N8: resolved** (`e350346`).
+  - `http_429` is in `ERROR_CODES` and maps to a `blocked` issue.
+  - The collector, `BlockedError` and the db README are updated.
+  - The Public sites panel and the canary count it as push-back.
+
+**Verdict: approve with nits.** Remaining nits: N3, and the N6 escape. Nothing is disputed.
