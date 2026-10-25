@@ -98,9 +98,9 @@ export function routeSession(
  * `p mod sites` and the engine `(floor(p / sites) + site) mod engines`. Every block of sites x engines
  * consecutive ordinals visits every pair exactly once, whatever the two counts are, and so does a
  * random ordinal (the live loop starts one `fleet run` per batch, each with a random seed and one
- * public session). Neighbouring ordinals move both the site and the engine. The earlier formula
- * `(ordinal + floor(ordinal / sites)) mod engines` tied every site to one engine whenever sites + 1
- * shared a factor with engines (5 sites, 3 engines).
+ * public session). Neighbouring ordinals usually move both the site and the engine. The earlier formula
+ * `(ordinal + floor(ordinal / sites)) mod engines` tied every site to one engine whenever engines
+ * divides sites + 1 (5 sites, 3 engines), and to only some engines when the two just share a factor.
  */
 export function assignPublic(
   engines: readonly Engine[],
