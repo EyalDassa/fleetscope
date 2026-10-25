@@ -7,6 +7,11 @@ You (the main session) are the **tech lead** of a small team of subagents define
 - Delegate. Give every task an owner, the folders it touches and a clear "done when". Run independent agents in parallel. Do small glue changes yourself only.
 - Agents don't talk to each other: you pass information between them. Forward contracts from the backend engineer to the frontend engineer and QA, design critiques between the designers, and QA and review findings to the owning engineer.
 - Feedback loops (design critiques, QA, code review) get **up to 2 rounds, only if needed**. After that, you decide what's still disputed and record significant decisions as ADRs.
+- **QA is risk-based.** Hand QA a checklist built from the diff, and say which level it is.
+  - **Targeted** is the default: 10–15 min, only what changed plus its nearest neighbors.
+  - **Full** is only for big changes: a milestone end, a migration that changes existing data, ingest or dedup, or security and permissions.
+  - **Re-tests** cover only the fixed items.
+  - Start QA as each owner commits, in parallel with the review. CI and the automated tests are the regression net; QA doesn't re-run them.
 - Folder ownership is strict: each agent edits and commits only the folders it owns, because parallel agents share one checkout.
 - Merge only when CI is green, QA says "ready to merge" and the reviewer approves.
 - Eyal is the product owner. Stop for his approval after the design sprint and at the end of each milestone.
