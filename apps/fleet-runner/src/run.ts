@@ -1,11 +1,14 @@
 import { type CollectedSession, type Collector, createCollector } from "@fleetscope/collector";
-import type { Engine } from "@fleetscope/schema";
+import { DEMO_SITE, type Engine, type Target } from "@fleetscope/schema";
 import type { Logger } from "pino";
-import { assignSession, routeSession, unmetNeeds } from "./assign";
+import { type Assignment, assignPublic, assignSession, routeSession, unmetNeeds } from "./assign";
 import type { RunnerConfig } from "./config";
 import type { DockerFleet } from "./docker";
 import type { RunOptions } from "./options";
 import { sessionSeed } from "./rng";
+import { PAUSE_MS, type PauseStore } from "./scenarios/public/pause";
+import type { SiteRun } from "./scenarios/public/robots";
+import type { PublicSite } from "./scenarios/public/sites";
 import { runSession, type SessionResult } from "./session-runner";
 
 export interface FleetRunResult {
@@ -37,8 +40,22 @@ export interface FleetRunDeps {
    * one set across batches (`fleet traffic`) to warn once per run, not once per batch.
    */
   warnedUnroutable?: Set<string>;
-  /** Test hook. */
+  /**
+   * The public sites this run may visit, from `prepareSites` (robots.txt already applied). Needed
+   * when `options.public > 0`; without it every session is a demo session.
+   */
+  publicSites?: ReadonlyMap<PublicSite, SiteRun>;
+  /** Which public sites are paused. A site that pushes back is paused here. */
+  pause?: PauseStore;
+  /**
+   * Counts the public sessions assigned so far, so that the rotation over sites and engines goes on
+   * from one batch to the next (`fleet traffic`). Share one object across batches; its first value
+   * is where the rotation starts.
+   */
+  publicCounter?: { next: number };
+  /** Test hooks. */
   runSession?: typeof runSession;
+  now?: () => number;
 }
 
 /** One collector per engine: they own the in-order queues that ship events to the API. */
@@ -73,14 +90,41 @@ export async function runFleet(deps: FleetRunDeps): Promise<FleetRunResult> {
 
   const results: SessionResult[] = [];
   const warned = deps.warnedUnroutable ?? new Set<string>();
+  const publicCounter = deps.publicCounter ?? { next: options.seed };
+  const now = deps.now ?? Date.now;
+  let warnedNoPublicSite = false;
   let next = 0;
+
+  /** The public sites that may be visited right now: prepared, and not paused. */
+  const activeSites = (): PublicSite[] =>
+    [...(deps.publicSites?.keys() ?? [])].filter((site) => !deps.pause?.isPaused(site, now()));
 
   async function lane(): Promise<void> {
     while (!signal.aborted) {
       const n = next++;
       if (n >= options.sessions) return;
       const index = (deps.firstIndex ?? 0) + n;
-      const assigned = assignSession(options.engines, options.scenario, options.seed, index);
+      // The first `options.public` sessions of the batch visit public sites; the rest are the demo mix.
+      let assigned: Assignment | undefined;
+      let target: Target = "demo";
+      let site: string = DEMO_SITE;
+      let siteRun: SiteRun | undefined;
+      if (n < options.public) {
+        const sites = activeSites();
+        if (sites.length > 0) {
+          const pick = assignPublic(options.engines, sites, publicCounter.next++);
+          assigned = { engine: pick.engine, scenario: pick.scenario };
+          target = "public";
+          site = pick.site;
+          siteRun = deps.publicSites?.get(pick.site);
+        } else if (!warnedNoPublicSite) {
+          warnedNoPublicSite = true;
+          logger.warn(
+            "public sessions requested but no public site is available (paused, robots.txt, or not prepared): running them on the demo site",
+          );
+        }
+      }
+      assigned ??= assignSession(options.engines, options.scenario, options.seed, index);
       const { engine, scenario, routedFrom } = routeSession(
         assigned,
         options.engines,
@@ -98,26 +142,37 @@ export async function runFleet(deps: FleetRunDeps): Promise<FleetRunResult> {
       const fleet = deps.fleets.get(engine);
       const collector = collectors.get(engine);
       if (!fleet || !collector) throw new Error(`no browser fleet for engine ${engine}`);
-      results.push(
-        await (deps.runSession ?? runSession)(
-          {
-            fleet,
-            collector,
-            config,
-            sessionTimeoutMs: options.sessionTimeoutMs,
-            logger,
-            signal,
-            live: deps.live,
-          },
-          {
-            index,
-            engine,
-            routedFrom,
-            scenario,
-            seed: sessionSeed(options.seed, index),
-          },
-        ),
+      const result = await (deps.runSession ?? runSession)(
+        {
+          fleet,
+          collector,
+          config,
+          sessionTimeoutMs: options.sessionTimeoutMs,
+          logger,
+          signal,
+          live: deps.live,
+        },
+        {
+          index,
+          engine,
+          routedFrom,
+          scenario,
+          target,
+          site,
+          siteRun,
+          seed: sessionSeed(options.seed, index),
+        },
       );
+      results.push(result);
+      // A public site that said no (403, 429, CAPTCHA) is left alone for an hour (docs/adr/0007).
+      if (target === "public" && result.status === "blocked") {
+        const until = now() + PAUSE_MS;
+        deps.pause?.pause(site as PublicSite, until);
+        logger.warn(
+          { site, reason: result.reason, pausedUntil: new Date(until).toISOString() },
+          `public site ${site} pushed back: paused for an hour`,
+        );
+      }
     }
   }
 

@@ -10,6 +10,8 @@ function result(overrides: Partial<SessionResult>): SessionResult {
     engine: "chromium",
     routedFrom: null,
     scenario: "login-and-search",
+    target: "demo",
+    site: "demo-site",
     status: "success",
     reason: null,
     durationMs: 12_345,
@@ -41,7 +43,7 @@ describe("formatSummary", () => {
     );
     const lines = text.split("\n");
     expect(lines[0]).toMatch(
-      /^#\s+session\s+engine\s+scenario\s+status\s+duration\s+startup\s+to browser\s+ok\/actions\s+peak mem$/,
+      /^#\s+session\s+engine\s+target\/site\s+scenario\s+status\s+duration\s+startup\s+to browser\s+ok\/actions\s+peak mem$/,
     );
     expect(lines[2]).toContain("01234567");
     expect(lines[2]).toContain("success");

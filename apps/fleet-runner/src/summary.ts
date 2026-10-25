@@ -18,6 +18,28 @@ const mean = (values: number[]): number | null =>
 export const engineLabel = (r: Pick<SessionResult, "engine" | "routedFrom">): string =>
   r.routedFrom === null ? r.engine : `${r.engine} (from ${r.routedFrom})`;
 
+/** `demo` for the demo site, `public/wikipedia` for a public one. */
+export const visitLabel = (r: Pick<SessionResult, "target" | "site">): string =>
+  r.target === "demo" ? "demo" : `${r.target}/${r.site}`;
+
+/** One row per site that was visited: how many sessions, how they ended. Empty without public sessions. */
+function siteTotals(results: readonly SessionResult[]): string[] {
+  if (!results.some((r) => r.target === "public")) return [];
+  const sites = [...new Set(results.map((r) => r.site))].sort();
+  const rows = sites.map((site) => {
+    const mine = results.filter((r) => r.site === site);
+    const counts = new Map<ResultStatus, number>();
+    for (const r of mine) counts.set(r.status, (counts.get(r.status) ?? 0) + 1);
+    return [
+      site,
+      `${mine.length} sessions`,
+      [...counts].map(([status, n]) => `${status} ${n}`).join(", "),
+    ];
+  });
+  const widths = rows[0]?.map((_, i) => Math.max(...rows.map((row) => row[i]?.length ?? 0))) ?? [];
+  return rows.map((row) => `  ${row.map((cell, i) => pad(cell, widths[i] ?? 0)).join("  ")}`);
+}
+
 /** One row per engine: how its sessions ended and what it cost. */
 function engineTotals(results: readonly SessionResult[]): string[] {
   const engines = [...new Set(results.map((r) => r.engine))].sort();
@@ -55,6 +77,7 @@ export function formatSummary(
     String(r.index + 1),
     r.sessionId.slice(0, 8),
     engineLabel(r),
+    visitLabel(r),
     r.scenario,
     r.status,
     wasReported(r.status) ? seconds(r.durationMs) : "-",
@@ -67,6 +90,7 @@ export function formatSummary(
     "#",
     "session",
     "engine",
+    "target/site",
     "scenario",
     "status",
     "duration",
@@ -79,7 +103,7 @@ export function formatSummary(
     Math.max(h.length, ...rows.map((row) => row[i]?.length ?? 0)),
   );
   const line = (cells: string[]) =>
-    cells.map((cell, i) => pad(cell, widths[i] ?? 0, i === 0 || i >= 5)).join("  ");
+    cells.map((cell, i) => pad(cell, widths[i] ?? 0, i === 0 || i >= 6)).join("  ");
 
   const lines = [line(header), widths.map((w) => "-".repeat(w)).join("  "), ...rows.map(line)];
 
@@ -104,6 +128,8 @@ export function formatSummary(
       ...totals,
     );
   }
+  const sites = siteTotals(results);
+  if (sites.length > 0) lines.push("", "By site:", ...sites);
   const routed = results.filter((r) => r.routedFrom !== null);
   if (routed.length > 0) {
     const moves = new Map<string, number>();

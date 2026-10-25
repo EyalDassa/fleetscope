@@ -1,10 +1,17 @@
 import type { Engine } from "@fleetscope/schema";
 import { ENGINE_SPECS } from "./engines";
-import { SCENARIO_NAMES, SCENARIO_NEEDS, type ScenarioName } from "./scenarios";
+import {
+  SCENARIO_NAMES,
+  SCENARIO_NEEDS,
+  type ScenarioName,
+  type SessionScenarioName,
+} from "./scenarios";
+import { SCENARIO_OF_SITE } from "./scenarios/public";
+import type { PublicSite } from "./scenarios/public/sites";
 
 export interface Assignment {
   engine: Engine;
-  scenario: ScenarioName;
+  scenario: SessionScenarioName;
 }
 
 /**
@@ -52,7 +59,7 @@ const _everyEngineIsOrdered: [EngineMissingFromLightnessOrder] extends [never] ?
 void _everyEngineIsOrdered;
 
 /** What the scenario needs and the engine lacks. Empty: the engine can run the scenario. */
-export function unmetNeeds(engine: Engine, scenario: ScenarioName) {
+export function unmetNeeds(engine: Engine, scenario: SessionScenarioName) {
   const lacks = ENGINE_SPECS[engine].lacks;
   return SCENARIO_NEEDS[scenario].filter((need) => lacks.includes(need));
 }
@@ -81,4 +88,24 @@ export function routeSession(
   return capable === undefined
     ? unrouted
     : { engine: capable, scenario: assignment.scenario, routedFrom: assignment.engine };
+}
+
+/**
+ * Which site and engine public session number `ordinal` gets (docs/adr/0007). `ordinal` counts the
+ * public sessions of the whole run, so it keeps rotating from one batch to the next.
+ *
+ * Site and engine both move one step per session, so a few sessions already visit different sites on
+ * different engines. Moving in lock-step would pin each site to one engine whenever the number of
+ * sites and engines share a factor (3 sites left, 3 engines), so the engine takes an extra step each
+ * time the sites have gone round once.
+ */
+export function assignPublic(
+  engines: readonly Engine[],
+  sites: readonly PublicSite[],
+  ordinal: number,
+): { site: PublicSite; engine: Engine; scenario: SessionScenarioName } {
+  if (sites.length === 0) throw new Error("assignPublic needs at least one site");
+  const site = sites[ordinal % sites.length] as PublicSite;
+  const engine = engines[(ordinal + Math.floor(ordinal / sites.length)) % engines.length] as Engine;
+  return { site, engine, scenario: SCENARIO_OF_SITE[site] };
 }
