@@ -94,10 +94,13 @@ export function routeSession(
  * Which site and engine public session number `ordinal` gets (docs/adr/0007). `ordinal` counts the
  * public sessions of the whole run, so it keeps rotating from one batch to the next.
  *
- * Site and engine both move one step per session, so a few sessions already visit different sites on
- * different engines. Moving in lock-step would pin each site to one engine whenever the number of
- * sites and engines share a factor (3 sites left, 3 engines), so the engine takes an extra step each
- * time the sites have gone round once.
+ * The ordinal picks one of the sites x engines pairs: `p = ordinal mod (sites x engines)`, the site is
+ * `p mod sites` and the engine `(floor(p / sites) + site) mod engines`. Every block of sites x engines
+ * consecutive ordinals visits every pair exactly once, whatever the two counts are, and so does a
+ * random ordinal (the live loop starts one `fleet run` per batch, each with a random seed and one
+ * public session). Neighbouring ordinals move both the site and the engine. The earlier formula
+ * `(ordinal + floor(ordinal / sites)) mod engines` tied every site to one engine whenever sites + 1
+ * shared a factor with engines (5 sites, 3 engines).
  */
 export function assignPublic(
   engines: readonly Engine[],
@@ -105,7 +108,10 @@ export function assignPublic(
   ordinal: number,
 ): { site: PublicSite; engine: Engine; scenario: SessionScenarioName } {
   if (sites.length === 0) throw new Error("assignPublic needs at least one site");
-  const site = sites[ordinal % sites.length] as PublicSite;
-  const engine = engines[(ordinal + Math.floor(ordinal / sites.length)) % engines.length] as Engine;
+  const pairs = sites.length * engines.length;
+  const p = ((ordinal % pairs) + pairs) % pairs;
+  const siteIndex = p % sites.length;
+  const site = sites[siteIndex] as PublicSite;
+  const engine = engines[(Math.floor(p / sites.length) + siteIndex) % engines.length] as Engine;
   return { site, engine, scenario: SCENARIO_OF_SITE[site] };
 }
