@@ -47,4 +47,26 @@ describe("pause store", () => {
     expect(store.isPaused("mdn", 1)).toBe(false);
     expect(store.isPaused("govuk", 1)).toBe(true);
   });
+
+  it("a file that cannot be written does not throw: the pause holds in memory and the error is reported", () => {
+    const errors: unknown[] = [];
+    // the "file" is a directory, so the rename over it fails
+    const store = createPauseStore(dir, { onWriteError: (e) => errors.push(e) });
+    expect(() => store.pause("mdn", 9e12)).not.toThrow();
+    expect(errors).toHaveLength(1);
+    expect(store.isPaused("mdn", 1)).toBe(true);
+  });
+
+  it("merges with what another process wrote: the later end wins, and neither pause is lost", () => {
+    const file = join(dir, "merge.json");
+    writeFileSync(file, JSON.stringify({ govuk: 9e12, mdn: 100 }));
+    const store = createPauseStore(file);
+    store.pause("mdn", 200);
+    store.pause("wikipedia", 300);
+    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({
+      govuk: 9e12,
+      mdn: 200,
+      wikipedia: 300,
+    });
+  });
 });

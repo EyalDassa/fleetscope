@@ -238,6 +238,76 @@ describe("runFleet with --public", () => {
   });
 });
 
+describe("one session per site, and the demo site when none is free (RV-PS-01)", () => {
+  it("4 of 5 sites paused: only one public session runs on the last site at a time, the others go to the demo site", async () => {
+    const pause = createPauseStore();
+    for (const site of PUBLIC_SITES.filter((s) => s !== "hackernews"))
+      pause.pause(site, Date.now() + 60_000);
+    let active = 0;
+    let maxActive = 0;
+    const seen: SessionSpec[] = [];
+    await run(
+      { sessions: 6, public: 6, concurrency: 6 },
+      {
+        pause,
+        runSession: async (_deps, spec) => {
+          seen.push(spec);
+          if (spec.target === "public") {
+            active++;
+            maxActive = Math.max(maxActive, active);
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            active--;
+          }
+          return result(spec);
+        },
+      },
+    );
+    const pub = seen.filter((s) => s.target === "public");
+    expect(pub).toHaveLength(1);
+    expect(pub[0]?.site).toBe("hackernews");
+    expect(maxActive).toBe(1);
+    expect(seen.filter((s) => s.target === "demo")).toHaveLength(5);
+  });
+
+  it("with all five sites free, five concurrent public sessions visit five different sites", async () => {
+    const { specs } = await run({ sessions: 5, public: 5, concurrency: 5 });
+    expect(new Set(specs.map((s) => s.site)).size).toBe(5);
+  });
+
+  it("a site is free again when its session has ended, even if the session threw", async () => {
+    let calls = 0;
+    const onlyWiki = new Map([["wikipedia" as const, siteRun("wikipedia")]]);
+    const sites: string[] = [];
+    await expect(
+      run(
+        { sessions: 3, public: 3, concurrency: 1 },
+        {
+          publicSites: onlyWiki,
+          runSession: async (_deps, spec) => {
+            sites.push(spec.site as string);
+            if (++calls === 1) throw new Error("boom");
+            return result(spec);
+          },
+        },
+      ),
+    ).rejects.toThrow("boom");
+    // the lane died on the throw, but the site was released: a new run on the same map is not blocked
+    const { specs } = await run(
+      { sessions: 2, public: 2, concurrency: 1 },
+      { publicSites: onlyWiki },
+    );
+    expect(specs.map((s) => s.site)).toEqual(["wikipedia", "wikipedia"]);
+  });
+
+  it("sessions that follow each other on one site are fine (the pacer, not the lane, spaces them)", async () => {
+    const { specs } = await run(
+      { sessions: 4, public: 4, concurrency: 1 },
+      { publicSites: new Map([["mdn" as const, siteRun("mdn")]]) },
+    );
+    expect(specs.every((s) => s.site === "mdn")).toBe(true);
+  });
+});
+
 describe("how a public session ends", () => {
   const base = {
     interrupted: false,

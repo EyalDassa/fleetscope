@@ -1,6 +1,7 @@
 import type { CollectedPage } from "@fleetscope/collector";
 import type { Rng } from "../../rng";
 import type { Scenario, ScenarioContext } from "../types";
+import { createSitePacer, type SitePacer } from "./pacer";
 import type { SiteRun } from "./robots";
 import type { Landmark } from "./sites";
 
@@ -25,46 +26,19 @@ export const CHALLENGE_SELECTOR = [
   "[data-testid='captcha']",
 ].join(", ");
 
-/** Keeps `minDelayMs` between the starts of two navigations of one session. */
-export interface Pacer {
-  beforeNavigation(): Promise<void>;
-}
-
-function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise<void>((resolve) => {
-    if (signal?.aborted) return resolve();
-    const timer = setTimeout(resolve, ms);
-    signal?.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timer);
-        resolve();
-      },
-      { once: true },
-    );
-  });
-}
-
-export function createPacer(
-  minDelayMs: number,
-  options: {
-    sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
-    now?: () => number;
-    signal?: AbortSignal;
-  } = {},
-): Pacer {
-  const sleep = options.sleep ?? defaultSleep;
-  const now = options.now ?? Date.now;
-  let lastStart: number | undefined;
-  return {
-    async beforeNavigation() {
-      if (lastStart !== undefined) {
-        const wait = lastStart + minDelayMs - now();
-        if (wait > 0) await sleep(wait, options.signal);
-      }
-      lastStart = now();
-    },
-  };
+/**
+ * The pacer of a site: the one prepareSites put on the SiteRun, so that every session of the site
+ * shares it. A SiteRun built by hand (tests) gets one, kept per SiteRun object.
+ */
+const fallbackPacers = new WeakMap<SiteRun, SitePacer>();
+function pacerOf(siteRun: SiteRun): SitePacer {
+  if (siteRun.pacer) return siteRun.pacer;
+  let pacer = fallbackPacers.get(siteRun);
+  if (!pacer) {
+    pacer = createSitePacer();
+    fallbackPacers.set(siteRun, pacer);
+  }
+  return pacer;
 }
 
 /** One of the items, chosen with the seeded generator. */
@@ -96,11 +70,7 @@ interface Journey {
 function journeyFor(ctx: ScenarioContext): Journey {
   const siteRun = ctx.siteRun;
   if (!siteRun) throw new Error("a public scenario needs ctx.siteRun (the runner sets it)");
-  const pacer = createPacer(siteRun.minDelayMs, {
-    sleep: ctx.sleep,
-    now: ctx.now,
-    signal: ctx.signal,
-  });
+  const pacer = pacerOf(siteRun);
   const { descriptor } = siteRun;
   const expectLandmark = (page: CollectedPage, landmark: Landmark) =>
     page.landmark(landmark, { challengeSelector: CHALLENGE_SELECTOR });
@@ -109,7 +79,7 @@ function journeyFor(ctx: ScenarioContext): Journey {
     absolute: (path) => `${descriptor.baseUrl}${path}`,
     expect: expectLandmark,
     async visit(page, url, landmarks) {
-      await pacer.beforeNavigation();
+      await pacer.beforeNavigation(siteRun.minDelayMs, ctx.signal);
       await page.goto(url);
       for (const landmark of landmarks) await expectLandmark(page, landmark);
     },

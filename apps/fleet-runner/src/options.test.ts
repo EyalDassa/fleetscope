@@ -23,7 +23,7 @@ describe("parseRunArgs", () => {
       routing: "fixed",
       sessionTimeoutMs: 120_000,
       public: 0,
-      stateFile: undefined,
+      stateFile: ".fleet-state.json",
     });
   });
 
@@ -307,6 +307,6 @@ describe("--public and --state-file for traffic", () => {
 
   it("--state-file is read", () => {
     expect(parseTrafficArgs(["--state-file", "pause.json"], seed).stateFile).toBe("pause.json");
-    expect(parseTrafficArgs([], seed).stateFile).toBeUndefined();
+    expect(parseTrafficArgs([], seed).stateFile).toBe(".fleet-state.json");
   });
 });

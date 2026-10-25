@@ -95,9 +95,13 @@ export async function runFleet(deps: FleetRunDeps): Promise<FleetRunResult> {
   let warnedNoPublicSite = false;
   let next = 0;
 
-  /** The public sites that may be visited right now: prepared, and not paused. */
+  /** Public sites with a session running now: a site gets one visitor at a time (docs/adr/0007). */
+  const busySites = new Set<PublicSite>();
+  /** The public sites that may be visited right now: prepared, not paused and not busy. */
   const activeSites = (): PublicSite[] =>
-    [...(deps.publicSites?.keys() ?? [])].filter((site) => !deps.pause?.isPaused(site, now()));
+    [...(deps.publicSites?.keys() ?? [])].filter(
+      (site) => !busySites.has(site) && !deps.pause?.isPaused(site, now()),
+    );
 
   async function lane(): Promise<void> {
     while (!signal.aborted) {
@@ -117,10 +121,11 @@ export async function runFleet(deps: FleetRunDeps): Promise<FleetRunResult> {
           target = "public";
           site = pick.site;
           siteRun = deps.publicSites?.get(pick.site);
+          busySites.add(pick.site);
         } else if (!warnedNoPublicSite) {
           warnedNoPublicSite = true;
           logger.warn(
-            "public sessions requested but no public site is available (paused, robots.txt, or not prepared): running them on the demo site",
+            "public sessions requested but no public site is free (paused, busy with another session, skipped by robots.txt, or not prepared): running them on the demo site",
           );
         }
       }
@@ -142,27 +147,32 @@ export async function runFleet(deps: FleetRunDeps): Promise<FleetRunResult> {
       const fleet = deps.fleets.get(engine);
       const collector = collectors.get(engine);
       if (!fleet || !collector) throw new Error(`no browser fleet for engine ${engine}`);
-      const result = await (deps.runSession ?? runSession)(
-        {
-          fleet,
-          collector,
-          config,
-          sessionTimeoutMs: options.sessionTimeoutMs,
-          logger,
-          signal,
-          live: deps.live,
-        },
-        {
-          index,
-          engine,
-          routedFrom,
-          scenario,
-          target,
-          site,
-          siteRun,
-          seed: sessionSeed(options.seed, index),
-        },
-      );
+      let result: SessionResult;
+      try {
+        result = await (deps.runSession ?? runSession)(
+          {
+            fleet,
+            collector,
+            config,
+            sessionTimeoutMs: options.sessionTimeoutMs,
+            logger,
+            signal,
+            live: deps.live,
+          },
+          {
+            index,
+            engine,
+            routedFrom,
+            scenario,
+            target,
+            site,
+            siteRun,
+            seed: sessionSeed(options.seed, index),
+          },
+        );
+      } finally {
+        if (target === "public") busySites.delete(site as PublicSite);
+      }
       results.push(result);
       // A public site that said no (403, 429, CAPTCHA) is left alone for an hour (docs/adr/0007).
       if (target === "public" && result.status === "blocked") {

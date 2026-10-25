@@ -20,9 +20,12 @@ export interface RunOptions {
    * `run` is one batch of `--sessions`; `traffic` has a batch every period. docs/adr/0007.
    */
   public: number;
-  /** JSON file holding which public sites are paused and until when; `undefined`: kept in memory. */
+  /** JSON file holding which public sites are paused and until when (default `.fleet-state.json`; `undefined` only in tests: kept in memory). */
   stateFile: string | undefined;
 }
+
+/** Where paused public sites are remembered unless `--state-file` says otherwise (in .gitignore). */
+export const DEFAULT_STATE_FILE = ".fleet-state.json";
 
 /** Wrong command line. The message is for the person typing; `main` prints it with the usage. */
 export class UsageError extends Error {
@@ -53,7 +56,8 @@ Options for "run":
                             News, Python docs) with read-only journeys, default 0. The sites'
                             robots.txt is read at the start; a 403, 429 or CAPTCHA ends the session
                             as blocked and pauses that site for an hour
-  --state-file <path>       where the paused sites are remembered (default: only in this process)
+  --state-file <path>       where the paused sites are remembered, default .fleet-state.json (in the
+                            directory the runner starts in; git ignores it)
 
 Options for "traffic" (also --engines, --agent, --scenario, --seed, --routing, --session-timeout,
 --state-file):
@@ -173,7 +177,7 @@ export function parseRunArgs(
     routing: routing as RoutingPolicy,
     sessionTimeoutMs: positiveInt("session-timeout", values["session-timeout"], 120, 3600) * 1000,
     public: publicCount,
-    stateFile: values["state-file"]?.trim() || undefined,
+    stateFile: values["state-file"]?.trim() || DEFAULT_STATE_FILE,
   };
 }
 

@@ -13,9 +13,6 @@ export interface ScenarioContext {
   siteRun?: SiteRun;
   /** Public sessions only: aborted when the session is cut off, so a wait between pages ends at once. */
   signal?: AbortSignal;
-  /** Test hooks for the wait between navigations of a public session. */
-  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
-  now?: () => number;
 }
 
 /**

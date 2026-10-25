@@ -8,8 +8,10 @@ import { createInterruptHandler } from "./interrupt";
 import { parseRunArgs, parseTrafficArgs, type RunOptions, USAGE, UsageError } from "./options";
 import { preflight } from "./preflight";
 import { createCollectors, runFleet } from "./run";
+import type { SitePacer } from "./scenarios/public/pacer";
 import { createPauseStore } from "./scenarios/public/pause";
 import { prepareSites } from "./scenarios/public/robots";
+import type { PublicSite } from "./scenarios/public/sites";
 import type { SessionResult } from "./session-runner";
 import { forceShutdown } from "./shutdown";
 import { engineLabel, formatSummary, visitLabel } from "./summary";
@@ -156,7 +158,13 @@ async function runCommand(args: string[]): Promise<number> {
   );
 
   // Public sessions: read each site's robots.txt now and drop the paths it forbids (docs/adr/0007).
-  const pauseStore = createPauseStore(options.stateFile);
+  const pauseStore = createPauseStore(options.stateFile, {
+    onWriteError: (error) =>
+      logger.warn(
+        { err: error, stateFile: options.stateFile },
+        "could not write the pause file: the pause holds in this process only",
+      ),
+  });
   const publicSites =
     options.public > 0 ? await prepareSites({ logger, pause: pauseStore }) : undefined;
 
@@ -254,17 +262,25 @@ async function trafficCommand(args: string[]): Promise<number> {
   const warnedUnroutable = new Set<string>();
   // Public sessions: robots.txt is read at the start and again every few hours, because a traffic
   // loop can run for days (docs/adr/0007). The counter keeps the rotation going across batches.
-  const pauseStore = createPauseStore(options.stateFile);
+  const pauseStore = createPauseStore(options.stateFile, {
+    onWriteError: (error) =>
+      logger.warn(
+        { err: error, stateFile: options.stateFile },
+        "could not write the pause file: the pause holds in this process only",
+      ),
+  });
   const publicCounter = { next: options.seed };
+  // one pacer per site for the whole loop, also across the refreshes of robots.txt
+  const pacers = new Map<PublicSite, SitePacer>();
   let publicSites =
-    options.public > 0 ? await prepareSites({ logger, pause: pauseStore }) : undefined;
+    options.public > 0 ? await prepareSites({ logger, pause: pauseStore, pacers }) : undefined;
   let robotsReadAt = Date.now();
   let index = 0;
   let batch = 0;
   while (!signal.aborted && Date.now() < stopAt) {
     const batchStart = Date.now();
     if (options.public > 0 && batchStart - robotsReadAt > ROBOTS_REFRESH_MS) {
-      publicSites = await prepareSites({ logger, pause: pauseStore });
+      publicSites = await prepareSites({ logger, pause: pauseStore, pacers });
       robotsReadAt = Date.now();
     }
     const run = await runFleet({

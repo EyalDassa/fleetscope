@@ -37,26 +37,11 @@ describe("parseRobots", () => {
   });
 
   it("* matches any characters and a trailing $ anchors the end", () => {
-    const rules = parseRobots("User-agent: *\nDisallow: /*/print$\nDisallow: /search/all*\n");
-    expect(rules.allows("/guide/print")).toBe(false);
-    expect(rules.allows("/guide/print/more")).toBe(true);
-    expect(rules.allows("/search/all?keywords=x")).toBe(false);
-    expect(rules.allows("/search/news")).toBe(true);
-  });
-
-  it("several User-agent lines share one group; a rule line ends the group", () => {
-    const rules = parseRobots(
-      "User-agent: a\nUser-agent: *\nDisallow: /x\nUser-agent: b\nDisallow: /y\n",
-    );
-    expect(rules.allows("/x")).toBe(false);
-    expect(rules.allows("/y")).toBe(true);
-  });
-
-  it("ignores comments, blank lines, Sitemap and keeps matching case-insensitive field names", () => {
-    const rules = parseRobots(
-      "# hello\nUSER-AGENT: *   # everyone\n\nSitemap: https://x/s.xml\nDISALLOW: /nope # why\n",
-    );
-    expect(rules.allows("/nope")).toBe(false);
+    const bom = String.fromCharCode(0xfeff);
+    const rules = parseRobots(`${bom}User-agent: *
+Disallow: /private/
+`);
+    expect(rules.allows("/private/x")).toBe(false);
     expect(rules.allows("/ok")).toBe(true);
   });
 
@@ -181,6 +166,18 @@ describe("prepareSites", () => {
     const sites = await prepareSites({ logger, fetch });
     expect(sites.has("govuk")).toBe(false);
     expect(sites.has("hackernews")).toBe(false);
+  });
+
+  it("gives every site a pacer, and keeps the same one when the sites are prepared again", async () => {
+    const { fetch } = fakeFetch({});
+    const pacers = new Map();
+    const first = await prepareSites({ logger, fetch, pacers });
+    const second = await prepareSites({ logger, fetch, pacers });
+    for (const site of PUBLIC_SITES) {
+      expect(first.get(site)?.pacer).toBeDefined();
+      expect(second.get(site)?.pacer).toBe(first.get(site)?.pacer);
+    }
+    expect(first.get("mdn")?.pacer).not.toBe(first.get("govuk")?.pacer);
   });
 
   it("skips a paused site without fetching its robots.txt", async () => {

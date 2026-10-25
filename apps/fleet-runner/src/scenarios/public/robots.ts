@@ -1,4 +1,5 @@
 import type { Logger } from "pino";
+import { createSitePacer, type SitePacer } from "./pacer";
 import type { PauseStore } from "./pause";
 import { PUBLIC_SITES, type PublicSite, SITES, type SiteDescriptor } from "./sites";
 
@@ -39,7 +40,8 @@ export function parseRobots(text: string): RobotsRules {
   let crawlDelayMs: number | null = null;
   let inStar = false; // are the lines we are reading in a group that names "*"?
   let sawRuleSinceAgent = true; // a User-agent line after rules starts a new group
-  for (const rawLine of text.split(/\r?\n/)) {
+  // a UTF-8 byte order mark would hide the field name of the first line
+  for (const rawLine of text.replace(/^﻿/, "").split(/\r?\n/)) {
     const line = rawLine.replace(/#.*$/, "").trim();
     if (line === "") continue;
     const colon = line.indexOf(":");
@@ -93,6 +95,11 @@ export interface SiteRun {
   allows(pathAndQuery: string): boolean;
   /** The descriptor's delay, or the site's Crawl-delay if that is longer. */
   minDelayMs: number;
+  /**
+   * Holds `minDelayMs` between all navigations to the site in this process, whatever session makes
+   * them. Optional only so that a SiteRun built by hand still works; `prepareSites` always sets it.
+   */
+  pacer?: SitePacer;
 }
 
 export type Fetch = (url: string, init?: { signal?: AbortSignal }) => Promise<Response>;
@@ -125,6 +132,11 @@ export async function fetchRobots(
 export interface PrepareDeps {
   logger: Logger;
   pause?: PauseStore;
+  /**
+   * The pacers of the sites, kept between calls. A long `traffic` loop prepares the sites again every
+   * few hours; passing the same map keeps the gap since the last navigation. Created per call otherwise.
+   */
+  pacers?: Map<PublicSite, SitePacer>;
   fetch?: Fetch;
   now?: () => number;
 }
@@ -159,11 +171,14 @@ export async function prepareSites(deps: PrepareDeps): Promise<Map<PublicSite, S
         { site, paths: paths.length, droppedByRobots: dropped, robots: note },
         `public site ${site}: ${paths.length} allowed paths${dropped > 0 ? `, ${dropped} dropped by robots.txt` : ""}`,
       );
+      const pacer = deps.pacers?.get(site) ?? createSitePacer();
+      deps.pacers?.set(site, pacer);
       prepared.set(site, {
         descriptor,
         paths,
         allows: (pathAndQuery) => rules.allows(pathAndQuery),
         minDelayMs: Math.max(descriptor.minDelayMs, rules.crawlDelayMs ?? 0),
+        pacer,
       });
     }),
   );
