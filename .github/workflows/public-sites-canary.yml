@@ -52,6 +52,12 @@ jobs:
       API_PORT: "4000"
       API_HOST: 127.0.0.1
       FLEETSCOPE_API_URL: http://localhost:4000
+      # The runner's preflight always checks the demo site: public sessions fall back to it when a
+      # site is paused or skipped. The browser containers reach it through host.docker.internal, so it
+      # listens on all interfaces (same as the fleet smoke job in ci.yml).
+      DEMO_SITE_URL: http://localhost:3100
+      DEMO_SITE_PORT: "3100"
+      DEMO_SITE_HOST: 0.0.0.0
       # Chromium only. The tag must equal the one built below and the Playwright version pinned in the
       # runner (check-playwright-version.sh, in the "check" job of ci.yml).
       FLEET_BROWSER_IMAGE_CHROMIUM: fleetscope/playwright-chromium:1.64.1-2
@@ -88,13 +94,15 @@ jobs:
           sbom: false
 
       - run: pnpm db:migrate
-      - name: Build the api
-        run: pnpm --filter @fleetscope/api build
-      - name: Start the api
+      - name: Build the api and the demo site
+        run: pnpm --filter @fleetscope/api --filter @fleetscope/demo-site build
+      - name: Start the api and the demo site
         run: |
           mkdir -p canary-logs
           nohup pnpm --filter @fleetscope/api start > canary-logs/api.log 2>&1 &
+          nohup pnpm --filter @fleetscope/demo-site start > canary-logs/demo-site.log 2>&1 &
           bash .github/scripts/wait-for-url.sh "$FLEETSCOPE_API_URL/healthz" 60 canary-logs/api.log
+          bash .github/scripts/wait-for-url.sh "$DEMO_SITE_URL/healthz" 60 canary-logs/demo-site.log
 
       # 5 public sessions, one per site (wiki-read, mdn-read, govuk-read, hn-read, pydocs-read). The
       # sites are different hosts, so all five run at once; each keeps its own crawl delay (GOV.UK 10 s,
