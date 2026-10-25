@@ -128,6 +128,9 @@ export function generateSession(profile: Profile, plan: SessionPlan): FleetEvent
         region: "local",
         startup_ms: sampleInt(rng, engine.startup_ms, 1),
         connect_ms: sampleInt(rng, engine.connect_ms, 1),
+        // simulated sessions only ever visit the demo site (docs/adr/0007)
+        target: "demo",
+        site: "demo-site",
       },
       start,
     ),

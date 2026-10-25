@@ -33,6 +33,8 @@ jobs:
         run: bash .github/scripts/check-browser-images.sh --strict
       - name: The fleet smoke assertions decide as intended (no ClickHouse, no Docker)
         run: bash .github/scripts/test-assert-fleet-smoke.sh
+      - name: The public-sites canary report decides as intended (fake gh, no ClickHouse)
+        run: bash .github/scripts/test-public-canary-report.sh
       - name: Shell scripts are executable in git (a Windows commit drops the bit)
         run: bash .github/scripts/check-executable-bits.sh
 

@@ -23,6 +23,8 @@ function options(overrides: Partial<RunOptions> = {}): RunOptions {
     agentId: "test",
     routing: "fixed",
     sessionTimeoutMs: 1000,
+    public: 0,
+    stateFile: undefined,
     ...overrides,
   };
 }
@@ -40,6 +42,8 @@ function result(spec: SessionSpec): SessionResult {
     engine: spec.engine,
     routedFrom: spec.routedFrom ?? null,
     scenario: spec.scenario,
+    target: spec.target ?? "demo",
+    site: spec.site ?? "demo-site",
     status: "success",
     reason: null,
     durationMs: 10,

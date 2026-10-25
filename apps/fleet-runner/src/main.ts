@@ -8,9 +8,13 @@ import { createInterruptHandler } from "./interrupt";
 import { parseRunArgs, parseTrafficArgs, type RunOptions, USAGE, UsageError } from "./options";
 import { preflight } from "./preflight";
 import { createCollectors, runFleet } from "./run";
+import type { SitePacer } from "./scenarios/public/pacer";
+import { createPauseStore } from "./scenarios/public/pause";
+import { prepareSites } from "./scenarios/public/robots";
+import type { PublicSite } from "./scenarios/public/sites";
 import type { SessionResult } from "./session-runner";
 import { forceShutdown } from "./shutdown";
-import { engineLabel, formatSummary } from "./summary";
+import { engineLabel, formatSummary, visitLabel } from "./summary";
 
 const out = (text: string) => process.stdout.write(text);
 const err = (text: string) => process.stderr.write(text);
@@ -19,6 +23,9 @@ const err = (text: string) => process.stderr.write(text);
 function forwarderEnv(config: RunnerConfig): string[] {
   return config.demoSiteUpstream ? [`DEMO_SITE_UPSTREAM=${config.demoSiteUpstream}`] : [];
 }
+
+/** A traffic loop reads the public sites' robots.txt again this often. */
+const ROBOTS_REFRESH_MS = 6 * 60 * 60 * 1000;
 
 /** If the exit-now path itself takes longer than this, give up and exit. */
 const FORCE_EXIT_DEADLINE_MS = 6500;
@@ -138,6 +145,8 @@ async function runCommand(args: string[]): Promise<number> {
       concurrency: options.concurrency,
       scenario: options.scenario,
       routing: options.routing,
+      public: options.public,
+      stateFile: options.stateFile,
       seed: options.seed,
       agent: options.agentId,
       api: config.apiUrl,
@@ -148,6 +157,17 @@ async function runCommand(args: string[]): Promise<number> {
     `run starting (repeat it with --seed ${options.seed})`,
   );
 
+  // Public sessions: read each site's robots.txt now and drop the paths it forbids (docs/adr/0007).
+  const pauseStore = createPauseStore(options.stateFile, {
+    onWriteError: (error) =>
+      logger.warn(
+        { err: error, stateFile: options.stateFile },
+        "could not write the pause file: the pause holds in this process only",
+      ),
+  });
+  const publicSites =
+    options.public > 0 ? await prepareSites({ logger, pause: pauseStore }) : undefined;
+
   const run = await runFleet({
     config,
     options,
@@ -156,6 +176,8 @@ async function runCommand(args: string[]): Promise<number> {
     logger,
     signal: interrupt.signal,
     live,
+    publicSites,
+    pause: pauseStore,
   });
 
   // Belt and braces: every session removes its own containers, this catches anything that slipped.
@@ -175,7 +197,9 @@ async function runCommand(args: string[]): Promise<number> {
 export function batchLine(batch: number, results: readonly SessionResult[], ms: number): string {
   const sessions = [...results]
     .sort((a, b) => a.index - b.index)
-    .map((r) => `${engineLabel(r)}/${r.scenario}=${r.status}`)
+    .map(
+      (r) => `${engineLabel(r)}/${r.target === "public" ? visitLabel(r) : r.scenario}=${r.status}`,
+    )
     .join(", ");
   const first = results.length > 0 ? Math.min(...results.map((r) => r.index)) + 1 : 0;
   const last = first + results.length - 1;
@@ -225,6 +249,8 @@ async function trafficCommand(args: string[]): Promise<number> {
       durationMs: options.durationMs,
       scenario: options.scenario,
       routing: options.routing,
+      public: options.public,
+      stateFile: options.stateFile,
       seed: options.seed,
       agent: options.agentId,
       api: config.apiUrl,
@@ -234,10 +260,29 @@ async function trafficCommand(args: string[]): Promise<number> {
 
   const results: SessionResult[] = [];
   const warnedUnroutable = new Set<string>();
+  // Public sessions: robots.txt is read at the start and again every few hours, because a traffic
+  // loop can run for days (docs/adr/0007). The counter keeps the rotation going across batches.
+  const pauseStore = createPauseStore(options.stateFile, {
+    onWriteError: (error) =>
+      logger.warn(
+        { err: error, stateFile: options.stateFile },
+        "could not write the pause file: the pause holds in this process only",
+      ),
+  });
+  const publicCounter = { next: options.seed };
+  // one pacer per site for the whole loop, also across the refreshes of robots.txt
+  const pacers = new Map<PublicSite, SitePacer>();
+  let publicSites =
+    options.public > 0 ? await prepareSites({ logger, pause: pauseStore, pacers }) : undefined;
+  let robotsReadAt = Date.now();
   let index = 0;
   let batch = 0;
   while (!signal.aborted && Date.now() < stopAt) {
     const batchStart = Date.now();
+    if (options.public > 0 && batchStart - robotsReadAt > ROBOTS_REFRESH_MS) {
+      publicSites = await prepareSites({ logger, pause: pauseStore, pacers });
+      robotsReadAt = Date.now();
+    }
     const run = await runFleet({
       config,
       options: { ...options, sessions: batchSize, concurrency: batchSize },
@@ -249,6 +294,9 @@ async function trafficCommand(args: string[]): Promise<number> {
       firstIndex: index,
       closeCollectors: false,
       warnedUnroutable,
+      publicSites,
+      pause: pauseStore,
+      publicCounter,
     });
     index += batchSize;
     results.push(...run.results);

@@ -11,7 +11,13 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ClickHouseClient } from "./client";
 import { ensureGrafanaUser } from "./grafana-user";
 import { insertEvents } from "./insert";
-import { createReaderClient, createTestDatabase, type TestDatabase, testPassword } from "./testing";
+import {
+  conditionalAll,
+  createReaderClient,
+  createTestDatabase,
+  type TestDatabase,
+  testPassword,
+} from "./testing";
 
 /**
  * Runs the `sql name=...` blocks of packages/db/README.md the way Grafana would: as the read-only
@@ -282,6 +288,9 @@ interface Window {
   intervalS: number;
   engines: string[];
   sources: string[];
+  /** The target / site variables; absent = "All" (no filter). */
+  targets?: string[];
+  sites?: string[];
   /** What is typed in the `cause` text box. */
   cause?: string;
   /** One bucket for the whole window, to see what a merge over several minutes gives. */
@@ -301,9 +310,10 @@ const percentEncode = (value: string): string =>
 const quoteList = (values: string[]) => values.map((v) => `'${v}'`).join(",");
 
 /** The macros of the Grafana ClickHouse plugin, as documented for the data source. */
-function expand(sql: string, w: Window): string {
+function expand(rawSql: string, w: Window): string {
   const sec = (ms: number) => Math.floor(ms / 1000);
   const dt = (ms: number) => `toDateTime(${sec(ms)})`;
+  const sql = conditionalAll(rawSql, { target: w.targets, site: w.sites });
   return sql
     .replace(/\$__timeFilter\((\w+)\)/g, (_, c) => `${c} >= ${dt(w.from)} AND ${c} <= ${dt(w.to)}`)
     .replace(/\$__timeInterval\((\w+)\)/g, (_, c) =>

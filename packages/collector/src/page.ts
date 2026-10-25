@@ -196,6 +196,41 @@ export class CollectedPage {
     });
   }
 
+  /**
+   * Checks that a PUBLIC site's page has the element the journey relies on: the first selector that
+   * matches wins (the rest are fallbacks). Returns the selector that matched. If none does within the
+   * time, the action fails with `site_layout`: the page loaded, so the site probably changed, and
+   * that is not the browser's fault (docs/adr/0007). It records one `extract` action.
+   * `challengeSelector`: if none matches but this does, the page is a CAPTCHA and the action fails
+   * with `captcha` (a `BlockedError`) instead.
+   */
+  landmark(
+    selectors: readonly [string, ...string[]],
+    options: ActionOptions & { challengeSelector?: string } = {},
+  ): Promise<string> {
+    const timeout = options.timeoutMs ?? this.config.actionTimeoutMs;
+    return this.run({ type: "extract", target: selectors.join(" | ") }, async () => {
+      const deadline = Date.now() + timeout;
+      do {
+        for (const selector of selectors) {
+          if ((await this.raw.locator(selector).count()) > 0) return selector;
+        }
+        await this.raw.waitForTimeout(250);
+      } while (Date.now() < deadline);
+      // A challenge page (CAPTCHA) is a block, not a changed site.
+      if (
+        options.challengeSelector &&
+        (await this.raw.locator(options.challengeSelector).count()) > 0
+      ) {
+        throw new BlockedError("captcha", `captcha on ${this.raw.url()}`);
+      }
+      throw new CollectedError(
+        "site_layout",
+        `landmark missing on ${this.raw.url()}: ${selectors.join(" | ")}`,
+      );
+    });
+  }
+
   /** Takes a PNG screenshot of the viewport. Returns the bytes; with `path` also saves them. */
   screenshot(options: { path?: string } & ActionOptions = {}): Promise<Buffer> {
     return this.run({ type: "screenshot", target: domainOf(this.raw.url()) }, () =>
@@ -380,9 +415,12 @@ export class CollectedPage {
   }
 }
 
-/** What an HTTP status of a page we loaded means for the action: 403 blocked, 5xx server error, other 4xx. */
+/** What an HTTP status of a page we loaded means for the action: 403 and 429 blocked, 5xx server error, other 4xx. */
 function statusError(status: number, url: string): CollectedError | null {
   if (status === 403) return new BlockedError("http_403", `HTTP 403 for ${url}`);
+  // 429 is a site pushing back as well: its own code, so it is not counted as a 403
+  if (status === 429)
+    return new BlockedError("http_429", `HTTP 429 (too many requests) for ${url}`);
   if (status >= 500) return new CollectedError("http_5xx", `HTTP ${status} for ${url}`);
   if (status >= 400) return new CollectedError("nav_error", `HTTP ${status} for ${url}`);
   return null;

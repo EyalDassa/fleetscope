@@ -83,6 +83,24 @@ describe("session lifecycle", () => {
     await collector.close();
   });
 
+  it("puts target and site on session.started only when given (omitted means the demo site)", async () => {
+    const { collector, sink } = makeCollector();
+    collector.startSession({ ...sessionOptions, sessionId: "demo" });
+    collector.startSession({
+      ...sessionOptions,
+      sessionId: "pub",
+      target: "public",
+      site: "wikipedia",
+    });
+    await collector.flush();
+    const started = (id: string) => sink.events.find((e) => e.session_id === id);
+    expect(started("demo")).not.toHaveProperty("target");
+    expect(started("demo")).not.toHaveProperty("site");
+    expect(started("pub")).toMatchObject({ target: "public", site: "wikipedia" });
+    expect(EventBatch.safeParse(sink.events).success).toBe(true);
+    await collector.close();
+  });
+
   it("generates a session id when none is given", async () => {
     const { collector } = makeCollector();
     const a = collector.startSession(sessionOptions);

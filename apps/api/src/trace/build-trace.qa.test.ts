@@ -21,6 +21,8 @@ const session: SessionTimeline["session"] = {
   startup_ms: 1,
   connect_ms: 1,
   routed_from: null,
+  target: "demo",
+  site: "demo-site",
   status: "success",
   started_at_ms: START,
   ended_at_ms: START + 10_000,

@@ -24,6 +24,8 @@ export interface TimelineSession {
   connect_ms: number;
   /** The engine the assignment chose before routing moved the session to `engine`; null if not routed. */
   routed_from: string | null;
+  target: string;
+  site: string;
   /** `running` until the session ended. */
   status: SessionState;
   started_at_ms: number;
@@ -111,7 +113,7 @@ export async function getTimelineSession(
     client,
     `SELECT
        session_id, agent_id, source, engine, engine_version, provider, scenario, region,
-       startup_ms, connect_ms, routed_from, status,
+       startup_ms, connect_ms, routed_from, target, site, status,
        toUnixTimestamp64Milli(started_at) AS started_at_ms,
        if(ended_at IS NULL, NULL, toUnixTimestamp64Milli(assumeNotNull(ended_at))) AS ended_at_ms,
        duration_ms, reason
@@ -134,6 +136,8 @@ export async function getTimelineSession(
     startup_ms: num(row.startup_ms),
     connect_ms: num(row.connect_ms),
     routed_from: row.routed_from === null ? null : String(row.routed_from),
+    target: String(row.target),
+    site: String(row.site),
     status: String(row.status) as SessionState,
     started_at_ms: num(row.started_at_ms),
     ended_at_ms: numOrNull(row.ended_at_ms),

@@ -52,6 +52,10 @@ export interface SessionRow {
   connect_ms: number;
   /** The engine the assignment chose before routing; `null` when the session was not routed. */
   routed_from: string | null;
+  /** `demo` or `public` (docs/adr/0007). */
+  target: string;
+  /** `demo-site` or a public site such as `wikipedia`. */
+  site: string;
   status: SessionState;
   ended_at: string | null;
   duration_ms: number | null;
@@ -79,6 +83,9 @@ export function runningSessionRow(started: Started): SessionRow {
     startup_ms: started.startup_ms,
     connect_ms: started.connect_ms,
     routed_from: started.routed_from ?? null,
+    // an event without them is a demo-site session (events from before the fields existed)
+    target: started.target ?? "demo",
+    site: started.site ?? "demo-site",
     status: SESSION_RUNNING,
     ended_at: null,
     duration_ms: null,
@@ -247,7 +254,7 @@ async function findStoredSessions(
   for (const ids of chunkByEncodedSize(sessionIds)) {
     const result = await client.query({
       query: `SELECT session_id, agent_id, source, engine, provider, engine_version, scenario, region,
-                     toString(started_at) AS started_at, startup_ms, connect_ms, routed_from, status,
+                     toString(started_at) AS started_at, startup_ms, connect_ms, routed_from, target, site, status,
                      if(ended_at IS NULL, NULL, toString(ended_at)) AS ended_at,
                      duration_ms, reason, version
               FROM sessions FINAL

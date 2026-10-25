@@ -44,7 +44,7 @@ Grafana's theme supplies every neutral (canvas, panels, text, grid). Hue is used
 Other colours (dark / light): gauge cells in tables use the approved neutral `--bar`, `#5B7491` / `#6B829E`. The field default colour for any series without an engine override is `#9AA9BB` / `#475569`. The annotations use the status colours: "Failed actions" is Failed, "Issues" is Degraded.
 
 - **Engines:** Okabe-Ito hues; every engine-vs-engine pair has ΔE ≥ 11 under protanopia and deuteranopia (DECISIONS.md). **Every time series line is solid** (product owner, 2026-10-24: dashed and dotted lines read as broken data). Series are told apart by colour, the legend and the tooltip; no two series in one panel share a colour. Engine series are always lines. Engine colours never colour text or cells, and engine names are written as in the API.
-- **Statuses:** there are exactly six. `timeout` and `crashed` show as Failed, with the code in the Cause column. Running and Interrupted are not outcomes, so they get the approved greys (`fg-muted`, `fg-subtle`), and the glyph and word tell them apart. The glyphs are plain text characters, not emoji.
+- **Statuses:** there are exactly six. `timeout`, `crashed` and `site_layout` show as Failed, with the code in the Cause column. `site_layout` is an error code, not a status: a public page loaded but its landmark element is missing, so the site changed, not the browser. Running and Interrupted are not outcomes, so they get the approved greys (`fg-muted`, `fg-subtle`), and the glyph and word tell them apart. The glyphs are plain text characters, not emoji.
 - **Dark is the default and the only theme we commit.** Grafana stores field colours as fixed hex, not theme tokens, so one JSON can't switch with the theme. Set the org default theme to Dark (Administration > Default preferences), locally and on Grafana Cloud. The Light column is a 1:1 find-and-replace map (no hex appears in both columns) if a light copy is ever needed. We don't use Grafana's named colours: they follow the theme, but they aren't our measured palette. The one exception is `text` as a threshold base.
 - **Engine overrides:** every time series panel gets three "Fields with name matching regex" overrides: `/chromium/`, `/chrome-headless-shell/`, `/lightpanda/`. Each sets `color` = `{"mode":"fixed","fixedColor":"<hex>"}` only; line style stays Grafana's default, solid (never set `custom.lineStyle` to dash or dots). The regexes are unanchored on purpose: neither name contains the other, and they still match whatever prefix the plugin adds to a series name. Set the field default colour to `#9AA9BB`, so nothing falls back to Grafana's classic palette, whose green would read as Healthy.
 - **Status:** SQL returns the lowercase value, and the mapping below adds glyph, word and colour; copy it wherever a status appears. Tables use the cell type **Colored text**. The two verdict stats use the colour mode **Background solid**, which makes Grafana pick dark or white text for contrast, so they read in either theme.
@@ -105,22 +105,24 @@ Other colours (dark / light): gauge cells in tables use the approved neutral `--
 
 | Variable | Type | Values | Default | Dashboards |
 |---|---|---|---|---|
-| `engine` | custom, multi, All | `chromium,chrome-headless-shell,lightpanda` | All | overview, sessions |
-| `source` | custom, single, All | `real,sim` | All | overview, sessions |
+| `engine` | custom, multi, All | `chromium,chrome-headless-shell,lightpanda` | All | overview, sessions, browsers |
+| `source` | custom, single, All | `real,sim` | All | overview, sessions, browsers |
+| `target` | custom, single, All | `Demo site : demo`, `Public sites : public` (ADR 0007) | All | overview, sessions, browsers, session (hidden there, so the filter travels in the links) |
+| `site` | query, multi, All | distinct `site` from `sessions FINAL` within `$__timeFilter(started_at)` | All | overview, sessions, browsers, session (hidden) |
 | `status` | custom, multi, All | `Healthy : healthy`, … all six | All | sessions |
 | `agent`, `scenario` | query, multi, All | distinct values from `sessions FINAL` within `$__timeFilter(started_at)` | All | sessions |
 | `routed` | custom, single | `All : all`, `Routed only : routed` | All | sessions (ADR 0005; the Browsers "Routed sessions" stat links to `var-routed=routed`) |
 | `session` | textbox | a session id | empty | session |
 | `api_url` | constant, hidden | API base URL (set by provisioning and `grafana:push`) | – | session |
 
-In SQL, use the variables as `engine IN (${engine:singlequote})`. Links are relative, so they work both locally and on Grafana Cloud:
-- **To Sessions:** `/d/fleetscope-sessions?${__url_time_range}&${engine:queryparam}&${source:queryparam}`, plus `&var-status=…` where the tables below say so.
+In SQL, use `engine` and `source` as `engine IN (${engine:singlequote})`. `target` and `site` are optional filters, so All must not filter: use `$__conditionalAll(target IN (${target:singlequote}), $target)` and the same for `site` (a site is a free label, and a plain `IN` would drop a session of a site the variable does not list). They sit in `picked` of `session-facts` only. `source` (real or simulated) and `target` (demo or public) are independent: a simulated session is always `demo`. Links are relative, so they work both locally and on Grafana Cloud:
+- **To Sessions:** `/d/fleetscope-sessions?${__url_time_range}&${target:queryparam}&${site:queryparam}&${engine:queryparam}&${source:queryparam}`, plus `&var-status=…` where the tables below say so.
 - **To Session detail:** `/d/fleetscope-session?var-session=${__data.fields.session_id}&from=${__data.fields.from_ms}&to=${__data.fields.to_ms}`. Here `from_ms` = start − 5 s and `to_ms` = end (or now) + 5 s, both in epoch ms. Hide these two fields with the `custom.hidden` override. Don't use Organize fields: it removes them, and the link breaks.
 - **To Perfetto:** `${api_url}/v1/sessions/${session}/perfetto`, in a new tab.
 
 ### 4.2 Overview (`fleetscope-overview`)
 
-Range `now-1h`, refresh `30s`, variables `engine` and `source`. Panels are listed top to bottom, with sizes as w×h on the 24-column grid.
+Range `now-1h`, refresh `30s`, variables `engine`, `source`, `target` and `site`. Panels are listed top to bottom, with sizes as w×h on the 24-column grid.
 
 | # | Panel (type, size) | Shows | Drill-down |
 |---|---|---|---|
@@ -154,7 +156,7 @@ Range `now-1h`, refresh `30s`, variables `engine` and `source`. Panels are liste
 
 ### 4.3 Sessions (`fleetscope-sessions`)
 
-Range `now-1h`, refresh `30s`, variables `engine`, `source`, `status`, `agent`, `scenario`. The dashboard has one panel, **Sessions ↗** (Table, 24×22):
+Range `now-1h`, refresh `30s`, variables `engine`, `source`, `target`, `site`, `status`, `agent`, `scenario`. The dashboard has one panel, **Sessions ↗** (Table, 24×22):
 - **Rows:** the latest 1,000 sessions started in range (the description says so), newest first. Pagination, column filters, a footer with the row count, and cell height `sm`.
 - **Links and empty state:** the Status and Session cells link to Session detail. No value: "No sessions match these filters in this range". The per-row memory sparkline from PLAN section 7 is a stretch item.
 
@@ -172,6 +174,8 @@ Range `now-1h`, refresh `30s`, variables `engine`, `source`, `status`, `agent`, 
 | Est. cost | as defined in section 3 | `currencyUSD`, 4 |
 | Cause | failure cause, `code: message` | truncated, full text on hover |
 | Source | `real` → `REAL`, `sim` → `SIM` | no colour |
+| Target | `demo` → `DEMO`, `public` → `PUBLIC` | no colour; right after Source |
+| Site | `site` (`demo-site`, `wikipedia`, `mdn`, `govuk`, `hackernews`, `python-docs`) | text; right after Scenario. Target and Site are narrow, so that Site is fully visible at 1440 px with the menu docked |
 | (hidden) | `from_ms`, `to_ms` | `custom.hidden` |
 
 ### 4.4 Session detail (`fleetscope-session`)
@@ -231,6 +235,16 @@ Is ClickHouse keeping up with the fleet, and how close is it to its limits? Rang
 - **Thresholds on this dashboard** are targets, so besides success rate they are the only places that use status colours: Difference (1% / 5%), Memory % (75% / 85%), CPU % (70% / 85%), run-out.
 - **Time zone and annotations.** This dashboard is UTC (`timezone: utc`), because ClickHouse Cloud bills by UTC day; its description says so. The dashed vertical lines of the Scaling changes annotation are Grafana's own marker style and can't be changed: the one exception to "every line is solid".
 - **Links.** The load panels link to Sessions with the same range; utilization and billing are not made of sessions and have no link. Dashboard links by tag, as on the others.
+
+### 4.6 Browsers (`fleetscope-browsers`)
+
+Range `now-1h`, refresh `30s`, variables `engine`, `source`, `target` and `site`. Engine comparison, the three bar gauges, two engine charts, the compatibility matrix and "How to read this" follow the rules above. Added for public sites (ADR 0007):
+
+- **Compatibility matrix:** one row per scenario and engine, so the public scenarios (`wiki-read`, `mdn-read`, `govuk-read`, `hn-read`, `pydocs-read`) appear as rows once they have run in the range; Target separates them from the demo scenarios.
+- **Public sites ↗** (Table, 24×7, under the matrix): one row per public site (always `target = public`; Target = Demo site gives "No public-site sessions ended in this range"), from the sessions that ended in the range (interrupted left out). Columns: Site (link to Sessions with `var-target=public&var-site=<site>`, and without the `target` and `site` queryparams it overrides) · Health (Chromium) (the Chromium success rate through the thresholds, with the Status mapping: ✓ Healthy, ▲ Degraded, ✕ Failed; ⊘ Blocked when most Chromium sessions were `blocked` or had the cause `http_403`, `http_429` or `captcha`; `Not enough data` in `#9AA9BB` below 3 Chromium sessions in range) · Sessions (all engines) · Chromium sessions · Chromium rate · Other engines (success rate of the other two engines; `—` when none ran) · Top cause (all engines, e.g. `unsupported_api ×2`; `site_layout` reads `site_layout ×2 · site changed` only when Chromium itself has it, otherwise `site_layout ×2 (not Chromium)`, because then it is likely an engine gap) · Last visit. Chromium is the site-health signal: a site that fails for Chromium has changed or blocks us, while a failure only on the CDP engines points at the engine.
+- **How to read this** gets the line: "Target = public: real sites, read-only, each browser with its own fingerprint (ADR 0007). `site_layout` means the site changed, not the browser."
+
+**Rollup panels and Target / Site.** `fleet_minute` has no `target` or `site` column. The panels that read it (p95 action latency, Actions per minute, Memory per container, and the p95 and CPU columns of By engine and Engine comparison) therefore show data only when Target = All and Site = All, through `$__conditionalAll(1 = 0, $target)` and `$__conditionalAll(1 = 0, $site)`; with a filter they show `—` or their No value text, and their descriptions say why. They never show unfiltered numbers under a filter.
 
 ## 5. Perfetto timeline
 

@@ -57,8 +57,10 @@ Its `/js-heavy` Web Worker probe times out (`webWorker: timeout after 3000ms`): 
 pnpm fleet run [--engines chromium] [--sessions 10] [--concurrency 4]
                [--scenario mix|login-and-search|checkout-form|heavy-page-crawl]
                [--seed N] [--agent ID] [--routing fixed|by-scenario] [--session-timeout 120]
+               [--public N] [--state-file PATH]
 pnpm fleet traffic [--engines chromium] [--rate 3] [--concurrency 2] [--duration 10m] [--agent ID]
                [--scenario ...] [--seed N] [--routing fixed|by-scenario] [--session-timeout 120]
+               [--public N] [--state-file PATH]
 pnpm fleet cleanup          # remove every container labelled fleetscope.session (all runs)
 ```
 
@@ -137,6 +139,60 @@ second over one connection), one sample every 2 s, plus a last one when the sess
 - The forwarder is a sidecar in its own cgroup, so none of its memory or CPU is in these samples
   (before M3 about 10 to 17 MB of it were).
 - A sample's `ts` is when its frame arrived. Every session gets at least one sample, however short.
+
+## Public sites (`--public N`, docs/adr/0007)
+
+`--public N` makes N of the run's sessions (of **each batch** for `traffic`: its batch is
+`min(concurrency, rate)` sessions) visit real public sites instead of the demo site: Wikipedia, MDN,
+GOV.UK, Hacker News and the Python docs, with read-only journeys. The first N sessions of the batch are
+the public ones, the others stay the demo `mix`. Each is recorded with `target: "public"` and its
+`site` (`wikipedia`, `mdn`, `govuk`, `hackernews`, `python-docs`); every other session has
+`target: "demo"`, `site: "demo-site"`. `source` is untouched (`real`).
+
+- **Assignment** (`assignPublic`, `src/assign.ts`). Public sessions rotate round-robin over the sites
+  that are not paused and over the engines (the site and the engine both move one step per session, so
+  five sessions already cover five sites on mixed engines). `traffic` keeps counting across batches,
+  so one public session per batch still visits every site in turn. `--routing` still applies; the
+  journeys need no capability, so nothing is routed away.
+- **Journeys** (`src/scenarios/public/journeys.ts`, descriptors in `sites.ts`), one per site:
+  `wiki-read` (an article, then 2 or 3 internal links), `mdn-read` (a reference page, a sidebar
+  link, a check that the page has a code example), `govuk-read` (a guide, then its next part),
+  `hn-read` (the front page, then one story's comments) and `pydocs-read` (a manual's index, then
+  a page of it). The seeded rng picks the pages from a per-site **allowlist** of real pages; links a
+  journey follows must be on the site's host and allowed by robots.txt. They use only the
+  collector-wrapped page.
+- **No fingerprint changes.** A public session opens its page with the same `openPage` as a demo
+  session: no user agent, header or locale override, no init script. The engines are measured as they
+  are (a test fails if the runner or a journey sets one). The trade-off is in the ADR.
+- **robots.txt.** At the start of a run (`traffic`: also every 6 hours) the runner fetches each site's
+  `robots.txt` with Node's `fetch` and applies the `*` group (longest rule wins, Allow wins a tie,
+  `*` and `$` supported). An allowlisted path that is now disallowed is dropped; a site with no
+  allowed path is skipped for the run with one log line; a robots.txt that cannot be read (5xx,
+  network error) also skips the site. A Crawl-delay longer than ours is honoured.
+- **Delay between pages and one visitor per site.** `minDelayMs` is GOV.UK 10 s, Hacker News 30 s
+  (its crawl-delay), the others 2 s, measured between the starts of two navigations to the site. It is
+  enforced **per site per process**, not per session: the sites share one pacer (made by
+  `prepareSites`, `src/scenarios/public/pacer.ts`), a navigation reserves its slot before it waits, so
+  callers queue, and the gap also holds from the last page of one session to the first of the next. A
+  site also has **at most one session at a time**; when every site is paused, busy or skipped, the
+  public session runs on the demo site instead (one warning). Two fleet processes pace on their own;
+  only the pause file is shared. The wait is not an `action` (it would pollute the latency numbers);
+  the gap shows in the session's timeline.
+- **Push-back pauses the site.** A 403, 429 or CAPTCHA ends the session `blocked` (a 429 has its own
+  error code, `http_429`). The site is written to `--state-file` (default `.fleet-state.json`, in the
+  directory the runner starts in) as `{"<site>": <pausedUntil epoch ms>}` for an hour, and paused
+  sites are skipped by the next sessions, also by other fleet processes that use the same file (it is
+  read on every check, the later end wins). A pause is also kept in memory: if the file cannot be
+  written the runner logs a warning and goes on.
+- **`site_layout`.** A page that loads (HTTP 200) but has none of its landmark selectors (a primary
+  and one fallback) fails the action with `site_layout`, session status `failed`: the site probably
+  changed, which is not the browser's fault. A CAPTCHA page found in its place is `captcha` (blocked).
+- **What an engine cannot do on a real site** is recorded as it happens (`unsupported_feature`,
+  `unsupported_api`, `null` metrics), never routed around or faked.
+
+The summary has a `target/site` column and a "By site" block. `pnpm fleet run --engines
+chromium,chrome-headless-shell,lightpanda --sessions 10 --public 5 --state-file .fleet-state.json`
+is the usual smoke run.
 
 ## Scenarios
 

@@ -56,6 +56,10 @@ export interface Filters {
   /** The Sessions dashboard's "Routed" variable: `all` (default) or `routed` (routed_from is set). */
   routed?: "all" | "routed";
   session?: string;
+  /** The Target variable (docs/adr/0007): absent = All. */
+  target?: "demo" | "public";
+  /** The Site variable: absent = All. */
+  site?: string[];
 }
 
 export type Row = Record<string, unknown>;
@@ -161,6 +165,11 @@ function variables(filters: Filters): Map<string, VariableState> {
     ["status", state("status", STATUSES, true, filters.status)],
     ["agent", state("agent", [], true, filters.agent)],
     ["scenario", state("scenario", [], true, filters.scenario)],
+    [
+      "target",
+      state("target", ["demo", "public"], false, filters.target ? [filters.target] : undefined),
+    ],
+    ["site", state("site", [], true, filters.site)],
     ["cause", text("cause", filters.cause)],
     ["routed", text("routed", filters.routed ?? "all")],
     ["session", text("session", filters.session)],

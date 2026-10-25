@@ -9,6 +9,7 @@ import type { IssueKind } from "./events";
  *  nav_error          navigation failed (DNS, connection refused, TLS) or the page answered another HTTP 4xx
  *  selector_not_found the selector matched nothing before the timeout
  *  http_403           a page the action loaded (a goto, or a click that navigated) answered 403
+ *  http_429           ... answered 429 Too Many Requests (a site pushing back). Raises a `blocked` issue too
  *  http_5xx           ... answered a server error (500 and up)
  *  captcha            the page contains [data-testid=captcha]
  *  js_error           the page script threw something other than a missing API
@@ -18,6 +19,8 @@ import type { IssueKind } from "./events";
  *  unsupported_feature the engine refused a Playwright/CDP feature the action needs (screenshot,
  *                     viewport emulation, a CDP method that is "not found"/-32601). The engine's
  *                     limit, not the page's; the message says what was refused. No issue.
+ *  site_layout        a PUBLIC site's page loaded (HTTP 200) but its landmark selector is missing: the
+ *                     site probably changed, which is not the browser's fault. No issue.
  *  browser_closed     the page, context or browser closed, disconnected or crashed during the action
  *  unknown            anything else (the message is in the thrown error)
  */
@@ -26,11 +29,13 @@ export const ERROR_CODES = [
   "nav_error",
   "selector_not_found",
   "http_403",
+  "http_429",
   "http_5xx",
   "captcha",
   "js_error",
   "unsupported_api",
   "unsupported_feature",
+  "site_layout",
   "browser_closed",
   "unknown",
 ] as const;
@@ -42,11 +47,13 @@ export const ISSUE_FOR_CODE: Readonly<Record<ErrorCode, IssueKind | null>> = {
   nav_error: "nav_error",
   selector_not_found: null,
   http_403: "blocked",
+  http_429: "blocked",
   http_5xx: "nav_error",
   captcha: "captcha",
   js_error: null,
   unsupported_api: "unsupported_api",
   unsupported_feature: null,
+  site_layout: null,
   browser_closed: "crash",
   unknown: null,
 };

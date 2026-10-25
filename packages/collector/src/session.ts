@@ -7,6 +7,7 @@ import {
   type IssueKind,
   newEvent,
   type SessionStatus,
+  type Target,
 } from "@fleetscope/schema";
 import type { Logger } from "pino";
 import type { Page } from "playwright-core";
@@ -28,6 +29,10 @@ export interface StartSessionOptions {
   connectMs: number;
   /** The engine the assignment chose before routing sent the session elsewhere; omit when not routed. */
   routedFrom?: Engine | null;
+  /** `demo` (default) or `public`: what the session visits (docs/adr/0007). Omit for the demo site. */
+  target?: Target;
+  /** `demo-site` (default) or a public site such as `wikipedia`. A safe label. */
+  site?: string;
 }
 
 /** The numbers the runner takes from Docker for one container, one moment. */
@@ -90,6 +95,9 @@ export class CollectedSession implements PageSink {
         connect_ms: wholeMs(options.connectMs),
         // only on a routed session: an unrouted one sends the same event as before routing existed
         ...(options.routedFrom ? { routed_from: options.routedFrom } : {}),
+        // likewise: omitted means the demo site
+        ...(options.target ? { target: options.target } : {}),
+        ...(options.site !== undefined ? { site: safeLabel(options.site, MAX_LABEL) } : {}),
       },
       this.startedAt,
     );

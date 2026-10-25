@@ -15,7 +15,17 @@ export interface RunOptions {
   routing: RoutingPolicy;
   /** A session still running after this long is cut off and ends as `timeout`. */
   sessionTimeoutMs: number;
+  /**
+   * How many of each batch's sessions visit real public sites instead of the demo site (0: none).
+   * `run` is one batch of `--sessions`; `traffic` has a batch every period. docs/adr/0007.
+   */
+  public: number;
+  /** JSON file holding which public sites are paused and until when (default `.fleet-state.json`; `undefined` only in tests: kept in memory). */
+  stateFile: string | undefined;
 }
+
+/** Where paused public sites are remembered unless `--state-file` says otherwise (in .gitignore). */
+export const DEFAULT_STATE_FILE = ".fleet-state.json";
 
 /** Wrong command line. The message is for the person typing; `main` prints it with the usage. */
 export class UsageError extends Error {
@@ -42,12 +52,20 @@ Options for "run":
                             not run, so its sessions go to chrome-headless-shell (or chromium) and are
                             recorded as routed (sessions.routed_from)
   --session-timeout <sec>   cut off a session that runs longer, default 120
+  --public <n>              n of the sessions visit real public sites (Wikipedia, MDN, GOV.UK, Hacker
+                            News, Python docs) with read-only journeys, default 0. The sites'
+                            robots.txt is read at the start; a 403, 429 or CAPTCHA ends the session
+                            as blocked and pauses that site for an hour
+  --state-file <path>       where the paused sites are remembered, default .fleet-state.json (in the
+                            directory the runner starts in; git ignores it)
 
-Options for "traffic" (also --engines, --agent, --scenario, --seed, --routing, --session-timeout):
+Options for "traffic" (also --engines, --agent, --scenario, --seed, --routing, --session-timeout,
+--state-file):
   --rate <n>                sessions per minute, default 3
   --concurrency <n>         containers alive at the same time, default 2
   --duration <time>         stop after this long, e.g. 90s, 10m, 2h (default: until Ctrl+C)
   --agent <id>              default traffic@<hostname>
+  --public <n>              n of EACH BATCH's sessions (batch = min(concurrency, rate)) visit public sites
 
 Environment: FLEETSCOPE_API_URL, DEMO_SITE_URL, FLEET_BROWSER_IMAGE_<ENGINE> (CHROMIUM,
 CHROME_HEADLESS_SHELL, LIGHTPANDA), FLEET_FORWARDER_IMAGE, DOCKER_HOST, LOG_LEVEL`;
@@ -65,6 +83,14 @@ function positiveInt(name: string, raw: string | undefined, fallback: number, ma
   if (raw === undefined) return fallback;
   if (!/^\d+$/.test(raw) || Number(raw) < 1 || Number(raw) > max) {
     throw new UsageError(`--${name} must be a whole number from 1 to ${max}, got "${raw}"`);
+  }
+  return Number(raw);
+}
+
+function nonNegativeInt(name: string, raw: string | undefined, max: number): number {
+  if (raw === undefined) return 0;
+  if (!/^\d+$/.test(raw) || Number(raw) > max) {
+    throw new UsageError(`--${name} must be a whole number from 0 to ${max}, got "${raw}"`);
   }
   return Number(raw);
 }
@@ -104,6 +130,8 @@ export function parseRunArgs(
         agent: { type: "string" },
         routing: { type: "string" },
         "session-timeout": { type: "string" },
+        public: { type: "string" },
+        "state-file": { type: "string" },
       },
       strict: true,
       allowPositionals: false,
@@ -135,6 +163,10 @@ export function parseRunArgs(
   }
 
   const sessions = positiveInt("sessions", values.sessions, 10, 100_000);
+  const publicCount = nonNegativeInt("public", values.public, 100_000);
+  if (publicCount > sessions) {
+    throw new UsageError(`--public ${publicCount} is more than --sessions ${sessions}`);
+  }
   return {
     engines: parseEngines(values.engines),
     sessions,
@@ -144,6 +176,8 @@ export function parseRunArgs(
     agentId,
     routing: routing as RoutingPolicy,
     sessionTimeoutMs: positiveInt("session-timeout", values["session-timeout"], 120, 3600) * 1000,
+    public: publicCount,
+    stateFile: values["state-file"]?.trim() || DEFAULT_STATE_FILE,
   };
 }
 
@@ -187,6 +221,8 @@ export function parseTrafficArgs(
         agent: { type: "string" },
         routing: { type: "string" },
         "session-timeout": { type: "string" },
+        public: { type: "string" },
+        "state-file": { type: "string" },
       },
       strict: true,
       allowPositionals: false,
@@ -205,6 +241,7 @@ export function parseTrafficArgs(
       ...(values["session-timeout"] !== undefined
         ? ["--session-timeout", values["session-timeout"]]
         : []),
+      ...(values["state-file"] !== undefined ? ["--state-file", values["state-file"]] : []),
       "--agent",
       values.agent?.trim() || defaultTrafficAgentId(),
       "--sessions",
@@ -212,11 +249,22 @@ export function parseTrafficArgs(
     ],
     randomSeed,
   );
+  const ratePerMinute = positiveInt("rate", values.rate, 3, 600);
+  const concurrency = values.concurrency === undefined ? 2 : shared.concurrency;
+  // --public counts sessions of a batch, which is min(concurrency, rate) sessions
+  const batchSize = Math.min(concurrency, ratePerMinute);
+  const publicPerBatch = nonNegativeInt("public", values.public, 100_000);
+  if (publicPerBatch > batchSize) {
+    throw new UsageError(
+      `--public ${publicPerBatch} is more than the ${batchSize} sessions of a batch (min of --concurrency and --rate)`,
+    );
+  }
   return {
     ...shared,
-    concurrency: values.concurrency === undefined ? 2 : shared.concurrency,
+    public: publicPerBatch,
+    concurrency,
     sessions: Number.MAX_SAFE_INTEGER,
-    ratePerMinute: positiveInt("rate", values.rate, 3, 600),
+    ratePerMinute,
     durationMs: values.duration === undefined ? undefined : parseDuration(values.duration),
   };
 }

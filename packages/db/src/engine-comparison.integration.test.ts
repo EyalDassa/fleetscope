@@ -11,7 +11,13 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ClickHouseClient } from "./client";
 import { ensureGrafanaUser } from "./grafana-user";
 import { insertEvents } from "./insert";
-import { createReaderClient, createTestDatabase, type TestDatabase, testPassword } from "./testing";
+import {
+  conditionalAll,
+  createReaderClient,
+  createTestDatabase,
+  type TestDatabase,
+  testPassword,
+} from "./testing";
 
 /**
  * The `engine-comparison` and `compatibility-matrix` README snippets (M3 Browsers dashboard), run as
@@ -299,7 +305,8 @@ function expand(
   sources: string[] = ["real"],
 ): string {
   const q = (v: string[]) => v.map((x) => `'${x}'`).join(",");
-  return sql
+  // target and site variables: All
+  return conditionalAll(sql, {})
     .replace(
       /\$__timeFilter\((\w+)\)/g,
       (_, c) => `${c} >= toDateTime(${sec(from)}) AND ${c} <= toDateTime(${sec(to)})`,

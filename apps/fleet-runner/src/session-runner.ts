@@ -4,22 +4,28 @@ import {
   type Collector,
   isUnsupportedFeatureError,
 } from "@fleetscope/collector";
-import type { Engine, SessionStatus } from "@fleetscope/schema";
+import { DEMO_SITE, type Engine, type SessionStatus, type Target } from "@fleetscope/schema";
 import type { Logger } from "pino";
 import { type Browser, chromium, type Page } from "playwright-core";
 import type { RunnerConfig } from "./config";
 import type { BrowserContainer, DockerFleet } from "./docker";
 import { classifyOutcome } from "./outcome";
 import { createRng } from "./rng";
-import { SCENARIOS, type ScenarioName } from "./scenarios";
+import { ALL_SCENARIOS, type SessionScenarioName } from "./scenarios";
+import type { SiteRun } from "./scenarios/public/robots";
 import { StatsSampler } from "./stats";
 
 export interface SessionSpec {
   index: number;
   engine: Engine;
-  scenario: ScenarioName;
+  scenario: SessionScenarioName;
   /** The engine the assignment chose, when routing moved the session to `engine`; else null/absent. */
   routedFrom?: Engine | null;
+  /** What the session visits; absent means the demo site. */
+  target?: Target;
+  site?: string;
+  /** A public session's site with the paths robots.txt allows today (docs/adr/0007). */
+  siteRun?: SiteRun;
   /** Seeds the scenario's random choices. */
   seed: number;
 }
@@ -59,7 +65,10 @@ export interface SessionResult {
   engine: Engine;
   /** The engine the assignment chose before routing moved the session; null when not routed. */
   routedFrom: Engine | null;
-  scenario: ScenarioName;
+  scenario: SessionScenarioName;
+  /** `demo` or `public`, and the site: `demo-site` or a public site such as `wikipedia`. */
+  target: Target;
+  site: string;
   status: ResultStatus;
   reason: string | null;
   /** The session's own duration (what `session.ended` carries). 0 if it was never reported. */
@@ -145,6 +154,8 @@ export async function runSession(deps: SessionDeps, spec: SessionSpec): Promise<
     engine: spec.engine,
     routedFrom: spec.routedFrom ?? null,
     scenario: spec.scenario,
+    target: spec.target ?? "demo",
+    site: spec.site ?? DEMO_SITE,
     status: "infra_error",
     reason: null,
     durationMs: 0,
@@ -204,6 +215,8 @@ export async function runSession(deps: SessionDeps, spec: SessionSpec): Promise<
     startupMs: container.startupMs,
     connectMs,
     routedFrom: spec.routedFrom ?? null,
+    target: result.target,
+    site: result.site,
   });
   session = started;
   deps.live?.add(started);
@@ -216,20 +229,28 @@ export async function runSession(deps: SessionDeps, spec: SessionSpec): Promise<
     logger: log,
   });
   stats.start();
-  const onAbort = () => void bounded(closeBrowser(), CLOSE_TIMEOUT_MS); // unblocks a running action
+  // Ends a wait between two pages of a public journey when the session is cut off.
+  const cutOff = new AbortController();
+  const onAbort = () => {
+    cutOff.abort();
+    void bounded(closeBrowser(), CLOSE_TIMEOUT_MS); // unblocks a running action
+  };
   deps.signal.addEventListener("abort", onAbort, { once: true });
   const deadline = setTimeout(() => {
     timedOut = true;
+    cutOff.abort();
     void bounded(closeBrowser(), CLOSE_TIMEOUT_MS);
   }, deps.sessionTimeoutMs);
 
   let error: unknown;
   try {
     const page = await started.collectPage(await openPage(browser, log));
-    await SCENARIOS[spec.scenario](page, {
+    await ALL_SCENARIOS[spec.scenario](page, {
       baseUrl: deps.config.demoSiteBrowserUrl,
       rng: createRng(spec.seed),
       logger: log,
+      siteRun: spec.siteRun,
+      signal: cutOff.signal,
     });
   } catch (caught) {
     error = caught ?? new Error("scenario failed");

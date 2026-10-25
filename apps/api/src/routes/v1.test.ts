@@ -18,6 +18,8 @@ const session: TimelineSession = {
   startup_ms: 300,
   connect_ms: 40,
   routed_from: null,
+  target: "demo",
+  site: "demo-site",
   status: "failed",
   started_at_ms: START,
   ended_at_ms: START + 2000,

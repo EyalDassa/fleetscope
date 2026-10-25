@@ -22,6 +22,8 @@ describe("parseRunArgs", () => {
       agentId: defaultAgentId(hostname()),
       routing: "fixed",
       sessionTimeoutMs: 120_000,
+      public: 0,
+      stateFile: ".fleet-state.json",
     });
   });
 
@@ -44,6 +46,10 @@ describe("parseRunArgs", () => {
         "by-scenario",
         "--session-timeout",
         "30",
+        "--public",
+        "3",
+        "--state-file",
+        "state/pause.json",
       ],
       seed,
     );
@@ -56,7 +62,17 @@ describe("parseRunArgs", () => {
       agentId: "my-agent",
       routing: "by-scenario",
       sessionTimeoutMs: 30_000,
+      public: 3,
+      stateFile: "state/pause.json",
     });
+  });
+
+  it("--public: 0 and up to --sessions; not more, not negative, not a word", () => {
+    expect(parseRunArgs(["--sessions", "5", "--public", "0"], seed).public).toBe(0);
+    expect(parseRunArgs(["--sessions", "5", "--public", "5"], seed).public).toBe(5);
+    expect(() => parseRunArgs(["--sessions", "5", "--public", "6"], seed)).toThrow(/more than/);
+    expect(() => parseRunArgs(["--public", "-1"], seed)).toThrow(UsageError);
+    expect(() => parseRunArgs(["--public", "some"], seed)).toThrow(/from 0 to/);
   });
 
   it("rejects an unknown routing policy and lists the valid ones", () => {
@@ -273,5 +289,24 @@ describe("parseDuration", () => {
     expect(parseDuration("2m")).toBe(120_000);
     expect(parseDuration("1h")).toBe(3_600_000);
     expect(parseDuration("45")).toBe(45_000);
+  });
+});
+
+describe("--public and --state-file for traffic", () => {
+  it("--public counts sessions of a batch: at most min(concurrency, rate)", () => {
+    expect(parseTrafficArgs([], seed).public).toBe(0);
+    expect(parseTrafficArgs(["--public", "1"], seed).public).toBe(1);
+    expect(
+      parseTrafficArgs(["--concurrency", "4", "--rate", "6", "--public", "4"], seed).public,
+    ).toBe(4);
+    expect(() => parseTrafficArgs(["--public", "3"], seed)).toThrow(
+      /more than the 2 sessions of a batch/,
+    );
+    expect(() => parseTrafficArgs(["--rate", "1", "--public", "2"], seed)).toThrow(UsageError);
+  });
+
+  it("--state-file is read", () => {
+    expect(parseTrafficArgs(["--state-file", "pause.json"], seed).stateFile).toBe("pause.json");
+    expect(parseTrafficArgs([], seed).stateFile).toBe(".fleet-state.json");
   });
 });
