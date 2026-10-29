@@ -33,7 +33,7 @@
     "sim": "pnpm --filter @fleetscope/simulator sim"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.6.2",
+    "@biomejs/biome": "^2.6.3",
     "turbo": "^2.11.10",
     "typescript": "^7.0.2",
     "vitest": "^5.0.5"
