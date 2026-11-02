@@ -15,18 +15,21 @@ report as "Not available" instead of 0.</sub>
 
 ---
 
-## The problem
+## What it does
 
-Teams running AI agents on browser fleets have very little visibility into what the browsers are
-doing. When an agent is slow, gets blocked, crashes or burns money, they dig through logs one
-session at a time. Fleetscope is built around the questions those teams ask:
+AI agents that drive headless browsers fail in ways that are hard to see: a page is slow, a site
+blocks the bot, an engine lacks a Web API, a browser sits idle while it's billed. Without telemetry,
+the only way to find out is to read logs one session at a time.
 
-| Who | Question | Where it's answered |
-|---|---|---|
-| Platform / DevOps | Is the fleet healthy right now? | **Overview** dashboard |
-| Agent developer | Why did this session fail or run slowly? | **Session** dashboard + Perfetto timeline |
-| Agent developer / DevOps | Which engine should we run, and for which sites? | **Browsers** dashboard |
-| Platform / finance | Is the database keeping up, and what is it costing? | **Capacity** dashboard + alerts |
+Fleetscope collects a structured event stream from every browser session and turns it into four
+dashboards:
+
+| Question | Where it's answered |
+|---|---|
+| Is the fleet healthy right now? | **Overview** |
+| Why did this session fail, or run slowly? | **Session**, plus a Perfetto timeline |
+| Which engine should run which work, and on which sites? | **Browsers** |
+| Is the database keeping up, and what is it costing? | **Capacity**, plus alerts |
 
 Two rules run through the whole project:
 
@@ -35,32 +38,32 @@ Two rules run through the whole project:
 - **Engine gaps are never faked.** A metric an engine can't report is stored as `null` and shown as
   "Not available", never as 0. A missing browser feature fails the session with its own error code.
 
-## What was built
+## Features
 
 | | |
 |---|---|
-| **Real browser fleet** | Every session gets a fresh Docker container for its engine plus a small port-forwarder sidecar, so the container's CPU and memory belong to exactly one session. Three scenarios run against a purpose-built demo site with controllable chaos (slow pages, flaky elements, a bot wall, a JS-heavy page), and read-only journeys run against five real public sites. |
+| **Real browser fleet** | Every session gets a fresh Docker container for its engine plus a small port-forwarder sidecar, so the container's CPU and memory belong to exactly one session. Three scenarios run against a purpose-built demo site with controllable chaos (slow pages, flaky elements, a bot wall, a heavy page, a JS-heavy page), and read-only journeys run against five real public sites. |
 | **Collector SDK** | Wraps Playwright: times every action, reads CDP metrics and network events where the engine supports them, classifies failures into a fixed set of error codes, and batches events with retries. |
-| **Ingest API** | Fastify. `POST /v1/events` validates batches with zod, buffers them, and writes to ClickHouse in batches about once a second. Retries are deduplicated, and a batch ClickHouse will never accept goes to a dead-letter file instead of blocking everyone. |
+| **Ingest API** | `POST /v1/events` validates batches, buffers them, and writes to ClickHouse in batches about once a second. Retries are deduplicated, and a batch ClickHouse will never accept goes to a dead-letter file instead of blocking ingest. |
 | **ClickHouse data model** | Raw event tables with a 30-day TTL, a per-minute rollup maintained by materialized views, and a pricing table for estimated cost. |
-| **Grafana dashboards, as code** | Overview, Sessions, Session, Browsers and Capacity, stored as JSON in the repo. Grafana reads ClickHouse directly as a read-only user. CI executes every panel's SQL against seeded data. |
-| **Perfetto timeline** | The API serves any session as a Chrome trace, so its actions, network requests and issues line up with CPU, memory and JS heap in [Perfetto](https://ui.perfetto.dev). The trace is processed in the viewer's browser, not uploaded. |
+| **Dashboards as code** | Overview, Sessions, Session, Browsers and Capacity, stored as JSON in the repo. Grafana reads ClickHouse directly as a read-only user, and CI executes every panel's SQL against seeded data. |
+| **Session timeline** | The API serves any session as a Chrome trace, so its actions, network requests and issues line up with CPU, memory and JS heap in [Perfetto](https://ui.perfetto.dev). The trace is processed in the viewer's browser, not uploaded. |
 | **Routing by scenario** | When an engine lacks a feature a scenario needs (Lightpanda never runs Web Workers), the session runs on the lightest capable engine instead, and the dashboards show it was routed. |
 | **Simulator** | Generates synthetic traffic from a profile calibrated on real sessions, always labeled `sim`. |
-| **Capacity monitoring and alerts** | Rows sent vs rows ClickHouse actually wrote, memory and CPU against the service's limits, scaling events, trial credit from the ClickHouse Cloud billing API. Alert rules are code too. |
+| **Capacity monitoring and alerts** | Rows sent vs rows ClickHouse actually wrote, memory and CPU against the service's limits, scaling events, and credit from the ClickHouse Cloud billing API. Alert rules are code too. |
 
-### What the data showed
+## What the data shows
 
-- **Lightpanda uses a fraction of the memory.** On the real public-site sessions (Browsers
-  dashboard, 2026-10-25) the median peak memory per session was about **13 MiB** for Lightpanda,
+- **Lightpanda uses a fraction of the memory.** On real public-site sessions (Browsers dashboard,
+  2026-10-25) the median peak memory per session was about **13 MiB** for Lightpanda,
   **128 MiB** for chrome-headless-shell and **221 MiB** for Chromium. Chromium's figure includes about
   110 MiB for Playwright's Node server that runs in its container, and the dashboard says so.
 - **But Lightpanda never runs a Web Worker.** It has a `Worker` constructor, but the worker never
   answers. That one gap failed every `heavy-page-crawl` session and pulled Lightpanda's success rate
   to about 56%; without that scenario it was about 84%, close to Chromium's 88%.
   [`tools/worker-probe.mjs`](tools/worker-probe.mjs) reproduces it on the pinned image and on the
-  nightly build. That evidence led to routing by scenario
-  ([ADR 0005](docs/adr/0005-route-by-scenario.md)) instead of hiding the failures.
+  nightly build. That led to routing by scenario ([ADR 0005](docs/adr/0005-route-by-scenario.md))
+  instead of hiding the failures.
 
 ## Dashboards
 
@@ -95,33 +98,46 @@ flowchart LR
   G -. "Open timeline" .-> P
 ```
 
-| Piece | Path | Stack |
+| Piece | Path | What it is |
 |---|---|---|
-| Event schema | [`packages/schema`](packages/schema) | zod, the single definition of every event and error code |
-| Collector SDK | [`packages/collector`](packages/collector) | Playwright, CDP |
-| Data layer | [`packages/db`](packages/db) | `@clickhouse/client`, migrations, shared queries, the dashboard query rules |
-| Ingest API | [`apps/api`](apps/api) | Fastify, pino |
-| Fleet runner | [`apps/fleet-runner`](apps/fleet-runner) | Docker Engine API, Playwright |
-| Demo site | [`apps/demo-site`](apps/demo-site) | Fastify, server-rendered HTML |
-| Simulator | [`apps/simulator`](apps/simulator) | Calibrated log-normal profiles |
-| Dashboards and tooling | [`infra/grafana`](infra/grafana) | Grafana 13, ClickHouse and Infinity data sources, push/pull/check CLI |
+| Event schema | [`packages/schema`](packages/schema) | The single definition of every event and error code |
+| Collector SDK | [`packages/collector`](packages/collector) | Instruments a Playwright browser and ships events |
+| Data layer | [`packages/db`](packages/db) | ClickHouse client, migrations, shared queries and the dashboard query rules |
+| Ingest API | [`apps/api`](apps/api) | Event ingest and the session trace |
+| Fleet runner | [`apps/fleet-runner`](apps/fleet-runner) | Starts browser containers and runs scenarios |
+| Demo site | [`apps/demo-site`](apps/demo-site) | A target site with controllable failures |
+| Simulator | [`apps/simulator`](apps/simulator) | Synthetic traffic from a calibrated profile |
+| Dashboards and tooling | [`infra/grafana`](infra/grafana) | Dashboard and alert JSON, plus the push/pull/check CLI |
 | Database | [`infra/clickhouse`](infra/clickhouse) | Plain SQL migrations |
-| Browser images | [`infra/browsers`](infra/browsers) | Pinned by digest, checked in CI |
+| Browser images | [`infra/browsers`](infra/browsers) | The Chromium and forwarder images, and the pinned upstream engines |
 
-TypeScript (strict) throughout, in a pnpm + Turborepo monorepo.
+## Tech stack, and why
 
-## Engineering highlights
+| Technology | Used for | Why |
+|---|---|---|
+| **ClickHouse** | All telemetry | The workload is append-only events read by aggregation ("p95 latency per engine per minute"). A columnar store compresses repetitive columns well, runs those queries in milliseconds and is built for batch inserts. Postgres with TimescaleDB was the alternative; Postgres is still the better fit for app metadata such as users and API keys. [ADR 0001](docs/adr/0001-clickhouse.md) |
+| **Grafana** | The UI, alerts | Time picker, variables, shareable URLs, auto-refresh and alerting come built in, and it's what people running infrastructure already use. Reading ClickHouse directly through the official data source was faster to build than a custom dashboard or a Grafana-over-API setup. [ADR 0003](docs/adr/0003-grafana-dashboards.md) |
+| **Perfetto** | Session timeline | Grafana has no Gantt view. Perfetto shows action slices next to CPU and memory counters on one axis, and browser engineers already know it. |
+| **Playwright** | Driving the browsers | One API for all three engines: `connect` for Chromium and `connectOverCDP` for the other two. |
+| **Docker, one container per session** | Isolation and measurement | Container stats give per-session CPU, memory and network for every engine, including engines with no CDP performance metrics, and `startup_ms` becomes a real per-engine number. [ADR 0004](docs/adr/0004-multi-engine-fleet.md) |
+| **Chromium, chrome-headless-shell, Lightpanda** | The engines compared | Chromium is the baseline, headless-shell is Google's lighter headless build, and Lightpanda is a from-scratch engine built for automation with a very small footprint and incomplete Web API coverage. Each is pinned by digest. |
+| **Fastify + zod** | Ingest API and validation | Fast, small and TypeScript-friendly. The zod schemas in `packages/schema` are the only definition of the event shapes, shared by the collector, API and simulator. |
+| **TypeScript, pnpm, Turborepo** | The monorepo | One language end to end, strict types across package boundaries, and cached builds and tests per package. |
+| **Vitest, Biome** | Tests, lint and format | Fast and simple to configure in a monorepo. |
+| **GitHub Actions, gitleaks, Dependabot** | CI | Lint, typecheck, unit and integration tests, a fleet smoke test with real browser containers, the dashboard query check, a secret scan over the full history, and dependency updates. |
+| **Grafana Cloud, ClickHouse Cloud** | Hosted deployment | Grafana Cloud's free tier for the dashboards and Grafana Assistant; ClickHouse Cloud because a hosted Grafana needs a ClickHouse it can reach. The same dashboards run locally against docker-compose. |
+
+## Engineering details
 
 - **Duplicate-safe ingest.** The API drops `event_id`s it has seen in the last 15 minutes, which
   catches client retries. Each flush also carries ClickHouse insert-deduplication tokens, so a flush
-  retried after a partial failure doesn't double-count rows. Rows ClickHouse will never accept (a lone UTF-16 surrogate, a
-  batch spanning over 100 partitions) go to a dead-letter file instead of stalling ingest for every
-  client. [ADR 0002](docs/adr/0002-ingest-dedupe.md)
-- **Dashboards are tested code.** The dashboard JSON lives in the repo. `pnpm grafana:check` lints
-  it against the design spec, and CI runs every panel's SQL against seeded ClickHouse. Shared SQL
-  snippets (what "failed" or "interrupted" means, browser-hours, estimated cost) are copied from
+  retried after a partial failure doesn't double-count rows. Rows ClickHouse will never accept (a lone
+  UTF-16 surrogate, a batch spanning over 100 partitions) go to a dead-letter file instead of stalling
+  ingest for every client. [ADR 0002](docs/adr/0002-ingest-dedupe.md)
+- **Dashboards are tested code.** `pnpm grafana:check` lints the dashboard JSON against the design
+  spec, and CI runs every panel's SQL against seeded ClickHouse. Shared SQL snippets (what "failed" or
+  "interrupted" means, browser-hours, estimated cost) are copied from
   [`packages/db/README.md`](packages/db/README.md), and CI fails if any copy drifts.
-  [ADR 0003](docs/adr/0003-grafana-dashboards.md)
 - **Least privilege for Grafana.** Grafana's ClickHouse user is `readonly = 1` with `SELECT` only,
   down to individual system-table columns for the capacity panels. Tests show writes are refused even
   if a write grant were added by mistake. [ADR 0006](docs/adr/0006-capacity-monitoring.md)
@@ -133,62 +149,6 @@ TypeScript (strict) throughout, in a pnpm + Turborepo monorepo.
   crawl-delay, pause a site for an hour on a 403, 429 or CAPTCHA, and report a page whose layout
   changed as `site_layout` rather than blaming the browser. A daily canary opens an issue when a
   site's journey fails two days in a row. [ADR 0007](docs/adr/0007-public-sites.md)
-- **CI.** Lint, typecheck and unit tests; integration tests against a real ClickHouse; a fleet smoke
-  test that starts real browser containers; the dashboard query check; image-pin consistency checks;
-  gitleaks over the full history; and Dependabot.
-
-## How it was built
-
-Fleetscope was built in four days (22–25 October 2026) by **Eyal Dassa** as product owner,
-working with a team of [Claude Code](https://claude.com/claude-code) subagents. The main Claude Code
-session acted as tech lead and delegated to eight agents, each defined in
-[`.claude/agents`](.claude/agents) and each owning its own folders:
-
-- **Design:** two competing designers and a design lead.
-- **Build:** a backend engineer, a dashboard engineer and a platform engineer.
-- **Checks:** a QA engineer and a code reviewer.
-
-The agents never talked to each other directly. Everything went through files in the repo, and that
-paper trail is kept:
-
-| Record | Where |
-|---|---|
-| The plan and the team's rules | [`PLAN.md`](PLAN.md), [`CLAUDE.md`](CLAUDE.md) |
-| Design sprint: two proposals, cross-critiques, revisions, the lead's round notes and the final decision per area | [`design/`](design) ([`DECISIONS.md`](design/DECISIONS.md), [`DESIGN.md`](design/DESIGN.md)) |
-| Architecture decisions | [`docs/adr/`](docs/adr) |
-| QA reports per milestone and feature | [`qa/`](qa) |
-| Code reviews per milestone and feature | [`reviews/`](reviews) |
-| Plans and decisions per change | The [merged pull requests](https://github.com/EyalDassa/fleetscope/pulls?q=is%3Apr+is%3Amerged) |
-
-Every feedback loop (design critiques, QA and review) got at most two rounds before the lead
-decided. A change merged only with green CI, QA's "ready to merge" and the reviewer's approval.
-
-**The mid-project pivot.** The first milestone shipped a custom Next.js dashboard. Once real data was
-flowing, it was replaced with Grafana: it does time pickers, variables, sharing and alerting out of
-the box, and it is what this product's users already work in. The design sprint's colour and layout
-decisions carried over into a Grafana spec. [ADR 0003](docs/adr/0003-grafana-dashboards.md) records why.
-
-### Milestones
-
-| PR | What landed |
-|---|---|
-| [#1](https://github.com/EyalDassa/fleetscope/pull/1) | **M0:** walking skeleton (monorepo, CI, ClickHouse, migrations) and the design sprint |
-| [#4](https://github.com/EyalDassa/fleetscope/pull/4) | **M1:** collector, fleet runner and demo site. The first real Chromium sessions land in ClickHouse |
-| [#5](https://github.com/EyalDassa/fleetscope/pull/5) | **M2:** the switch to Grafana; Overview, Sessions and Session dashboards; Perfetto timeline |
-| [#6](https://github.com/EyalDassa/fleetscope/pull/6) | **M3:** chrome-headless-shell and Lightpanda, the forwarder sidecar, the Browsers dashboard, the simulator |
-| [#8](https://github.com/EyalDassa/fleetscope/pull/8) | Routing by scenario around Lightpanda's Web Worker gap |
-| [#9](https://github.com/EyalDassa/fleetscope/pull/9) | Capacity dashboard, billing data source and alerts as code |
-| [#10](https://github.com/EyalDassa/fleetscope/pull/10), [#11](https://github.com/EyalDassa/fleetscope/pull/11) | Real public sites next to the demo site, and their daily canary |
-| [#12](https://github.com/EyalDassa/fleetscope/pull/12), [#13](https://github.com/EyalDassa/fleetscope/pull/13), [#14](https://github.com/EyalDassa/fleetscope/pull/14) | Real sites × engines grid, public-site rotation across every engine, success rate by engine over time |
-
-By the numbers: 265 commits, 11 merged pull requests, 7 ADRs, and about 1,700 test cases in
-128 test files (30 of them integration tests against a real ClickHouse).
-
-### Planned but not built
-
-[`PLAN.md`](PLAN.md) is the original plan and goes further than what was built. Not built yet:
-the Insights and Usage-and-cost dashboards, the MCP server and public REST API for AI agents, Sentry,
-and running Chromium over plain CDP (to remove the Playwright server from its memory numbers).
 
 ## Run it locally
 
@@ -231,6 +191,14 @@ pnpm test:integration                        # against the ClickHouse from `pnpm
 pnpm grafana:check                           # dashboard rules
 ```
 
+## Roadmap
+
+- An Insights dashboard: slowest sites, block rates per domain, memory-leak suspects, idle sessions
+  that are still billed, error spikes.
+- A usage and cost dashboard by engine, agent and scenario.
+- An MCP server and a read-only REST API, so AI agents can ask the same questions programmatically.
+- Chromium over plain CDP, to take Playwright's server out of its memory numbers.
+
 ## Repository map
 
 ```
@@ -238,8 +206,7 @@ apps/          api · fleet-runner · demo-site · simulator
 packages/      schema · collector · db
 infra/         clickhouse migrations · grafana dashboards, alerts and tooling · browser images · docker-compose
 docs/adr/      architecture decision records
-design/        design brief, both proposals, critiques and the final design spec
-qa/  reviews/  QA reports and code reviews per milestone
+design/        the dashboard design spec and the design proposals behind it
+qa/  reviews/  test reports and code reviews per feature
 tools/         worker-probe.mjs (the Lightpanda Web Worker check)
-.claude/       the subagent definitions the project was built with
 ```
