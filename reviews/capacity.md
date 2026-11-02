@@ -46,7 +46,7 @@ The comment says "ClickHouse cannot grant part of a system table". It can grant 
 - `exception` text (a failed insert's message can quote data);
 - `ProfileEvents`.
 
-The snippets need only `event_time, event_type, database, table, rows, error` from `part_log`, and `event_time, metric, value, hostname` from `asynchronous_metric_log`. The practical risk is low today (one database on the service, only Grafana editors can run ad-hoc SQL), but this is the read-only user's whole point, and Eyal has to defend the grant in an interview.
+The snippets need only `event_time, event_type, database, table, rows, error` from `part_log`, and `event_time, metric, value, hostname` from `asynchronous_metric_log`. The practical risk is low today (one database on the service, only Grafana editors can run ad-hoc SQL), but this is the read-only user's whole point, so the grant has to be justified.
 **Fix:** column-level grants for both tables, with `CAPACITY_SYSTEM_TABLES` becoming a table-to-columns map, and a corrected comment. Extend the integration test: `SELECT exception FROM system.part_log` is `ACCESS_DENIED` for the reader. Check that `SELECT count() FROM system.part_log` still works as the reader (unsure whether `count()` needs a granted column; if not, the test can count on `rows`).
 
 ### RV-CAP-05 The key's role is the only barrier, and the role actually used is not recorded. Owner: platform (with Eyal)

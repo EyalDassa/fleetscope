@@ -61,9 +61,9 @@ jobs:
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
 
-            Review this pull request. Read CLAUDE.md and PLAN.md first for the project
-            conventions. Focus on correctness bugs, security problems (secrets, injection),
-            missing tests, and violations of the conventions in CLAUDE.md (zod schemas only in
+            Review this pull request. Read README.md and docs/adr/ first for the project
+            context. Focus on correctness bugs, security problems (secrets, injection),
+            missing tests, and violations of the project conventions (zod schemas only in
             packages/schema, batched ClickHouse inserts only, no console.log, data honesty:
             source real/sim and null for unsupported engine metrics). Skip style nitpicks that
             Biome already enforces.

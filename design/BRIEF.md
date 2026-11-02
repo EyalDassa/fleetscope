@@ -1,6 +1,6 @@
 # Design brief: Fleetscope dashboard
 
-Both designers get this same brief. Read PLAN.md sections 1 and 7 first.
+Both designers get this same brief. Read the root README first.
 
 ## Product in one line
 A monitoring dashboard for fleets of AI-agent browsers (Chromium, chrome-headless-shell, Lightpanda): health, latency, resource use, cost and failures, from fleet level down to a single session.
@@ -18,7 +18,7 @@ A monitoring dashboard for fleets of AI-agent browsers (Chromium, chrome-headles
 5. **Both themes:** dark mode is the default (engineers watch these screens for hours), light mode must also work. Text must meet WCAG AA contrast.
 6. **Three engines must be easy to tell apart** in every chart (one consistent color each), and real vs simulated data must be visibly labeled.
 
-## Constraints (so the design can be built by Saturday)
+## Constraints (so the design can be built quickly)
 - Built with Next.js, Tailwind, shadcn/ui and Recharts. Don't design anything those can't do in a few hours.
 - Layout: left sidebar, top bar with time range, engine filter, source filter and ⌘K search.
 - Desktop first (1440px wide); must not break at 1024px.

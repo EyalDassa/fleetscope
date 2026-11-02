@@ -239,7 +239,7 @@ describe.skipIf(!ENABLED)("a real run of 9 sessions (seed 7)", () => {
   });
 
   // QA-M1-06, decided by the lead: "why did session X fail" is answered by `sessions.reason` plus
-  // the `error_code` of the session's FIRST failed action (PLAN section 5), not by the issues table:
+  // the `error_code` of the session's FIRST failed action, not by the issues table:
   // `selector_not_found` is deliberately not an issue kind. This is that rule, as a test.
   it("QA-M1-06: every session that did not succeed has a reason, and its first failed action has an error code", async () => {
     const notOk = sessions.filter((s) => s.status !== "success");

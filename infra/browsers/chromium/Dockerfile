@@ -1,5 +1,5 @@
 # Chromium for the Fleetscope fleet: a Playwright server in its own container.
-# The fleet runner starts ONE container per session (see PLAN.md section 3), connects to it with
+# The fleet runner starts ONE container per session, connects to it with
 # `chromium.connect("ws://127.0.0.1:<published port>/")`, and removes it when the session ends.
 #
 # BUILD CONTEXT is infra/browsers (the same context as the forwarder image):

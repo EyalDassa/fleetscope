@@ -1,14 +1,14 @@
 # ADR 0003: Grafana instead of a custom dashboard
 
 - Status: accepted (2026-10-24, decided by Eyal at the start of M2)
-- Replaces: the `apps/web` Next.js dashboard from PLAN.md section 7 and the shadcn/Recharts parts of `design/DESIGN.md`
+- Replaces: the `apps/web` Next.js dashboard from the original plan and the shadcn/Recharts parts of `design/DESIGN.md`
 
 ## Context
 
 M0 shipped an empty Next.js dashboard on Vercel and a design system for a custom UI. M1 landed real fleet data in ClickHouse. Before building any screens, Eyal chose to use **Grafana** as the product's UI instead of writing our own.
 
 What the UI has to do:
-- show fleet health at a glance and drill down to one session (PLAN section 1);
+- show fleet health at a glance and drill down to one session;
 - show a session's actions next to its CPU and memory on one time axis;
 - explain why a session failed;
 - run for $0 for the demo.

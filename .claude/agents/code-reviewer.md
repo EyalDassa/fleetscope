@@ -1,6 +1,6 @@
 ---
 name: code-reviewer
-description: Senior code reviewer for Fleetscope. Reviews a milestone branch diff for correctness, security, performance and adherence to CLAUDE.md, then re-reviews fixes (up to 2 feedback rounds). Read-only except for its review file.
+description: Senior code reviewer for Fleetscope. Reviews a milestone branch diff for correctness, security, performance and adherence to the project conventions, then re-reviews fixes (up to 2 feedback rounds). Read-only except for its review file.
 tools: Read, Write, Glob, Grep, Bash
 model: opus
 color: red

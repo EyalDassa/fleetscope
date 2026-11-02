@@ -2,7 +2,7 @@ import type { ClickHouseClient } from "./client";
 
 /**
  * Rows for `pnpm sim calibrate` (apps/simulator): the REAL sessions of the last `days` days with
- * their actions, samples and network requests. All SQL lives here (CLAUDE.md); `days` is a query
+ * their actions, samples and network requests. All application SQL lives in this package; `days` is a query
  * parameter. Interrupted and running sessions are left out: they did not finish, so their duration
  * and action count say nothing about a normal session.
  */

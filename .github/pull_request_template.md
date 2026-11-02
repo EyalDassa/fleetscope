@@ -5,7 +5,7 @@
 <!-- Paste the milestone plan from the tech lead. -->
 
 ## Non-obvious decisions
-<!-- Explain choices you would want to be able to defend in an interview. Link ADRs. -->
+<!-- Explain the choices a reviewer might question, and why. Link ADRs. -->
 
 ## Data honesty check
 - [ ] Simulated data is labeled `source: "sim"` and never shown as real

@@ -13,8 +13,8 @@
 #     network_requests;
 #   - engines NOT listed in SMOKE_NULLABLE_ENGINES (default "lightpanda") also need a cdp sample with a
 #     JS heap value and a network request with a size. Lightpanda has no Performance.getMetrics and no
-#     Network.*ExtraInfo, so their heap / byte columns may be NULL (that is the honest value, see
-#     CLAUDE.md "Data honesty") and ONLY a `blocked` session (stopped at the bot wall) may have no
+#     Network.*ExtraInfo, so their heap / byte columns may be NULL (that is the honest value: an
+#     engine gap is never faked) and ONLY a `blocked` session (stopped at the bot wall) may have no
 #     network_requests row at all. The cdp sample row itself is still required;
 #   - every session that is not `blocked` has at least one successful (ok) action, and every engine has
 #     at least one in total, so an engine that fails every action cannot pass;

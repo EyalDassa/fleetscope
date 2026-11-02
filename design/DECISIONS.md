@@ -1,6 +1,6 @@
 # Design decisions: Fleetscope dashboard
 
-Status: **proposed, waiting for Eyal's approval.** Frontend work starts only after approval.
+Status: **approved** (2026-10-22). Since the move to Grafana (ADR 0003) the colour and layout decisions live on in `DESIGN.md`.
 The design sprint closed after feedback round 1. The reasoning is in `design/rounds/r1-lead-notes.md`.
 Final versions compared: `design/proposals/promax/v2` and `design/proposals/taste/v2`.
 Every contrast and colour-vision (CVD) number below comes from the helper's `render-check.md`. Hand estimates are marked "est.".
@@ -24,7 +24,7 @@ Coherence check: **one palette** (promax v2 values, both themes), **one type sca
 
 ## 2. Scores (final versions, 1 to 5)
 
-Columns: **G** answers at a glance · **D** density without clutter · **Dr** drill-down clarity · **A** accessibility · **B** easy to build with shadcn/ui + Recharts by Saturday. "–" means the criterion does not apply to that area.
+Columns: **G** answers at a glance · **D** density without clutter · **Dr** drill-down clarity · **A** accessibility · **B** easy to build with shadcn/ui + Recharts in a short build. "–" means the criterion does not apply to that area.
 
 | Area | promax G | D | Dr | A | B | taste G | D | Dr | A | B |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -50,7 +50,7 @@ What drives the scores:
 ## 3. Key judgement calls
 
 1. **Blocked is violet (promax), not a hue-less outline (taste).** Both systems already use hatch to mean "simulated", so a hatched blocked would give one pattern two meanings. A grey badge also looks like "running" or disabled UI. The cost is one CVD pair: dark Chromium `#56B4E9` vs Blocked `#D9CCFF` under protanopia, ΔE 8.75. I accept it because the two never share a mark type. Status is always a badge with icon + word; an engine is always a shape marker + name; blocked is never plotted as a series in an engine chart. Eyal can ask for the quieter version (open question 4).
-2. **The palette is taken whole from promax v2.** I did not mix taste's neutrals with promax's hues. Mixing would make every measured contrast and ΔE value unverified, two days before the deadline.
+2. **The palette is taken whole from promax v2.** I did not mix taste's neutrals with promax's hues. Mixing would make every measured contrast and ΔE value unverified, late in a short sprint.
 3. **Failed waterfall bars are solid red, not striped.** Each bar keeps an X icon and the word "failed". This keeps the rule "hatch and stripes mean simulated, nothing else".
 4. **Version marker, not "rollout".** Taste's "14:12 Lightpanda v0.2.9 rollout" claims a deploy event the schema doesn't have. promax was right about that, but `session.started.engine_version` lets us honestly show "Lightpanda v0.2.9 first seen". It is optional and the first thing to cut.
 5. **Issues is an always-visible side panel on the session page, not a tab.** Both designers did this, and it shortens "why did it fail" to zero clicks. Tabs are Timeline, Network and Screenshots. promax's "Raw events" tab is dropped because it is not in PLAN.
@@ -64,7 +64,7 @@ What drives the scores:
 - **Collisions fixed.** promax v1 had 9 render-check layout problems: the `end 12.4 s` label on a tick, the failure chip on the `8 s` tick, `screenshot` spilling its column, clipped y labels, the KPI caption overlapping its bar, the tooltip covering the alert label, wrapped legends, a wrapped engine name, and an unstyled page without the CDN. All are fixed in v2. Taste's one AA failure (engine colour used as text, 3.06:1) and the shared `screenshot` spill are fixed.
 - **Colour vision.** promax went from 9 flagged pairs to 4 by moving status colours in lightness. Taste went from 4 to 1, but its re-laddered engine palette created a new deutan flag (headless vs Lightpanda, 10.6 → 8.71) and pushed Lightpanda light to 2.70:1 on hover. That trade is why the final palette is promax's.
 - **Scope trimmed toward PLAN.** Taste removed the workspace switcher, user row, Settings link and "Raw events" tab. promax declined to add them. Both moved open product questions (thresholds, default source filter) to Eyal instead of guessing.
-- **Round 2 skipped.** What was left was either a judgement call (blocked hue, font) or a written rule (label backgrounds, `min-w-0`, panel order at 1024). With the weekend deadline, the lead closed rather than spend another critique, revise and render-check cycle.
+- **Round 2 skipped.** What was left was either a judgement call (blocked hue, font) or a written rule (label backgrounds, `min-w-0`, panel order at 1024). To keep the sprint short, the lead closed rather than spend another critique, revise and render-check cycle.
 
 ## 5. Open questions for Eyal
 
@@ -73,6 +73,6 @@ What drives the scores:
 3. **Default source filter.** **Default:** `All`, with the sim share always visible (top-bar chip, source strips, chips on rows). The alternative is `Real` by default.
 4. **Blocked colour.** Violet (decided) or taste's quieter hue-less outline with a `ban` icon? Violet is louder at a glance and costs one protan pair at ΔE 8.75.
 5. **Version marker on Error rate** ("Lightpanda v0.2.9 first seen", derived from `engine_version`). Keep it as a stretch item, or drop it now?
-6. **Issues as an always-visible side panel** instead of a tab on Session detail (PLAN section 7 says "network and issues tabs"). OK to update PLAN to match?
+6. **Issues as an always-visible side panel** instead of a tab on Session detail (the original plan said "network and issues tabs"). OK to update the plan to match?
 
 **Answered by Eyal on 2026-10-22:** approved DESIGN.md with every default above. Thresholds 95/90; blocked counts against the success rate; the default source filter is `All`, with the sim share always visible; blocked stays violet; the version marker stays as a stretch item (first to cut); Issues is an always-visible side panel, and PLAN section 7 is updated to match.

@@ -9,7 +9,7 @@ import type { FleetEvent, SessionEndedEvent } from "@fleetscope/schema";
 import { RecentIds } from "./recent-ids";
 
 /**
- * The ingest buffer (PLAN.md section 5, docs/adr/0002-ingest-dedupe.md).
+ * The ingest buffer (docs/adr/0002-ingest-dedupe.md).
  *
  * The HTTP route validates a batch and hands it to `offer()`, which answers at once. A timer
  * writes what has piled up to ClickHouse in big batches, because ClickHouse likes a few large

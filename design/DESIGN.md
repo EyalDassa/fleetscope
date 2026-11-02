@@ -158,7 +158,7 @@ Range `now-1h`, refresh `30s`, variables `engine`, `source`, `target` and `site`
 
 Range `now-1h`, refresh `30s`, variables `engine`, `source`, `target`, `site`, `status`, `agent`, `scenario`. The dashboard has one panel, **Sessions ↗** (Table, 24×22):
 - **Rows:** the latest 1,000 sessions started in range (the description says so), newest first. Pagination, column filters, a footer with the row count, and cell height `sm`.
-- **Links and empty state:** the Status and Session cells link to Session detail. No value: "No sessions match these filters in this range". The per-row memory sparkline from PLAN section 7 is a stretch item.
+- **Links and empty state:** the Status and Session cells link to Session detail. No value: "No sessions match these filters in this range". The per-row memory sparkline from the original plan is a stretch item.
 
 | Column | Content | Format |
 |---|---|---|

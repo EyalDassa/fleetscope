@@ -20,7 +20,7 @@ The lead's hand-off names the level and gives a checklist built from the diff. S
 - Report early: if the checklist is done before the timebox, stop and report.
 
 ## First pass (full QA)
-1. Test against the agreed behavior (the task's "done when", PLAN.md, DESIGN.md), not against what the code happens to do.
+1. Test against the agreed behavior (the task's "done when", the README, DESIGN.md), not against what the code happens to do.
 2. Write the missing tests: integration tests against real ClickHouse for `packages/db` and `apps/api`; dashboard checks (every Grafana query against edge-case data: empty, one session, sim only, nulls, interrupted sessions, many sessions), and check the numbers a dashboard shows against a hand-computed answer.
 3. Try to break it: empty data, one session, 10k sessions, an engine returning `null` metrics, invalid payloads, duplicate `event_id`, clock skew, slow API.
 4. Write `qa/<milestone>-report.md`: tests added, and each bug with an ID, steps to reproduce, expected vs actual, severity (blocker / major / minor), owner (backend / dashboard / platform) and likely file.
