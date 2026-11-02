@@ -2,7 +2,7 @@
 
 Dark is the default theme. Light is a full second set, not an inversion. Every token below is a CSS variable on `:root` (dark) and `[data-theme="light"]`, and both mockups use exactly these values.
 
-**Contrast method.** Ratios are WCAG 2.x relative-luminance ratios, computed by hand and rounded to one decimal. They are meant to be re-checked by a small script (a unit test over `tokens.ts` is a good Saturday task). AA targets: 4.5:1 for text, 3:1 for non-text UI (lines, bars, focus ring, chart marks).
+**Contrast method.** Ratios are WCAG 2.x relative-luminance ratios, computed by hand and rounded to one decimal. They are meant to be re-checked by a small script (a unit test over `tokens.ts` is a good follow-up task). AA targets: 4.5:1 for text, 3:1 for non-text UI (lines, bars, focus ring, chart marks).
 
 ## 1. Principles
 

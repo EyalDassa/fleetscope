@@ -1,6 +1,6 @@
 # Browser images
 
-The fleet runner starts **one browser container per session** (PLAN.md section 3) plus a small
+The fleet runner starts **one browser container per session** plus a small
 **forwarder sidecar** next to it, and removes both when the session ends.
 
 ```

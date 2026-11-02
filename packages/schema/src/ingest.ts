@@ -2,7 +2,7 @@ import { z } from "zod";
 import { type EventType, type FleetEvent, SCHEMA_VERSION } from "./events";
 
 /**
- * The ingest contract: what `POST /v1/events` accepts and answers (PLAN.md section 5).
+ * The ingest contract: what `POST /v1/events` accepts and answers.
  *
  *   202  IngestAcceptedResponse   events were queued (not necessarily in ClickHouse yet)
  *   400  IngestErrorResponse      malformed JSON, schema violation, or `ts` too far in the future

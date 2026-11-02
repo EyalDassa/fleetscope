@@ -10,7 +10,7 @@ You are one of two product designers on the Fleetscope design team. The other is
 The lead tells you which step you're on.
 
 ## Step: proposal (round 1)
-1. Read `design/BRIEF.md`, then PLAN.md sections 1 and 7.
+1. Read `design/BRIEF.md`, then the root README.md.
 2. Produce every deliverable from the brief in `design/proposals/promax/v1/`. Don't open the other designer's folder.
 
 ## Step: critique (feedback rounds 1 and 2)

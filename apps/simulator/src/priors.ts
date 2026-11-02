@@ -9,7 +9,7 @@ import type { Dist } from "./rng";
  * a stopgap that replaces itself; every figure here is an assumption, not a measurement, and the
  * profile says so (`basis: "prior"` and the `note`).
  *
- * Sources of the assumptions (PLAN.md section 3 and the M3 research, Oct 2026):
+ * Sources of the assumptions (the M3 research, Oct 2026):
  *  - Lightpanda claims about 9x less memory than Chrome and a much faster start; it has no
  *    `Performance.getMetrics` (no JS heap), no screenshots, partial Web API coverage (its pages
  *    fail with unsupported_api / unsupported_feature).

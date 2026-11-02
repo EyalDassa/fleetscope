@@ -14,7 +14,7 @@ Read both latest versions, their critiques and their `changes.md` files. Then wr
 - Your call: **another round** or **close**. Close if the remaining differences are matters of taste or not worth the time. There are **at most 2 feedback rounds**; after round 2, always close.
 
 ## When closing: the decision
-1. Score each designer's final version per area from 1 to 5 on: answers-at-a-glance, density without clutter, drill-down clarity, accessibility, and how easy it is to build with shadcn/ui + Recharts by Saturday.
+1. Score each designer's final version per area from 1 to 5 on: answers-at-a-glance, density without clutter, drill-down clarity, accessibility, and how easy it is to build with shadcn/ui + Recharts in a short build.
 2. Decide per area which proposal wins, or combine them. Areas: color tokens and themes, status and engine colors, typography, spacing, navigation shell, KPI cards, chart cards, tables, session waterfall, empty and error states.
 3. Make sure the result is coherent: one palette, one type scale, one spacing scale.
 

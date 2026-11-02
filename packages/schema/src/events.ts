@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /**
- * Fleetscope event schema, version 1 (PLAN.md section 5).
+ * Fleetscope event schema, version 1.
  *
  * This file is the only definition of event shapes. Everything else (collector, api, db,
  * simulator, mcp) imports from here.
@@ -22,7 +22,7 @@ export const MAX_BATCH_SIZE = 1000;
 export const RETENTION_DAYS = 30;
 
 /**
- * The three engines of the fleet (PLAN.md section 3). These slugs are stable: they are stored in
+ * The three engines of the fleet. These slugs are stable: they are stored in
  * ClickHouse and used in URLs and filters.
  *  - `chromium`              Playwright Chromium (the baseline)
  *  - `chrome-headless-shell` Google's headless-shell build (chromedp/headless-shell)

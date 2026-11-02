@@ -18,7 +18,7 @@ Lightpanda has a `Worker` constructor but never runs a worker.
 
 ## Options
 
-1. **Make the number look better**: skip the worker probe on Lightpanda, or count the session as a success. Rejected: it fakes data, which CLAUDE.md forbids.
+1. **Make the number look better**: skip the worker probe on Lightpanda, or count the session as a success. Rejected: it fakes data, which the project's data-honesty rule forbids.
 2. **Leave it.** The comparison stays honest, but a fleet that sends Worker pages to Lightpanda fails them forever.
 3. **Route by scenario** (chosen). Before a session starts, if the engine it was assigned lacks a capability the scenario needs, run it on the lightest capable engine instead, and record that it was routed.
 4. **Retry on fallback**: run the session on Lightpanda, and if it fails with a missing feature, run it again elsewhere. It costs a failed session every time and makes the success rate harder to read. Deferred; option 3 avoids the doomed attempt.

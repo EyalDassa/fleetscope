@@ -42,7 +42,7 @@ Reasons:
 
 1. **What is left is either a taste call or a fix I can write as a rule.** No open item needs a new mockup. Each of the items numbered 2 to 8 above has a clear answer from the render-check facts or from PLAN, and the blocked choice (item 1) is a judgement call that a v3 would not settle any better. The two layouts already converged in round 1.
 2. **Both CVD problem lists are short, and one palette is clearly safer where it matters most.** Engines are what every chart has to tell apart. promax's engine-vs-engine pairs all pass protan/deutan, while taste's only flag is a deutan engine-vs-engine pair (deuteranomaly is the most common CVD). So I take promax's measured palette **as a whole**: all 26 token pairs and the 0 rendered failures stay valid, and I do not have to trust an unmeasured mix.
-3. **Time.** The deadline is this weekend. Another round costs a critique + revise + render-check cycle and would most likely move a few colour values. Frontend work is blocked until Eyal approves.
+3. **Time.** The sprint is time-boxed. Another round costs a critique + revise + render-check cycle and would most likely move a few colour values. Frontend work is blocked until Eyal approves.
 
 The closing decision, scores and final system are in `design/DECISIONS.md` and `design/DESIGN.md`. Open questions for Eyal are at the end of DECISIONS.md.
 
