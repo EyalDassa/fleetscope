@@ -4,6 +4,11 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # @types/node follows the Node.js major the project runs on (.nvmrc, engines: >=22). A newer
+      # major describes APIs Node 22 doesn't have, so it is bumped by hand with the runtime.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     cooldown:
       default-days: 3 # skip brand-new releases, same idea as pnpm's minimumReleaseAge
     groups:
@@ -27,6 +32,12 @@ updates:
     directory: /infra
     schedule:
       interval: weekly
+    ignore:
+      # ClickHouse stays on the 26.8 LTS branch (infra/docker-compose.yml, ADR 0002), so only patch
+      # releases of 26.8 are proposed. A move to the next LTS is a deliberate change made by hand,
+      # together with the image tag in .github/workflows/ci.yml (check-clickhouse-tag.sh).
+      - dependency-name: clickhouse/clickhouse-server
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
     commit-message:
       prefix: "chore(infra)"
 
