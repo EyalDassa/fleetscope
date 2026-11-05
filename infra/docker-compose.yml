@@ -49,7 +49,7 @@ services:
     # at 13.0.2 (June 2026) and no longer gets releases. Pinned to an exact patch version, like
     # ClickHouse above. 13.2.4 is the current stable release; the ClickHouse plugin below needs
     # Grafana 11.6 or newer.
-    image: grafana/grafana:13.2.4
+    image: grafana/grafana:13.3.0
     restart: unless-stopped
     depends_on:
       clickhouse:
