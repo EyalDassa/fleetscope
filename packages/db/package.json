@@ -19,7 +19,7 @@
     "backfill-rollups": "tsx --env-file-if-exists=../../.env src/cli/backfill-rollups.ts"
   },
   "dependencies": {
-    "@clickhouse/client": "^1.24.1",
+    "@clickhouse/client": "^1.25.0",
     "@fleetscope/schema": "workspace:*",
     "pino": "^10.4.0",
     "zod": "^4.6.7"
